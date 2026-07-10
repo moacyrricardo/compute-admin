@@ -64,6 +64,24 @@ scope carries only the transport.
 
 ## Known Gaps
 
+- **The ambient actor does NOT reach MCP tool handlers.** `ActorScopeFilter` binds
+  `ScopedValue<Actor>` on the Tomcat request thread, but the MCP SDK (verified
+  against `io.modelcontextprotocol.sdk:mcp` 0.11.2) adapts a
+  `SyncToolSpecification` via
+  `Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())`, so the tool
+  callback runs on a Reactor `boundedElastic` pool thread — not the request
+  thread. Because `ScopedValue` is thread-confined, `CurrentActor.isBound()` is
+  **false** inside every MCP tool, and `CurrentActor.require()` would throw
+  `IllegalStateException`. This contradicts the "every later tool and every
+  audited write inherits it" claim above: on the `/api` (RESTEasy) path the actor
+  is bound and inherited as designed; on the `/mcp` path it is **not**.
+  `list_machines` never reads the actor, so nothing breaks today and
+  `McpSeamWebTest` passes — the trap is silent. The propagation itself is left to
+  the tool that first needs the actor (spec 008's write/run tools, hardened by
+  spec 011's auth): those must re-establish the binding on the handler thread
+  (e.g. bridge the request context into the tool callback, or bind from the
+  MCP session), not assume `CurrentActor.require()` works. `McpSeamWebTest` does
+  **not** prove actor propagation into tools — that remains unproven here.
 - **MCP transport is unauthenticated** (ARCH.md S8) — no bearer token; anyone who
   reaches `/mcp` can call tools. Paired with the deferred auth work (S1) noted in
   001.

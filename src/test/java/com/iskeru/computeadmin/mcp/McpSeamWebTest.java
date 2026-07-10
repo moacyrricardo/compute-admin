@@ -28,6 +28,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * supplies a {@code @Primary} stub {@link MachineService} so the assertion doesn't
  * depend on the spec-002 stub's body.
  *
+ * <p><strong>Scope note:</strong> this test does <em>not</em> prove that the
+ * ambient {@code Actor} bound by {@code ActorScopeFilter} reaches a tool handler.
+ * The MCP SDK runs sync tool callbacks on a Reactor {@code boundedElastic} thread,
+ * not the Tomcat request thread, so {@code CurrentActor} is unbound inside a tool;
+ * {@code list_machines} never reads it, so nothing here exercises that path. Actor
+ * propagation into tools is unproven until a tool needs it (spec 008/011). See
+ * specs/002-doing-mcp-transport-seam.md, "Known Gaps".
+ *
  * <p>spec-002.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
