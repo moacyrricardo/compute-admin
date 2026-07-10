@@ -3,49 +3,82 @@
 ## Context
 
 compute-admin is greenfield. Before any feature can land we need a buildable,
-runnable Spring Boot base that fixes the framework posture ARCH.md commits to:
-RESTEasy for JAX-RS (no Spring MVC controllers), H2 file DB, Flyway, JPA +
-Hibernate Envers, Lombok. Every later spec assumes this skeleton exists.
+runnable Spring Boot base that fixes the framework posture ARCH.md commits to and
+the conventions inherited from birthday-rsvp (see ARCH.md "Code conventions").
+Every later spec assumes this skeleton exists. This spec adds **only** the base:
+build, wiring, health, a static shell, and the dev run recipe — no domain.
 
 ## Decision
 
-Stand up the Maven project and the minimum wiring to boot, serve `/api/health`,
-and serve a static UI shell — nothing domain-specific yet.
-
-- **Build:** Spring Boot 3.5, Java 25. Embedded Tomcat via
-  `spring-boot-starter-web`, but **RESTEasy is the JAX-RS dispatcher**. No Spring
-  MVC controllers anywhere.
-- **Base package:** `com.iskeru.computeadmin`. Package layout is by feature
-  module then horizontal layer (`<module>/api|service|model|repository`), with
-  `common`, `config`, and `audit` beside the modules (see ARCH.md).
-- **Persistence:** H2 **file** DB under `./data`, Flyway migrations, Spring Data
-  JPA, Hibernate Envers configured (validity strategy) but with no audited
-  entities yet. Constructor injection throughout.
+Stand up the Maven project so `mvn spring-boot:run -Dspring-boot.run.profiles=dev`
+boots, serves `GET /api/health`, and serves a static UI shell. RESTEasy is the
+JAX-RS dispatcher; no Spring MVC controllers. Flyway owns the schema from commit
+one. Envers is configured but audits nothing yet.
 
 ## Implementation
 
-- `pom.xml`: `spring-boot-starter-web`, RESTEasy (JAX-RS impl + Spring Boot
-  integration), `com.h2database:h2`, `org.flywaydb:flyway-core`,
-  `spring-boot-starter-data-jpa`, `org.hibernate.orm:hibernate-envers`, Lombok.
-- `config/JaxRsApplication` — `@ApplicationPath("/api")`, registers `*RS`
-  resources. RESTEasy runs as a servlet/filter beside Spring Boot; the default
-  static-resource handler (not an MVC controller) serves `classpath:/static`.
-- `common/HealthRS` — `GET /api/health` returns a small DTO record
-  (`{status, version}`); establishes the "resources return DTO records" rule.
-- `common/HtmlEscaper` — stub utility (used once UI renders JSON-driven HTML).
-- `db/migration/V1__baseline.sql` — empty baseline so Flyway owns the schema from
-  commit one.
-- `application.yml` + `application-dev.yml` — H2 file URL, Flyway on, Envers
-  properties. Dev profile documented for `mvn spring-boot:run
-  -Dspring-boot.run.profiles=dev`.
-- `static/index.html` — placeholder shell that calls `/api/health` to prove the
-  JSON-driven vanilla-JS approach.
+**Build (`pom.xml`).** `groupId com.iskeru`, `artifactId compute-admin`, Spring
+Boot **3.5.x**, Java **25**. Dependencies:
+- `spring-boot-starter-web` (embedded Tomcat only; MVC unused)
+- `resteasy-servlet-spring-boot-starter` (JAX-RS dispatcher)
+- `com.h2database:h2`
+- `org.flywaydb:flyway-core`
+- `spring-boot-starter-data-jpa`
+- `org.hibernate.orm:hibernate-envers`
+- `org.projectlombok:lombok`
+- test: `spring-boot-starter-test`
+
+Explicitly **not** included: `spring-boot-starter-validation` (validation is
+manual, per conventions).
+
+**Package tree** (base `com.iskeru.computeadmin`):
+```
+Application.java                     # @SpringBootApplication
+config/  JaxRsApplication.java        # @Component @ApplicationPath("/api"), empty body
+common/  HealthRS.java, CommonDtos.java, HtmlEscaper.java
+```
+Feature-module packages (`machine`, `recipe`, …) and `audit` arrive with their
+specs.
+
+**Health endpoint.** `common/HealthRS` — `@Component @Path("/health")
+@Produces(APPLICATION_JSON)`, `@GET` returns `CommonDtos.Health(String status,
+String version)` with `status = "ok"` and version from the build
+(`@Value("${ca.version:dev}")`). Establishes "resources return DTO records."
+
+**`common/HtmlEscaper`** — the escaping utility (stub with the real escape method;
+used once UI renders JSON-driven HTML in later specs).
+
+**Persistence config (`application.yml` + `application-dev.yml`).**
+- H2 **file** DB at `jdbc:h2:file:./data/compute-admin;AUTO_SERVER=TRUE`.
+- `spring.jpa.hibernate.ddl-auto=none`, `spring.jpa.open-in-view=false`.
+- `spring.flyway.enabled=true`.
+- Envers: `…envers.audit_table_suffix=_aud`, `…envers.store_data_at_delete=true`
+  (no audited entities yet, so inert).
+- `spring.config.import=optional:file:./.env[.properties]` for secrets.
+- App config under the **`ca.*`** namespace.
+
+**Baseline migration.** `db/migration/V1__baseline.sql` — comment-only baseline
+so Flyway owns the schema from the first commit; real tables start at `V2`
+(spec 003).
+
+**Static shell.** `static/index.html` — minimal JSON-driven vanilla-JS shell that
+calls `/api/health` and renders the result; no framework, no build step, no
+server-side templating.
+
+**Dev run recipe** (documented in the project `CLAUDE.md`, modelled on
+birthday-rsvp's): `mvn -q spring-boot:run -Dspring-boot.run.profiles=dev`,
+param'd by `PORT` (default 8080), ready when the log shows "Started Application".
+
+**Tests.** `HealthWebTest` — `@SpringBootTest(webEnvironment = RANDOM_PORT)` +
+`TestRestTemplate`, asserts `GET /api/health` returns 200 and `status=ok`. Proves
+the RESTEasy-beside-Spring-Boot seam works end to end.
 
 ## Known Gaps
 
-- **No authentication and no network-bind hardening** in this spec. ARCH.md S1
-  frames auth as deferred and lists "bind to `127.0.0.1` by default" as the S1
-  hardening — but there is currently **no spec** that owns either. Track a
-  dedicated security spec before the run path (005) and MCP write tools (008)
-  are exposed; until then the skeleton inherits Spring Boot's default bind.
+- **No authentication and no network-bind hardening.** Spring Boot's default bind
+  (all interfaces) stands; ARCH.md S1 lists loopback bind as the deferred
+  hardening. Per project decision, the "UI-only approval" invariant is enforced
+  **structurally** (no MCP approve tool — spec 004/008), not by auth; the REST
+  approval endpoint is knowingly reachable (S1/S8). No security spec is scheduled
+  yet — revisit when a trigger in the register fires.
 - No CI, containerization, or packaging — local dev run only.
