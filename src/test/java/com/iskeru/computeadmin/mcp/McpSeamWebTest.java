@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.mcp;
 
 import com.iskeru.computeadmin.auth.api.AuthDtos;
+import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -56,9 +57,9 @@ class McpSeamWebTest {
         @Bean
         @Primary
         MachineService stubMachineService() {
-            return new MachineService() {
+            return new MachineService(null, null, null) {
                 @Override
-                public List<String> list(String tag) {
+                public List<Machine> list(String tag) {
                     return List.of();
                 }
             };

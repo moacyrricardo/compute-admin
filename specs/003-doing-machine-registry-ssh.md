@@ -1,5 +1,9 @@
 # 003 — Machine registry, tagging, app keypair & SSH adapter
 
+> Status: **doing** — branch `moacyrricardo/spec-003-machine-registry-ssh`
+> (stacked on `moacyrricardo/spec-011-user-accounts-auth-ownership`). Linear is
+> blocked for this repo, so no issue identifier.
+
 ## Context
 
 Everything operates on **machines**. This spec adds the machine registry, tags,
