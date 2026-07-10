@@ -38,8 +38,14 @@ public class ConnectivityCheckJob {
     public void checkAll() {
         List<Machine> all = machines.findAll();
         for (Machine machine : all) {
-            machine.setStatus(probe(machine));
-            machine.setUpdatedAt(Instant.now());
+            MachineStatus probed = probe(machine);
+            // Only mutate on an actual status change: a liveness probe is not a
+            // config edit, so an unchanged result must leave the machine clean and
+            // produce no machine_aud revision (no via=SYSTEM audit noise). spec-003.
+            if (probed != machine.getStatus()) {
+                machine.setStatus(probed);
+                machine.setUpdatedAt(Instant.now());
+            }
         }
     }
 
