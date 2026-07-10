@@ -9,6 +9,17 @@ benchmark when reviewing architectural fit.
 Work is built one **spec** at a time under `specs/NNN-status-slug.md`
 (`/new-spec` to author, the spec skills to implement).
 
+## Running (dev)
+
+```bash
+mvn -q spring-boot:run -Dspring-boot.run.profiles=dev
+```
+
+- Param'd by `PORT` (default `8080`).
+- Ready when the log shows `Started Application`.
+- Serves `GET /api/health` (JSON `{status, version}`) and the static UI shell at `/`.
+- Uses the H2 **file** DB at `./data/compute-admin`; Flyway owns the schema.
+
 ## Linear
 
 Title prefix **`CA:`** (team `BOL`).

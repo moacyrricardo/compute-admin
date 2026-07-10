@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>compute-admin</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 40rem; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    .status { font-family: ui-monospace, monospace; }
+    .ok { color: #2e7d32; }
+    .err { color: #c62828; }
+  </style>
+</head>
+<body>
+  <h1>compute-admin</h1>
+  <p>MCP server + thin web UI for pre-approved operations on SSH-reachable machines.</p>
+  <p>Health: <span id="status" class="status">checking…</span></p>
+
+  <script>
+    // spec-001: JSON-driven vanilla-JS shell. No framework, no build step.
+    fetch('/api/health')
+      .then(function (r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        return r.json();
+      })
+      .then(function (data) {
+        var el = document.getElementById('status');
+        el.textContent = data.status + ' (version ' + data.version + ')';
+        el.className = 'status ok';
+      })
+      .catch(function (err) {
+        var el = document.getElementById('status');
+        el.textContent = 'unreachable: ' + err.message;
+        el.className = 'status err';
+      });
+  </script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+-- spec-001: baseline migration.
+-- Comment-only so Flyway owns the schema from the first commit. Real tables
+-- start at V2 (spec 003, machine registry). Envers _aud tables are created by
+-- hand in the same migration as their base table (ddl-auto=none).
