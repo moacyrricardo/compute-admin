@@ -8,3 +8,8 @@
 spring:
   datasource:
     url: jdbc:h2:mem:compute-admin-test;DB_CLOSE_DELAY=-1
+
+ca:
+  # Keep the generated app SSH keypair (spec-003) out of ./data during tests.
+  ssh:
+    key-path: ./target/test-ssh/id_ed25519

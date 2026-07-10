@@ -2,6 +2,7 @@ package com.iskeru.computeadmin.mcp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -60,10 +61,15 @@ public class ListMachinesTool implements McpTool {
         // call CurrentUser.require() from a tool without first re-establishing the
         // binding on this thread. See specs/002-done-mcp-transport-seam.md, "Known Gaps".
         String tag = arguments == null ? null : (String) arguments.get("tag");
-        List<String> machines = machineService.list(tag);
+        // spec-003 changed MachineService.list to return owner-scoped Machine
+        // entities; serialize a flat summary (no lazy relations). Binding the
+        // caller so list() can scope is a spec-008 concern (see NOTE above).
+        List<Map<String, Object>> summaries = machineService.list(tag).stream()
+                .map(ListMachinesTool::summarize)
+                .toList();
         try {
             return McpSchema.CallToolResult.builder()
-                    .addTextContent(objectMapper.writeValueAsString(machines))
+                    .addTextContent(objectMapper.writeValueAsString(summaries))
                     .build();
         } catch (JsonProcessingException e) {
             return McpSchema.CallToolResult.builder()
@@ -71,5 +77,14 @@ public class ListMachinesTool implements McpTool {
                     .isError(true)
                     .build();
         }
+    }
+
+    private static Map<String, Object> summarize(Machine machine) {
+        return Map.of(
+                "id", machine.getId(),
+                "host", machine.getHost(),
+                "port", machine.getPort(),
+                "loginUser", machine.getLoginUser(),
+                "status", machine.getStatus().name());
     }
 }
