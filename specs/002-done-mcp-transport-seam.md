@@ -1,6 +1,6 @@
 # 002 — MCP transport seam
 
-> **Status:** doing — branch `moacyrricardo/spec-002-mcp-transport-seam`
+> **Status:** done — branch `moacyrricardo/spec-002-mcp-transport-seam`
 > (stacked on `moacyrricardo/spec-001-project-skeleton`). Linear is blocked for
 > this repo, so there is no issue identifier.
 
@@ -91,3 +91,50 @@ scope carries only the transport.
   structural (no approve tool in `mcp` — spec 004/008).
 - If we later adopt the single-endpoint Streamable-HTTP transport, it swaps in
   behind the same servlet seam; out of scope here.
+
+## Implementation Notes
+
+How the shipped branch differs from the spec above.
+
+- **Headline divergence — the ambient actor does not reach MCP tool handlers.**
+  The Decision claimed the `ScopedValue<Actor>` + `CurrentActor` facade is wired
+  "end to end" and that "every later tool and every audited write inherits it."
+  During implementation we found the MCP SDK (`io.modelcontextprotocol.sdk:mcp`
+  0.11.2) adapts a `SyncToolSpecification` via
+  `Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())`, so tool
+  callbacks run on a Reactor pool thread, not the Tomcat request thread where
+  `ActorScopeFilter` binds the scope. Because a `ScopedValue` is thread-confined,
+  `CurrentActor` is **unbound** inside every MCP tool. The actor reaches the
+  `/api` (RESTEasy) path as designed but **not** the `/mcp` tool path. The
+  seam still ships (the `/api` side works; `list_machines` never reads the actor,
+  so nothing breaks), but propagation into tools is deferred to whichever tool
+  first needs it (spec 008/011), which must re-establish the binding on the
+  handler thread. This is captured in full under "Known Gaps" (added on this
+  branch as a dedicated commit) and mirrored in Javadoc on `McpServletConfig`,
+  `ListMachinesTool`, and `McpSeamWebTest`; the web test explicitly does not
+  assert actor propagation into tools.
+- **Actor scope stays fully encapsulated in `CurrentActor`.** The spec sketched
+  the filter calling `ScopedValue.where(CURRENT_ACTOR, actor).call(...)` against a
+  package-private holder. Instead the raw `ScopedValue<Actor>` is package-private
+  to `CurrentActor` and the filter binds through a `CurrentActor.runWhere(actor,
+  op)` facade, so no code outside `CurrentActor` touches the scope holder.
+- **Tool-discovery seam formalized as an `McpTool` interface.** Rather than the
+  config knowing `*Tool` beans directly, each tool bean implements `McpTool` and
+  exposes `specification()`; `McpServletConfig` injects `List<McpTool>` and
+  contributes them all. `ListMachinesTool` is the reference implementation.
+- **MCP server/transport specifics.** Used `McpSyncServer` (`McpServer.sync(...)`)
+  with `SyncToolSpecification`. Transport endpoints are explicit: servlet mounted
+  at `/mcp/*`, SSE at `/mcp/sse`, message at `/mcp/message` — the spec left the
+  sub-paths unspecified. `ActorScopeFilterConfig` enables async support on the
+  filter because the SSE endpoint calls `startAsync()`.
+- **`MachineService` stub returns `List<String>`.** The spec called for an empty
+  list of machines; the placeholder type is `List<String>` (not yet a `Machine`
+  entity/DTO). Spec 003 replaces both the body and the return type.
+- **Dependency pinning.** The MCP SDK is pinned via a `${mcp-sdk.version}`
+  property in `pom.xml` (0.11.2 at build time), per the spec's instruction to pin
+  the version.
+- **Change division.** No `CONTRIBUTING.md` in this repo, so the change-division
+  assessment is skipped. For the record, the seam landed in one implementation
+  commit plus a follow-up commit that documented the ambient-actor gap once it was
+  discovered.
+- **API Diff.** Skipped — `CLAUDE.md` "API Modules" declares none.
