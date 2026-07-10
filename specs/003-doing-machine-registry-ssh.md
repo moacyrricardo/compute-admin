@@ -91,8 +91,11 @@ with `List<Machine> findByOwnerId(String)` and
 
 **`machine/job/ConnectivityCheckJob`** — `@Scheduled(cron="${ca.connectivity.cron:0 */5 * * * *}")`,
 runs a trivial `true` over `SshExecutor` for **every** machine (system-scoped,
-not per-user) and updates `status`. Uses a repository call that bypasses the
-owner filter; audited revisions record `via = SYSTEM`. `config/SchedulingConfig`
+not per-user) and updates `status` **only when the probed result differs** from
+the stored status (a liveness probe is not a config edit, so an unchanged cycle
+must leave the machine clean and open no `machine_aud` revision — no `via = SYSTEM`
+audit noise). Uses a repository call that bypasses the owner filter; the audited
+revision written on a real change records `via = SYSTEM`. `config/SchedulingConfig`
 (`@EnableScheduling @EnableAsync`).
 
 **`audit` module (foundation).** Uses the identity context from 011.
