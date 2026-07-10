@@ -4,27 +4,35 @@
 
 Beyond the built-in service types, operators have their own scripts already on
 the box (e.g. `/home/ec2-user/app/minhabufunfa/run.sh`). This spec wraps such an
-existing script as a custom recipe/action so it can flow through the same
-approval gate and run path as everything else.
+existing script as a `CUSTOM` recipe/action so it flows through the **same** gate
+(004) and run path (005) as everything else — no bypass.
 
 ## Decision
 
-- `Recipe.type = CUSTOM`. A custom action's `commandTemplate` invokes an
-  **absolute script path on the target**, optionally with named, typed params
-  bound as argv (same param model as 004).
-- Custom actions use the **identical gate**: created in `DRAFT`, run only once
-  `APPROVED`, subject to the 004 snapshot binding and the 005 run path. No custom
-  bypass.
-- No "free-form command" param is ever allowed (ARCH.md S4). The script path is a
-  fixed part of the template; only declared typed params vary.
+A custom action is an ordinary `Action` (004 model) whose first argv token is a
+`LITERAL` holding the **absolute script path**, optionally followed by typed
+`PARAM` tokens. It uses the identical approval state machine, content-hash
+binding, and run path.
 
 ## Implementation
 
-- Extend `RecipeService`/`ActionService` to author a custom action from
-  `(machineId, scriptPath, params?, sudo?)`.
-- Validate that `scriptPath` is an absolute path at authoring time; it is stored
-  as a fixed template segment, not a param.
-- UI + MCP `add_recipe`/`add_action` (008) reuse this path.
+- `Recipe.type = CUSTOM`.
+- `ActionService.addCustomAction(CustomActionInput(machineId, name, scriptPath,
+  List<ParamDefInput>, boolean sudo))`:
+  - Validate `scriptPath` is an **absolute** path (`/…`) at authoring time; store
+    it as the leading `LITERAL` `ArgToken` — it is **not** a param, so it can't
+    vary at run time.
+  - Append declared params as `PARAM` tokens with their `ParamDef`s; the same
+    add-action validation (004) applies.
+  - Created in `DRAFT`; runs only once `APPROVED`; subject to the 004 snapshot
+    hash and the 005 run path.
+- No **free-form command** param is ever allowed (S4) — only declared typed
+  params vary; the path and command shape are fixed literals.
+- UI + MCP `add_recipe`/`add_action` (008) reach this via `ActionService`.
+
+**Tests.** `CustomActionTest`: absolute-path validation (reject relative/blank);
+path stored as leading literal; a declared param binds as a later argv element;
+the action runs through the normal `RunService` gate.
 
 ## Known Gaps
 

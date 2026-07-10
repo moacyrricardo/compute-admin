@@ -2,42 +2,70 @@
 
 ## Context
 
-Registering machines by hand and hand-writing every action is tedious. This spec
-adds **recipe discovery**: SSH into a known machine, detect installed services,
-and **propose** recipes + default actions. It never mutates the box and never
-auto-approves — proposals land in `DRAFT`/`PENDING_APPROVAL` for a human to
-review through the 004 gate.
+Hand-authoring every action is tedious. This spec adds **recipe discovery**: SSH
+into a known machine with **fixed, read-only probes**, detect installed services,
+and **propose** recipes + a **curated core** action set for the human to review
+through the 004 gate. It never mutates the box and never auto-approves —
+proposals land in `PENDING_APPROVAL`.
 
 ## Decision
 
-- **`RecipeDiscoverer` port** in `discovery`, one implementation per built-in
-  service type: `NginxDiscoverer`, `DockerDiscoverer`, `DatabaseDiscoverer`
-  (mysql/mariadb/postgres), `CronDiscoverer`.
-- Each discoverer runs a **bounded, read-only probe** over `SshExecutor` (e.g.
-  detect the binary/service, list sites/containers/units) and maps findings to
-  proposed `Recipe` + `Action` definitions with sensible default templates and
-  param schemas.
-- **Proposals are never approved and never executed** by discovery. They are
-  created in `DRAFT`/`PENDING_APPROVAL` only.
+A `RecipeDiscoverer` port with one impl per built-in service type. Each runs a
+small source-controlled read-only probe set and proposes a **curated** action
+catalog (chosen scope: useful but reviewable — not minimal, not full-lifecycle).
+Discovered names/paths become `ALLOWED_SET` values on the proposed params.
 
 ## Implementation
 
-- `discovery/service`: `DiscoveryService.discover(machineId)` fans out to the
-  registered discoverers and persists proposals via `RecipeService`/
-  `ActionService`.
-- Each `*Discoverer` owns its fixed probe commands (checked into source, not
-  agent-supplied) and its proposed-action catalog.
-- `discovery/api`: endpoint to trigger discovery and return proposals; the MCP
-  `discover_recipes` tool (008) calls the same service.
+**`discovery/RecipeDiscoverer` port** — `List<ProposedRecipe> discover(Machine m,
+SshExecutor ssh)`; `ProposedRecipe(type, name, List<ProposedAction>)`,
+`ProposedAction(name, sudo, argTokens, paramDefs)` reusing the 004 shapes. Probe
+commands are **fixed constants in source**, never agent-supplied.
+
+**Discoverers + curated catalog** (`discovery/service`). All actions land
+`PENDING_APPROVAL`; mutating ones are proposed but gated.
+- `NginxDiscoverer` — probe: `command -v nginx`, `nginx -t`, `ls
+  /etc/nginx/sites-available` + `sites-enabled`. Actions: **test-config**
+  (`nginx -t`), **reload** (`systemctl reload nginx`, sudo), **restart**
+  (`systemctl restart nginx`, sudo), **enable-site** (`ln -s
+  /etc/nginx/sites-available/{site} /etc/nginx/sites-enabled/`, sudo; `site`
+  ALLOWED_SET from discovered sites), **disable-site** (remove the symlink, sudo;
+  `site` ALLOWED_SET from enabled sites).
+- `DockerDiscoverer` — probe: `command -v docker`, `docker ps
+  --format '{{.Names}}'`. Actions: **ps**, **restart/stop/start container**
+  (`container` ALLOWED_SET from discovered names), **logs** (`container`
+  ALLOWED_SET; `--tail` INT_RANGE).
+- `DatabaseDiscoverer` — probe: detect `mysql`/`mariadb`/`psql` binaries +
+  service status; list databases read-only. Actions: **status** (`systemctl
+  status <svc>`), **dump/backup** (`mysqldump`/`pg_dump` of `db` ALLOWED_SET from
+  discovered DBs → a fixed backup dir).
+- `CronDiscoverer` — probe: `crontab -l` (login user), `ls /etc/cron.d`. Action:
+  **list**. (Add/remove cron entries are the deferred "broad" scope — not v1.)
+
+**`discovery/service/DiscoveryService.discover(machineId)`** — resolves the
+machine, runs each registered discoverer over `SshExecutor`, and persists
+proposals as `Recipe` + `Action` (state `PENDING_APPROVAL`) via
+`RecipeService`/`ActionService`. Never approves; never issues a mutating command.
+
+**`discovery/api`** — `POST /api/machines/{id}/discover` (`@Secured`; the machine
+must belong to the current user, else 404) → the proposals (`DiscoveryDtos`). The
+MCP `discover_recipes` tool (008) calls the same service as the token's user.
+
+**Tests.**
+- Per-discoverer unit tests with a fake `SshExecutor` returning canned probe
+  output → assert the proposed recipes/actions and that ALLOWED_SET values come
+  from probe output.
+- `DiscoveryServiceTest`: proposals persist as `PENDING_APPROVAL`; no approve
+  call; no mutating command is ever sent (assert against the fake executor's
+  recorded argv).
 
 ## Known Gaps
 
-- **Discovery probes are un-gated command execution.** `discover_recipes` runs
-  detection commands on the target with no approval — an intentional exception to
-  "only APPROVED actions run." Probes are therefore restricted to a **fixed,
-  read-only, source-controlled** command set; free-form or agent-supplied probes
-  are out of scope and must never be added here.
-- **Discovery results are attacker-influenced input.** A compromised or spoofed
-  target (see S3, 003) returns service names/paths that become **proposed
-  templates** shown to a human. The 004 approval step is the mitigation — the
-  human must be able to read the proposed template before approving.
+- **Discovery probes are un-gated command execution** — an intentional exception
+  to "only APPROVED actions run." Probes are therefore restricted to a **fixed,
+  read-only, source-controlled** set; free-form or agent-supplied probes are out
+  of scope and must never be added.
+- **Discovery results are attacker-influenced input** — a compromised/spoofed
+  target (S3) returns names/paths that become proposed ALLOWED_SET values and
+  templates. The 004 approval step is the mitigation; the human must be able to
+  read the proposed action before approving.

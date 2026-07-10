@@ -32,8 +32,10 @@ action into something MCP is allowed to run.
 
 ## Trust model in one paragraph
 
-Creating machines and recipes is allowed from **either** MCP or the UI. **Approval
-is UI-only** — there is no MCP tool that approves. MCP can *see* unapproved
+Each user signs in and works only within his own machines and recipes (nothing is
+shared between users). Creating machines and recipes is allowed from **either** MCP
+or the UI. **Approval is UI-only** — there is no MCP tool that approves, and it
+requires a signed-in UI session (the per-user MCP token cannot reach it). MCP can *see* unapproved
 actions (marked `pending_approval`) so an agent knows they exist and can ask you
 to approve them, but attempting to run one is refused. MCP can run **only**
 approved actions, with parameters validated against the action's declared schema.
@@ -50,7 +52,9 @@ register** of everything currently left insecure on purpose.
 - **H2 file** database, **Flyway** migrations, **JPA + Hibernate Envers**
   (validity strategy) for audit, **Lombok**.
 - **SSH** via **Apache MINA SSHD**; a single app-owned **ed25519** keypair.
-- **No authentication — local-only for now** (tracked as a deferred risk).
+- **User-based:** Google sign-in for the UI, a per-user personal token for MCP;
+  each user owns his own machines/recipes, nothing shared. Still a single **local**
+  instance (transport hardening deferred). See ARCH.md spec 011.
 
 ## Status
 
