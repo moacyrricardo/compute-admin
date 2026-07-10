@@ -35,7 +35,12 @@ progress** by subscribing to the run's `RunOutputHub` (005); returns `runId`.
 
 **Resources:** the app's public SSH key (from 003 `KeyService`) and run output.
 
-Each tool maps request → feature-service call → DTO; no repository access.
+Each tool maps request → feature-service call → DTO; no repository access. The
+MCP session is authenticated by the caller's **personal token** (011): the
+`McpTokenAuthFilter` binds `AuthContext(userId, …, MCP)`, so every tool
+automatically scopes to that user's own machines/recipes/runs via the same
+owner-scoping services the REST layer uses. An unauthenticated MCP request is
+rejected (resolves S8).
 
 **Tests.**
 - `McpToolsWebTest` (`@SpringBootTest RANDOM_PORT`): register→add recipe→add
@@ -48,13 +53,12 @@ Each tool maps request → feature-service call → DTO; no repository access.
 
 ## Known Gaps
 
-- **No approve tool — by design.** Its safety rests on the REST approval endpoint
-  being reachable only by a real UI user, not by the MCP caller. Under S1/S8 (no
-  auth on either surface) that distinction is **not** technically enforced — an
-  actor that reaches `/mcp` can also reach `/api`. Per project decision this is
-  accepted: the invariant is enforced **structurally** (no code path from MCP to
-  approval, guarded by `GateArchTest`), not by auth. A security spec (auth +
-  CSRF/Origin checks + loopback bind) remains the prerequisite for the invariant
-  to hold against a hostile local caller; not scheduled yet.
-- **S8 — MCP transport unauthenticated.** Gate it with the same auth once S1 is
-  addressed.
+- **No approve tool — by design, and now genuinely enforced.** With users (011),
+  approval requires a UI-authenticated session (`@Secured`, `via = UI`); the MCP
+  personal token binds `via = MCP` and there is no approve tool, so the MCP caller
+  has no path to approval. This is enforced two ways: **structurally**
+  (`GateArchTest`: `mcp` references neither a repository nor `ApprovalService`)
+  and by **auth** (the approve endpoint rejects a non-UI caller). The earlier
+  S1/S8 objection (any local caller can hit `/api/.../approve`) is closed by 011.
+- **Still local (project decision).** Transport hardening beyond token auth
+  (loopback bind, TLS, rate limiting) remains a tracked risk — see ARCH.md.

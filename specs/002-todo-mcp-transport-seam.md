@@ -21,7 +21,11 @@ tool (`list_machines`) backed by a `MachineService` stub, and implement the
 **Dependency.** `io.modelcontextprotocol.sdk:mcp` (pin the version in `pom.xml`;
 confirm the current release at build time).
 
-**Actor model (foundation).**
+**Actor model (foundation — placeholder, upgraded by 011).** This proves the
+seam before users exist. Spec 011 replaces it with an identity-carrying
+`ScopedValue<AuthContext>` + `CurrentUser` facade, renames `Actor` → `Via`, and
+adds real auth (Google JWT on `/api`, per-user token on `/mcp`). Until 011, the
+scope carries only the transport.
 - `common/Actor` — enum `UI`, `MCP`, `SYSTEM`.
 - `common/CurrentActor` — static facade over a package-private
   `ScopedValue<Actor>`: `require()` (throws if unbound), `optional()`, and the

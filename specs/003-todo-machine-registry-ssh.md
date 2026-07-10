@@ -10,9 +10,11 @@ per ARCH.md "Code conventions".
 
 ## Decision
 
-- **`Machine`** keyed by app-assigned String UUID; `host`, `port`, `loginUser`,
-  `status`, a reserved nullable `pinnedHostKey`, `createdAt`/`updatedAt`.
-- **`Tag`** is an entity (unique `name`); `Machine (N)─(N) Tag` via `machine_tag`.
+- **`Machine`** keyed by app-assigned String UUID; owned by an `AppUser` (011);
+  `host`, `port`, `loginUser`, `status`, a reserved nullable `pinnedHostKey`,
+  `createdAt`/`updatedAt`. Every operation is scoped to the current user.
+- **`Tag`** is an entity, unique **per owner**; `Machine (N)─(N) Tag` via
+  `machine_tag`.
 - **App keypair** owned by `ssh`: generate an **ed25519** pair on first boot at
   `./data/id_ed25519` (`chmod 600`) if absent; expose the public key.
 - **`SshExecutor` port** with a real MINA impl; the dev/verify flow drives the
@@ -24,29 +26,33 @@ per ARCH.md "Code conventions".
 
 **`machine/model`.**
 - `Machine` — `@Audited`. `String id = UUID.randomUUID().toString()` (`@Column(length=36)`);
-  `host`; `int port` (default 22); `loginUser`; `MachineStatus status`
-  (`@Enumerated(STRING)`, `UNKNOWN | ONLINE | OFFLINE | UNREACHABLE`, default
-  `UNKNOWN`); `String pinnedHostKey` (nullable, unused until S3);
-  `Instant createdAt/updatedAt`. `@ManyToMany Set<Tag> tags`. Unique
-  `uq_machine_host_port_user (host, port, login_user)`.
-- `Tag` — `String id`, `String name` unique (`uq_tag_name`). `@Audited` optional;
-  keep it un-audited (labels only).
+  `@ManyToOne AppUser owner` (011); `host`; `int port` (default 22); `loginUser`;
+  `MachineStatus status` (`@Enumerated(STRING)`, `UNKNOWN | ONLINE | OFFLINE |
+  UNREACHABLE`, default `UNKNOWN`); `String pinnedHostKey` (nullable, unused until
+  S3); `Instant createdAt/updatedAt`. `@ManyToMany Set<Tag> tags`. Unique
+  `uq_machine_owner_host_port_user (owner_id, host, port, login_user)`.
+- `Tag` — `String id`, `@ManyToOne AppUser owner`, `String name`, unique per owner
+  (`uq_tag_owner_name (owner_id, name)`). Un-audited (labels only).
 - `MachineStatus` enum.
 
 **`machine/repository`.** `MachineRepository extends JpaRepository<Machine,String>`
-with `List<Machine> findByTags_Name(String tag)`; `TagRepository` with
-`Optional<Tag> findByName(String)`.
+with `List<Machine> findByOwnerId(String)` and
+`findByOwnerIdAndTags_Name(String ownerId, String tag)`; `TagRepository` with
+`Optional<Tag> findByOwnerIdAndName(String ownerId, String name)`.
 
 **`machine/service`.**
-- `MachineService` — `register(RegisterMachineInput)` (validate host non-blank,
-  port 1–65535, loginUser non-blank; `@Transactional`), `tag(id, Set<String>)`
-  (get-or-create tags), `untag(id, name)`, `list(String tag)` (all or by tag),
-  `requireMachine(id)` → `MachineNotFoundException` (404). `RegisterMachineInput`
+- `MachineService` — every method resolves `CurrentUser.require()` and scopes to
+  the owner. `register(RegisterMachineInput)` (validate host non-blank, port
+  1–65535, loginUser non-blank; sets `owner = current user`; `@Transactional`),
+  `tag(id, Set<String>)` (get-or-create the current user's tags), `untag(id,
+  name)`, `list(String tag)` (the current user's machines, all or by tag),
+  `requireMachine(id)` (must belong to the current user, else
+  `MachineNotFoundException` — 404, existence not leaked). `RegisterMachineInput`
   is a service-input record.
 - `MachineNotFoundException` (Javadoc: mapped to 404).
 
 **`machine/api`.**
-- `MachineRS` (`@Component @Path("/machines")`): `POST /` register; `GET /?tag=`
+- `MachineRS` (`@Component @Path("/machines")`, `@Secured`): `POST /` register; `GET /?tag=`
   list; `GET /{id}`; `POST /{id}/tags`; `DELETE /{id}/tags/{name}`. Returns
   `MachineDtos` records, throws on failure.
 - `MachineDtos`: `RegisterMachineRequest(host, port, loginUser)`,
@@ -71,19 +77,23 @@ with `List<Machine> findByTags_Name(String tag)`; `TagRepository` with
   fingerprint)` (also exposed as an MCP resource in 008).
 
 **`machine/job/ConnectivityCheckJob`** — `@Scheduled(cron="${ca.connectivity.cron:0 */5 * * * *}")`,
-runs a trivial `true` over `SshExecutor` per machine and updates `status`.
-`config/SchedulingConfig` (`@EnableScheduling @EnableAsync`).
+runs a trivial `true` over `SshExecutor` for **every** machine (system-scoped,
+not per-user) and updates `status`. Uses a repository call that bypasses the
+owner filter; audited revisions record `via = SYSTEM`. `config/SchedulingConfig`
+(`@EnableScheduling @EnableAsync`).
 
-**`audit` module (foundation).**
-- `AuditRevision` — `@RevisionEntity(CurrentActorRevisionListener.class)
+**`audit` module (foundation).** Uses the identity context from 011.
+- `AuditRevision` — `@RevisionEntity(CurrentUserRevisionListener.class)
   @Table(name="revinfo")`, columns `rev` (`@GeneratedValue IDENTITY`), `timestamp`,
-  and `actor` (from `Actor`).
-- `CurrentActorRevisionListener implements RevisionListener` — reads
-  `CurrentActor.optional()`, defaulting to `Actor.SYSTEM`.
+  `user_id` (nullable), and `via`.
+- `CurrentUserRevisionListener implements RevisionListener` — reads
+  `CurrentUser.optional()`, recording `userIdOrSystem()` + `via` (defaulting to
+  `Via.SYSTEM`).
 
-**Migration `V2__machine.sql`.** `machine`, `tag`, `machine_tag`; the `revinfo`
-table; `machine_aud` (all audited columns + `rev`/`revtype`); H2 dialect; named
-`uq_`/`fk_` constraints; spec-referencing header comment.
+**Migration `V3__machine.sql`.** `machine` (with `owner_id` → `app_user`), `tag`
+(with `owner_id`), `machine_tag`; the `revinfo` table; `machine_aud` (all audited
+columns + `rev`/`revtype`); H2 dialect; named `uq_`/`fk_` constraints;
+spec-referencing header comment. (`app_user` exists from 011 `V2`.)
 
 **Dev target (project `CLAUDE.md`).** Document a throwaway sshd container recipe
 (e.g. `docker run … linuxserver/openssh-server`) with the app public key
@@ -91,10 +101,11 @@ installed in `authorized_keys`, and how the verify flow connects to it.
 
 **Tests.**
 - `MachineServiceTest` — `@DataJpaTest` + `@AutoConfigureTestDatabase(replace=NONE)`
-  + `@Import(MachineService.class)`: register, dedup tags, list-by-tag,
-  require→404.
-- `MachineWebTest` — `@SpringBootTest(RANDOM_PORT)`: register + list round-trip; a
-  `@TestConfiguration @Bean @Primary` fake `SshExecutor`.
+  + `@Import(MachineService.class)`: register scopes to owner, dedup tags per
+  owner, list-by-tag, `requireMachine` on another user's machine → 404.
+- `MachineWebTest` — `@SpringBootTest(RANDOM_PORT)`: authenticate via the dev
+  Google bypass (011), register + list round-trip; user B gets 404 on user A's
+  machine. `@TestConfiguration @Bean @Primary` fake `SshExecutor`.
 - `SshKeyTest` — key generated on first boot, public key/fingerprint exposed.
 
 ## Known Gaps

@@ -47,8 +47,9 @@ machine, runs each registered discoverer over `SshExecutor`, and persists
 proposals as `Recipe` + `Action` (state `PENDING_APPROVAL`) via
 `RecipeService`/`ActionService`. Never approves; never issues a mutating command.
 
-**`discovery/api`** — `POST /api/machines/{id}/discover` → the proposals
-(`DiscoveryDtos`). The MCP `discover_recipes` tool (008) calls the same service.
+**`discovery/api`** — `POST /api/machines/{id}/discover` (`@Secured`; the machine
+must belong to the current user, else 404) → the proposals (`DiscoveryDtos`). The
+MCP `discover_recipes` tool (008) calls the same service as the token's user.
 
 **Tests.**
 - Per-discoverer unit tests with a fake `SshExecutor` returning canned probe

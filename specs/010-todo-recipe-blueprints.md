@@ -28,7 +28,8 @@ re-approved — a blueprint change can never silently alter an approved action.
 ## Implementation
 
 **`blueprint/model`.**
-- `RecipeBlueprint` — `@Audited`; `String id`; `name`; `String description`;
+- `RecipeBlueprint` — `@Audited`; `String id`; `@ManyToOne AppUser owner` (011,
+  blueprints are per-user, never shared); `name`; `String description`;
   `RecipeType type` (reuses 004's enum); `int version` (starts at 1, bumped on
   edit); `Instant createdAt/updatedAt`. No machine, no approval.
 - `BlueprintAction` — `String id`; `@ManyToOne RecipeBlueprint blueprint`;
@@ -43,8 +44,12 @@ re-approved — a blueprint change can never silently alter an approved action.
   (`ActionService`-equivalent checks on tokens/param defs). Absolute-path
   validation applies to `CUSTOM` blueprint actions (per 007) — this is the "shared
   `deploy.sh`" case.
+- All `BlueprintService`/`InstantiationService` methods scope to
+  `CurrentUser.require()`; a blueprint or machine not owned by the current user is
+  a 404. A user may instantiate only onto **his own** machines.
 - `InstantiationService.instantiate(blueprintId, Target)` where `Target` is an
-  explicit `Set<machineId>` **or** a tag:
+  explicit `Set<machineId>` **or** a tag (resolved within the current user's
+  machines):
   - For each target machine, find the recipe already instantiated from this
     blueprint (`sourceBlueprintId`), or create one. Copy `name`/`description`/
     `type` and each blueprint action into `Recipe`/`Action` rows with
@@ -55,19 +60,20 @@ re-approved — a blueprint change can never silently alter an approved action.
     Approved actions whose content is unchanged are left approved.
   - Never approves; never runs; only writes recipe/action config.
 
-**`blueprint/api/BlueprintRS`** (`@Path("/blueprints")`): CRUD blueprints +
-`POST /{id}/instantiate` (body `{machineIds?, tag?}`) → the instantiated
-recipes per machine (`BlueprintDtos`). Returns DTO records.
+**`blueprint/api/BlueprintRS`** (`@Path("/blueprints")`, `@Secured`): CRUD
+blueprints + `POST /{id}/instantiate` (body `{machineIds?, tag?}`) → the
+instantiated recipes per machine (`BlueprintDtos`). Returns DTO records.
 
 **MCP surface (create tools, per the invariant — never approve).** Extends 008:
 `add_blueprint`, `add_blueprint_action`, `list_blueprints`,
 `instantiate_blueprint(blueprintId, machineIds?|tag?)`. All delegate to
 `BlueprintService`/`InstantiationService`; none approve or run.
 
-**Migration `V{n}__recipe_blueprint.sql`** — `recipe_blueprint`,
-`blueprint_action`, and the blueprint child tables, plus `_aud` companions for the
-audited definition tables. (The 004 `recipe`/`action` provenance columns
-`source_blueprint_id`/`source_blueprint_version` are added in 004's migration.)
+**Migration `V6__recipe_blueprint.sql`** — `recipe_blueprint` (with `owner_id` →
+`app_user`), `blueprint_action`, and the blueprint child tables, plus `_aud`
+companions for the audited definition tables. (The 004 `recipe`/`action`
+provenance columns `source_blueprint_id`/`source_blueprint_version` are added in
+004's migration.)
 
 **Tests.**
 - `BlueprintServiceTest` (slice): author a blueprint with several actions +

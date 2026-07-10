@@ -75,10 +75,9 @@ the RESTEasy-beside-Spring-Boot seam works end to end.
 
 ## Known Gaps
 
-- **No authentication and no network-bind hardening.** Spring Boot's default bind
-  (all interfaces) stands; ARCH.md S1 lists loopback bind as the deferred
-  hardening. Per project decision, the "UI-only approval" invariant is enforced
-  **structurally** (no MCP approve tool — spec 004/008), not by auth; the REST
-  approval endpoint is knowingly reachable (S1/S8). No security spec is scheduled
-  yet — revisit when a trigger in the register fires.
+- **Authentication lands in spec 011**, which builds immediately after this
+  skeleton and 002 (before the machine registry). The skeleton itself adds no
+  auth; 011 adds Google login, per-user ownership, and the per-user MCP token.
+- **Still local (project decision).** Network-bind hardening (loopback bind, TLS)
+  and run rate-limiting remain tracked risks in ARCH.md, not built now.
 - No CI, containerization, or packaging — local dev run only.

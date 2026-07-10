@@ -19,7 +19,8 @@ that records exactly what ran under which approved definition.
 
 **`run/model/Run`** — append-only, **not** `@Audited`:
 - `String id`; `@ManyToOne Action action`; `@ManyToOne Machine machine`;
-  `Actor callerActor`; `String paramsJson` (supplied params snapshot);
+  `String callerUserId` + `Via via` (UI/MCP — who ran it);
+  `String paramsJson` (supplied params snapshot);
   `String resolvedArgvJson` (the exact argv executed); `String
   approvedSnapshotHash` (hash in force at run time); `RunStatus status`
   (`QUEUED | RUNNING | DONE | FAILED`); `Integer exitCode` (nullable);
@@ -27,13 +28,15 @@ that records exactly what ran under which approved definition.
   `Instant createdAt/startedAt/finishedAt`.
 
 **`run/service/RunService.run(machineId, actionId, params)`** — the gate:
-1. `requireMachine` (003) and `requireAction` (004).
+1. `requireMachine` (003) and `requireAction` (004) — both scoped to
+   `CurrentUser.require()`, so a user can only run against **his own** machines
+   (cross-user/missing → 404).
 2. Assert `action.approvalState == APPROVED`, else `ActionNotApprovedException`.
 3. Assert `ActionSnapshot.hash(action) == action.approvedSnapshotHash`, else
    `ActionModifiedException` (defends the 004 binding at run time).
 4. `ParamBinder.bind(action, params)` → argv (throws `ParamValidationException`).
-5. Persist `Run(QUEUED, callerActor=CurrentActor.require(), resolvedArgvJson,
-   approvedSnapshotHash)` (`@Transactional`), return its id.
+5. Persist `Run(QUEUED, callerUserId=CurrentUser.require(), via=CurrentUser.via(),
+   resolvedArgvJson, approvedSnapshotHash)` (`@Transactional`), return its id.
 6. Submit to the async executor; the task sets `RUNNING`, calls
    `SshExecutor.execStreaming` with an `OutputSink`, and on completion sets
    `exitCode` + `DONE`/`FAILED` (its own tx).
@@ -44,7 +47,8 @@ pushes stdout/stderr chunks to (a) SSE subscribers, (b) any MCP progress consume
 prefix then the live tail. Backed by the `config/AsyncConfig`
 `ThreadPoolTaskExecutor` (bounded core/max/queue).
 
-**`run/api/RunRS`** (`@Path("/runs")`):
+**`run/api/RunRS`** (`@Path("/runs")`, `@Secured`) — all endpoints scope to the
+current user's runs:
 - `POST /` — body `{machineId, actionId, params}` → `RunDtos.RunView` (runId +
   status). Used by the UI.
 - `GET /{id}` → `RunView` (status, exitCode, timestamps).
@@ -52,7 +56,7 @@ prefix then the live tail. Backed by the `config/AsyncConfig`
   JAX-RS `Sse`/`SseEventSink` (an allowed exception to "resources return DTOs").
 - `RunDtos`: `RunRequest`, `RunView.of(Run)`.
 
-**`run/repository/RunRepository`.** Migration `V4__run.sql` (`run` table, no
+**`run/repository/RunRepository`.** Migration `V5__run.sql` (`run` table, no
 `_aud`).
 
 **Tests.**
@@ -73,4 +77,5 @@ prefix then the live tail. Backed by the `config/AsyncConfig`
 - **Output is stored and streamed unredacted.** Service commands often print
   secrets (env, connection strings, `docker inspect`); the `Run` record and the
   unencrypted H2 DB then hold them. No redaction/retention policy in v1.
-- `get_run` / the output endpoint have no access control (paired with S1).
+- Output is scoped to the owning user (011), but there is no finer-grained access
+  control within a user's own runs.

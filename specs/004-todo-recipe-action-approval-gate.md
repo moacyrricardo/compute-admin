@@ -39,8 +39,10 @@ Action "restart nginx"  sudo=true
   human reads when approving); `boolean sudo`; `ApprovalState approvalState`
   (`DRAFT | PENDING_APPROVAL |
   APPROVED | REVOKED`, default `DRAFT`); `String approvedSnapshotHash` (nullable);
-  `Instant approvedAt` + `Actor approvedByActor` (nullable). `@OneToMany` ordered
-  `argTokens`, `@OneToMany paramDefs`.
+  `Instant approvedAt` + `String approvedByUserId` (nullable — the user who
+  approved, always via UI). `@OneToMany` ordered `argTokens`, `@OneToMany
+  paramDefs`. Ownership derives through `recipe.machine.owner` (011); every
+  recipe/action operation is scoped to the current user.
 - `ArgToken` — `String id`; `@ManyToOne Action action`; `int position`;
   `TokenKind kind` (`LITERAL | PARAM`); `String value` (literal text, or the
   param name for `PARAM`). Loaded ordered by `position`.
@@ -56,9 +58,10 @@ sudo)`. Deterministic; independent of ids/timestamps.
 **State machine (`recipe/service/ApprovalService`).**
 - `submitForApproval(actionId)`: `DRAFT → PENDING_APPROVAL`.
 - `approve(actionId)`: `PENDING_APPROVAL → APPROVED`; stores
-  `approvedSnapshotHash = hash(action)`, `approvedAt`, `approvedByActor =
-  CurrentActor.require()`. **REST-only** — reached only from `ActionRS`; the `mcp`
-  module never references `ApprovalService`.
+  `approvedSnapshotHash = hash(action)`, `approvedAt`, `approvedByUserId =
+  CurrentUser.require()`. **REST-only and UI-only** — reached only from
+  `ActionRS` (`@Secured`, so `via = UI`); the `mcp` module never references
+  `ApprovalService`, and a user may approve only his own actions.
 - `revoke(actionId)`: `APPROVED | PENDING_APPROVAL → REVOKED`.
 - Any **structural edit** (via `ActionService.editAction`) sets state `DRAFT` and
   clears `approvedSnapshotHash` — so an action cannot be approved benign then
@@ -78,8 +81,8 @@ sudo)`. Deterministic; independent of ids/timestamps.
   discrete argv elements — never a shell line (S4).
 
 **`recipe/api`.**
-- `RecipeRS` (`@Path("/recipes")`): create recipe, list actions.
-- `ActionRS` (`@Path("/actions")`): `POST /` add; `PUT /{id}` edit; `POST
+- `RecipeRS` (`@Path("/recipes")`, `@Secured`): create recipe, list actions.
+- `ActionRS` (`@Path("/actions")`, `@Secured`): `POST /` add; `PUT /{id}` edit; `POST
   /{id}/submit`; `POST /{id}/approve`; `POST /{id}/revoke`. Returns `RecipeDtos`
   records.
 - `RecipeDtos`: `RecipeRequest(machineId, name, description, type)`,
@@ -93,14 +96,16 @@ sudo)`. Deterministic; independent of ids/timestamps.
 `ParamValidationException` (400), `ActionNotApprovedException` (409),
 `IllegalApprovalTransitionException` (409).
 
-**`audit`.** Add `@Audited` on `Recipe`/`Action`; migration `V3__recipe_action.sql`
-creates `recipe`, `action`, `arg_token`, `param_def`, `param_allowed_value`, plus
-`recipe_aud`/`action_aud` (audited columns + `rev`/`revtype`). Header comment
-names spec 004.
+**`audit`.** Add `@Audited` on `Recipe`/`Action`; migration `V4__recipe_action.sql`
+creates `recipe` (with `source_blueprint_id`/`source_blueprint_version`
+provenance columns for 010), `action`, `arg_token`, `param_def`,
+`param_allowed_value`, plus `recipe_aud`/`action_aud` (audited columns +
+`rev`/`revtype`). Header comment names spec 004.
 
 **Tests.**
 - `ApprovalServiceTest` (`@DataJpaTest` slice): full transition matrix; edit of an
-  APPROVED action resets to DRAFT and clears the hash; approve records actor.
+  APPROVED action resets to DRAFT and clears the hash; approve records
+  `approvedByUserId`; approving another user's action → 404.
 - `ParamBinderTest` (unit): ALLOWED_SET/REGEX/INT_RANGE accept+reject; argv
   ordering; sudo prefix; rejection of out-of-set values.
 - `ActionSnapshotTest`: hash stable across id/timestamp changes, differs on
