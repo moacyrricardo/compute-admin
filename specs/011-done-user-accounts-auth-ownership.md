@@ -1,6 +1,6 @@
 # 011 — User accounts, authentication & ownership
 
-> **Status:** doing — branch `moacyrricardo/spec-011-user-accounts-auth-ownership`
+> **Status:** done — branch `moacyrricardo/spec-011-user-accounts-auth-ownership`
 > (stacked on `moacyrricardo/spec-002-mcp-transport-seam`). Linear is BLOCKED for
 > this repo, so no issue identifier. The per-entity ownership retrofit
 > (`Machine`/`Recipe`/`Run` owner columns and their 404-on-cross-user tests) lands
@@ -166,3 +166,52 @@ fallback (SDK-version dependent — confirm at build).
   approval screen is the trust surface — the human must confirm they actually
   initiated the pairing before approving (a phishing-style "approve this code"
   prompt is the residual risk; acceptable on a single local instance).
+
+## Implementation Notes
+
+Built as specified — the auth foundation (Google login + app JWT, personal
+tokens, RFC 8628-style pairing, `AuthContext`/`CurrentUser`/`Via`, the two
+path-scoped auth filters, `V2__auth.sql`) landed intact, superseding spec-002's
+transport-only `Actor` placeholder. Divergences and deferrals:
+
+- **MCP bootstrap tools (`begin_setup`/`complete_setup`) not built here.** The
+  spec always located them in the `mcp` module (spec 008); this branch builds the
+  `PairingService` (`begin`/`poll`/`approve`/`deny`) they delegate to and exercises
+  it through the service and the `@Secured` `PairingRS` UI actions, but the two
+  unauthenticated MCP bootstrap tools themselves land with spec 008. So the
+  pairing flow is complete and tested end-to-end over REST, not yet drivable over
+  the MCP transport.
+
+- **MCP actor does not yet propagate into tool callbacks.** `McpTokenAuthFilter`
+  authenticates the personal token on `/mcp/*` (rejecting revoked/absent — the
+  unauthenticated session reaches no data-bearing tool, resolving S8) and binds
+  `AuthContext` on the Tomcat request thread. But, as recorded in spec-002's known
+  gap, the MCP SDK runs sync tool callbacks on a Reactor `boundedElastic` thread,
+  and `ScopedValue` is thread-confined, so `CurrentUser` is unbound *inside* tools.
+  `list_machines` never reads it, so nothing breaks; re-establishing the binding on
+  the handler thread lands with the first tool that needs the actor (spec 008).
+
+- **Envers listener deferred.** Envers is configured but audits nothing yet (no
+  owned entities exist). The `CurrentUser` facade already exposes
+  `userIdOrSystem()` + `via()` for it; the `CurrentUserRevisionListener` (the
+  rename of spec-002's `CurrentActorRevisionListener`) is wired with the first
+  audited entity, not here.
+
+- **Per-entity ownership retrofit deferred, as anticipated.** `Machine`/`Recipe`/
+  `Run` owner columns and their cross-user-404 tests land with specs 003/004/005/
+  010 once those entities exist. The only ownership boundary present today — the
+  personal token — is covered by `OwnershipWebTest`.
+
+- **Post-review follow-ups (commit `615c405`, from spec-eval).** `AppUser` /
+  `PersonalToken` entity `@Column` lengths were made explicit to match
+  `V2__auth.sql` (no runtime effect under `ddl-auto=none`; consistency with the
+  ARCH.md entity convention), and `PairingService` now evicts its in-memory
+  `pendingPlaintext`/`lastPollAt` entries on every terminal poll branch so the maps
+  stay bounded.
+
+- **Dependencies.** Added jjwt 0.12.6 (HS256 app JWT) and google-api-client 2.7.0
+  (Google ID-token verification), plus an explicit Lombok annotation-processor path
+  in `pom.xml` (JDK 23+ disables implicit annotation processing).
+
+The change-division note is omitted — this repo has no `CONTRIBUTING.md`, so there
+is no project authority to assess the commit/PR split against.
