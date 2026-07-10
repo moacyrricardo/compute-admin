@@ -20,6 +20,12 @@ mvn -q spring-boot:run -Dspring-boot.run.profiles=dev
 - Serves `GET /api/health` (JSON `{status, version}`) and the static UI shell at `/`.
 - Uses the H2 **file** DB at `./data/compute-admin`; Flyway owns the schema.
 
+## API Modules
+
+**None.** compute-admin is a single deployable application (MCP server + web UI);
+no module's compiled artifact is consumed as a library by another service, so
+finish-branch closeouts skip the API Diff subsection.
+
 ## Linear
 
 Title prefix **`CA:`** (team `BOL`).

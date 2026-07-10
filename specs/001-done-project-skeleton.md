@@ -1,6 +1,6 @@
 # 001 — Project skeleton
 
-> Status: **doing** — branch `moacyrricardo/spec-001-project-skeleton`. Linear is
+> Status: **done** — branch `moacyrricardo/spec-001-project-skeleton`. Linear is
 > BLOCKED for this repo, so no issue identifier.
 
 ## Context
@@ -88,3 +88,41 @@ the RESTEasy-beside-Spring-Boot seam works end to end.
 - **Still local (project decision).** Network-bind hardening (loopback bind, TLS)
   and run rate-limiting remain tracked risks in ARCH.md, not built now.
 - No CI, containerization, or packaging — local dev run only.
+
+## Implementation Notes
+
+Shipped as specified; the skeleton boots, serves `GET /api/health`, and serves the
+static shell. Conventions from ARCH.md "Code conventions" are honoured: single
+`service`-style layering (none needed yet), `HealthRS` is a `@Component @Path
+@Produces(APPLICATION_JSON)` resource returning the `CommonDtos.Health` record,
+`CommonDtos` is a `final` class with a private ctor, `JaxRsApplication` is the
+empty `@Component @ApplicationPath("/api")` root, Flyway owns the schema
+(`ddl-auto=none`, `V1__baseline.sql` comment-only), Envers is wired but inert, and
+no `spring-boot-starter-validation` is on the classpath. String-UUID PKs and the
+`ScopedValue` actor have no surface yet (no entities/requests) — they arrive with
+their first consumers (003 / 011).
+
+Where implementation went beyond the spec's letter:
+
+- **Build version wiring.** Rather than leaving `ca.version` at its `@Value`
+  default, `application.yml` sets `ca.version: '@project.version@'`, filtered by
+  the Spring Boot parent's Maven resources plugin, so a packaged jar reports the
+  real build version; the `@Value("${ca.version:dev}")` default still covers
+  unfiltered IDE runs.
+- **Hermetic web tests.** The spec's Tests section only named
+  `@SpringBootTest(RANDOM_PORT)` + `TestRestTemplate`. Added
+  `src/test/resources/application-test.yml` (in-memory H2) and `@ActiveProfiles
+  ("test")` on `HealthWebTest` so full-context tests never touch or create the
+  file-based dev DB (`./data/compute-admin`). This is the pattern every later
+  `*WebTest` inherits.
+- **Concrete version pins.** Spring Boot is pinned to `3.5.16` (the "latest 3.5.x
+  patch" the spec calls for, Java-25-capable Byte Buddy); the RESTEasy starter is
+  pinned to `6.3.0.Final` via a property; `h2` is `runtime`-scoped and Lombok is
+  `optional` with the Spring Boot plugin excluding it from the fat jar.
+
+**Change division.** No `CONTRIBUTING.md` in the repo, so there is no
+project-specific commit/PR policy to assess against. The work landed as four
+`spec-001` commits on one branch (initial skeleton, then build-version wiring, test
+DB isolation, and the Boot patch pin) with the `V1` migration travelling in the
+skeleton commit alongside the code it backs — consistent with the cross-project
+default in the global conventions.
