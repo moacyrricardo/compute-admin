@@ -17,8 +17,11 @@ import java.util.List;
  * {@link MinaSshExecutor} against a throwaway sshd container (see project
  * {@code CLAUDE.md}); this exists only for fully offline work.
  *
- * <p>argv is passed as discrete process arguments (never a shell line) and
- * {@code sudo} prepends {@code sudo -n} — mirroring the real adapter's contract.
+ * <p>argv is handed straight to {@code ProcessBuilder} as discrete process
+ * arguments (no shell involved at all) and {@code sudo} prepends {@code sudo -n}.
+ * This honours the same argv-in, injection-safe {@link SshExecutor} contract as the
+ * real adapter — which reaches the same guarantee by single-quoting each element
+ * into the shell line SSH {@code exec} runs, rather than through the OS process API.
  *
  * <p>spec-003.
  */

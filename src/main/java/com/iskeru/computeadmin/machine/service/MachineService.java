@@ -62,11 +62,20 @@ public class MachineService {
         if (loginUser == null || loginUser.isBlank()) {
             throw new BadRequestException("loginUser is required");
         }
+        AppUser owner = currentUser();
+        String normalizedHost = host.trim();
+        String normalizedLoginUser = loginUser.trim();
+        // Pre-check the uq_machine_owner_host_port_user key so a re-registration
+        // returns a clean 409 rather than surfacing the constraint violation as 500.
+        if (machines.existsByOwnerIdAndHostAndPortAndLoginUser(
+                owner.getId(), normalizedHost, port, normalizedLoginUser)) {
+            throw new MachineAlreadyRegisteredException(normalizedHost, port, normalizedLoginUser);
+        }
         Machine machine = new Machine();
-        machine.setOwner(currentUser());
-        machine.setHost(host.trim());
+        machine.setOwner(owner);
+        machine.setHost(normalizedHost);
         machine.setPort(port);
-        machine.setLoginUser(loginUser.trim());
+        machine.setLoginUser(normalizedLoginUser);
         return machines.save(machine);
     }
 
