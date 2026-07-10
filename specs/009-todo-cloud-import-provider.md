@@ -1,5 +1,11 @@
 # 009 — Cloud import (discovery provider)
 
+> **PARKED — fast-follow (decision 2026-07-10).** Build `001`–`008` (the core:
+> register → recipe → gate → run → discover → MCP) end-to-end first, then return
+> to deepen this spec. Left intentionally at sketch depth until scheduled. This
+> also lets S3 (host-key verification) be revisited before importing dynamic,
+> IP-recycled cloud hosts.
+
 ## Context
 
 Registering machines one at a time does not scale to an existing fleet. This spec
