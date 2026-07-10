@@ -21,9 +21,11 @@ import java.util.List;
  * Real {@link SshExecutor} over Apache MINA SSHD. Connects as the target's login
  * user, authenticates with the app keypair ({@link KeyService}), and accepts any
  * host key ({@link AcceptAllServerKeyVerifier}, S3). {@code sudo} prefixes the
- * argv with {@code sudo -n} (passwordless, S5). Each argv element is
- * single-quoted so a typed parameter is bound as one argument and cannot break
- * out into an injection (S4) — never a raw shell line.
+ * argv with {@code sudo -n} (passwordless, S5). The SSH {@code exec} channel has
+ * no argv-level protocol, so the command necessarily reaches the target as a
+ * single shell line; the S4 injection guarantee is therefore delivered by POSIX
+ * single-quoting each argv element into that line, so a typed parameter stays one
+ * literal argument and cannot break out.
  *
  * <p>Default bean; the {@code localssh} profile swaps in {@link LocalDevSshExecutor}.
  *

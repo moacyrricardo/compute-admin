@@ -15,7 +15,11 @@ spring:
     hibernate:
       ddl-auto: none
     properties:
-      # Flyway owns the schema; Envers configured but audits nothing yet.
+      # Flyway owns the schema. Envers uses the validity audit strategy (REV +
+      # REVEND on each _aud table) per ARCH.md, so every audited row carries its
+      # own validity interval; the hand-written _aud migrations add the REVEND
+      # column + FK to revinfo.
+      org.hibernate.envers.audit_strategy: org.hibernate.envers.strategy.internal.ValidityAuditStrategy
       org.hibernate.envers.audit_table_suffix: _aud
       org.hibernate.envers.store_data_at_delete: true
   flyway:

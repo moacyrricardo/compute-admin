@@ -48,12 +48,15 @@ CREATE TABLE machine_tag (
     CONSTRAINT fk_machine_tag_tag FOREIGN KEY (tag_id) REFERENCES tag (id)
 );
 
--- Audit table for `machine` (default Envers strategy: rev + revtype only; tag
--- membership is @NotAudited so no machine_tag_aud). owner_id is stored with its
--- target un-audited.
+-- Audit table for `machine`. Envers runs the validity audit strategy (ARCH.md),
+-- so besides `rev`/`revtype` each row carries `revend`: the revision at which
+-- this version stopped being current (NULL while current). Envers back-fills it
+-- when the next revision of the same row lands. `tag` membership is @NotAudited
+-- (no machine_tag_aud); owner_id is stored with its target un-audited.
 CREATE TABLE machine_aud (
     id              VARCHAR(36) NOT NULL,
     rev             BIGINT      NOT NULL,
+    revend          BIGINT,
     revtype         TINYINT,
     owner_id        VARCHAR(36),
     host            VARCHAR(255),
@@ -64,5 +67,6 @@ CREATE TABLE machine_aud (
     created_at      TIMESTAMP,
     updated_at      TIMESTAMP,
     CONSTRAINT pk_machine_aud PRIMARY KEY (id, rev),
-    CONSTRAINT fk_machine_aud_rev FOREIGN KEY (rev) REFERENCES revinfo (rev)
+    CONSTRAINT fk_machine_aud_rev FOREIGN KEY (rev) REFERENCES revinfo (rev),
+    CONSTRAINT fk_machine_aud_revend FOREIGN KEY (revend) REFERENCES revinfo (rev)
 );

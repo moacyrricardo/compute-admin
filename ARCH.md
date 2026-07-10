@@ -102,8 +102,11 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
    `pending_approval` (so an agent can ask a human to approve) but the run tool
    refuses them.
 5. **Parameter safety:** templates use **named, typed, validated** params
-   (enum/regex/allowed-set). Values are bound as **argv elements**, never string-
-   concatenated into a shell line, to avoid injection (see S4).
+   (enum/regex/allowed-set). Values are handled as **discrete argv elements**,
+   never naively string-concatenated. Where a transport has no argv protocol (SSH
+   `exec` runs one shell line), each element is POSIX single-quoted into that line
+   so it stays one literal argument — the injection guarantee is the escaping, not
+   the absence of a shell (see S4).
 
 ## Ports & contracts
 
@@ -264,7 +267,7 @@ not deleted.
 | **S1'** | **Transport still unhardened** — single local instance, default (non-loopback) bind, no TLS, no CSRF/Origin check on the JWT-authenticated UI. | Still one **local** instance; auth (S1) now enforces per-user isolation. | Before any non-local/shared/deployed use: bind `127.0.0.1`, add TLS, add Origin/CSRF checks on `/api`. |
 | **S2** | **One app-owned private key, unencrypted on disk** (`./data/id_ed25519`, `chmod 600`), shared across **all** users' machines. Per-user isolation is logical (DB ownership), not cryptographic — the single key can reach any registered machine, so an ownership-scoping bug crosses the tenant boundary. | One local box; filesystem perms are the boundary; ownership checks are covered by tests (011). | Backups leaving the box or any deployment → encrypt at rest (passphrase/KMS envelope) and/or move to an agent. If per-tenant key isolation is ever needed, give each user their own keypair. |
 | **S3** | **No SSH host-key verification** — the app accepts any target host key. | Speeds up onboarding; targets are ones you control on a LAN. | Any untrusted network path to a target → enable TOFU pinning (capture at registration, verify after; UI re-approve on change). The `machine` model should leave room for a pinned host-key column. |
-| **S4** | **Typed params are bound into command templates.** Every param is an injection surface if validation is weak. | Params are enum/regex/allowed-set validated and bound as argv, not shell-concatenated. | Any template that must go through a shell, or free-form params, needs a stricter allowlist + a security review. Never add a "free-form command" param. |
+| **S4** | **Typed params are bound into command templates.** Every param is an injection surface if validation is weak. | Params are enum/regex/allowed-set validated and kept as discrete argv; the SSH adapter, which has no argv protocol, POSIX single-quotes each element into the one shell line `exec` runs, so the guarantee is the escaping, not the absence of a shell. | Any free-form param, or a template whose structure (not just values) is caller-controlled, needs a stricter allowlist + a security review. Never add a "free-form command" param. |
 | **S5** | **Per-action `sudo` assumes passwordless sudo** on the target for service ops. | You grant the login user scoped passwordless sudo out of band. | Prefer a narrow sudoers allowlist per command over blanket NOPASSWD; document what each machine's login user is allowed to escalate. |
 | **S6** | **Cloud credentials** for discovery (AWS/GCP/Magalu) read from ambient env/instance profile. | Local dev uses your own already-present credentials. | Before multi-tenant or deployed use: scope to read-only `Describe*`/list permissions, store per-provider config as secrets, never in the DB in plaintext. |
 | **S7** | **No rate limiting / concurrency cap** on runs. A misbehaving agent could fan out many commands. | Local instance, low volume; each user only drives his own machines. | Add a per-machine concurrency cap + a per-user/global run quota before shared or higher-volume use. |

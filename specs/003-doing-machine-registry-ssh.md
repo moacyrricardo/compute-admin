@@ -108,7 +108,8 @@ revision written on a real change records `via = SYSTEM`. `config/SchedulingConf
 
 **Migration `V3__machine.sql`.** `machine` (with `owner_id` → `app_user`), `tag`
 (with `owner_id`), `machine_tag`; the `revinfo` table; `machine_aud` (all audited
-columns + `rev`/`revtype`); H2 dialect; named `uq_`/`fk_` constraints;
+columns + `rev`/`revtype`/`revend`, the last two FKs to `revinfo` per the validity
+audit strategy); H2 dialect; named `uq_`/`fk_` constraints;
 spec-referencing header comment. (`app_user` exists from 011 `V2`.)
 
 **Dev target (project `CLAUDE.md`).** Document a throwaway sshd container recipe
