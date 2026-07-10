@@ -1,5 +1,13 @@
 # 011 — User accounts, authentication & ownership
 
+> **Status:** doing — branch `moacyrricardo/spec-011-user-accounts-auth-ownership`
+> (stacked on `moacyrricardo/spec-002-mcp-transport-seam`). Linear is BLOCKED for
+> this repo, so no issue identifier. The per-entity ownership retrofit
+> (`Machine`/`Recipe`/`Run` owner columns and their 404-on-cross-user tests) lands
+> with specs 003/004/005/010 when those entities exist; this branch builds the
+> auth foundation and the one ownership boundary already present — the personal
+> token.
+
 ## Context
 
 compute-admin is **user-based**: a user signs in, registers **his own**

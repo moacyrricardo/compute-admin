@@ -1,16 +1,21 @@
 package com.iskeru.computeadmin.mcp;
 
+import com.iskeru.computeadmin.auth.api.AuthDtos;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Duration;
@@ -20,23 +25,20 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Proves the MCP transport seam end to end: over the real HTTP/SSE servlet an MCP
- * client initializes, discovers {@code list_machines}, calls it, and gets an empty
- * result back. Confirms the raw-servlet-beside-RESTEasy wiring responds.
+ * Proves the MCP transport seam end to end <em>through the personal-token auth
+ * filter</em> (spec-011): with a valid token an MCP client initializes, discovers
+ * {@code list_machines}, calls it, and gets an empty result back.
  *
- * <p>Runs under the {@code test} profile for a hermetic in-memory datasource, and
- * supplies a {@code @Primary} stub {@link MachineService} so the assertion doesn't
- * depend on the spec-002 stub's body.
+ * <p>Runs under the {@code test} profile for a hermetic in-memory datasource and
+ * the dev Google bypass, and supplies a {@code @Primary} stub {@link
+ * MachineService} so the assertion doesn't depend on the spec-002 stub's body.
  *
- * <p><strong>Scope note:</strong> this test does <em>not</em> prove that the
- * ambient {@code Actor} bound by {@code ActorScopeFilter} reaches a tool handler.
- * The MCP SDK runs sync tool callbacks on a Reactor {@code boundedElastic} thread,
- * not the Tomcat request thread, so {@code CurrentActor} is unbound inside a tool;
- * {@code list_machines} never reads it, so nothing here exercises that path. Actor
- * propagation into tools is unproven until a tool needs it (spec 008/011). See
- * specs/002-doing-mcp-transport-seam.md, "Known Gaps".
+ * <p><strong>Scope note (unchanged from spec-002):</strong> this does not prove
+ * that the bound {@code AuthContext} reaches a tool handler — the MCP SDK runs
+ * sync tool callbacks on a Reactor thread, so {@code CurrentUser} is unbound
+ * inside a tool. Propagation into tools remains a spec-008 concern.
  *
- * <p>spec-002.
+ * <p>spec-011.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -44,6 +46,9 @@ class McpSeamWebTest {
 
     @LocalServerPort
     private int port;
+
+    @Autowired
+    private TestRestTemplate rest;
 
     @TestConfiguration
     static class StubMachineServiceConfig {
@@ -61,10 +66,13 @@ class McpSeamWebTest {
     }
 
     @Test
-    void seam_ListsToolsAndCallsListMachines_RespondsWithEmptyResult() {
+    void seam_WithValidToken_ListsToolsAndCallsListMachines() {
+        String personalToken = provisionPersonalToken("seam@example.com");
+
         HttpClientSseClientTransport transport = HttpClientSseClientTransport
                 .builder("http://localhost:" + port)
                 .sseEndpoint("/mcp/sse")
+                .customizeRequest(req -> req.header("Authorization", "Bearer " + personalToken))
                 .build();
 
         try (McpSyncClient client = McpClient.sync(transport)
@@ -85,5 +93,18 @@ class McpSeamWebTest {
             assertThat(result.content().get(0)).isInstanceOf(McpSchema.TextContent.class);
             assertThat(((McpSchema.TextContent) result.content().get(0)).text()).isEqualTo("[]");
         }
+    }
+
+    /** Logs in via the dev Google bypass and mints a personal token for MCP. */
+    private String provisionPersonalToken(String email) {
+        AuthDtos.Session session = rest.postForObject(
+                "/api/auth/google", new AuthDtos.GoogleLogin(email), AuthDtos.Session.class);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(session.token());
+        AuthDtos.CreatedTokenView created = rest.postForObject(
+                "/api/tokens",
+                new HttpEntity<>(new AuthDtos.TokenCreate("mcp-seam"), headers),
+                AuthDtos.CreatedTokenView.class);
+        return created.token();
     }
 }
