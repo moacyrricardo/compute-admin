@@ -1,0 +1,10 @@
+# compute-admin test profile (spec-001).
+# Isolates full-context *WebTests from the file-based dev datasource declared in
+# application.yml (jdbc:h2:file:./data/compute-admin;AUTO_SERVER=TRUE) by pointing
+# them at an in-memory H2 instead, so a test run neither creates nor pollutes
+# ./data/compute-admin and stays hermetic and repeatable. This is the skeleton
+# every later *WebTest inherits: activate it with @ActiveProfiles("test"). The rest
+# of the base config (Flyway, JPA, Envers) still applies unchanged.
+spring:
+  datasource:
+    url: jdbc:h2:mem:compute-admin-test;DB_CLOSE_DELAY=-1
