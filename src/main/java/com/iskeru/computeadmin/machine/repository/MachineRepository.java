@@ -20,4 +20,6 @@ public interface MachineRepository extends JpaRepository<Machine, String> {
     List<Machine> findByOwnerIdAndTags_Name(String ownerId, String tag);
 
     Optional<Machine> findByIdAndOwnerId(String id, String ownerId);
+
+    boolean existsByOwnerIdAndHostAndPortAndLoginUser(String ownerId, String host, int port, String loginUser);
 }

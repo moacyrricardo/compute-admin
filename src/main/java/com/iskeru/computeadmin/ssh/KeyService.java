@@ -170,8 +170,8 @@ public class KeyService {
 
     private static void restrictToOwner(Path path) {
         try {
-            Set<PosixFilePermission> owin = PosixFilePermissions.fromString("rw-------");
-            Files.setPosixFilePermissions(path, owin);
+            Set<PosixFilePermission> ownerOnlyPerms = PosixFilePermissions.fromString("rw-------");
+            Files.setPosixFilePermissions(path, ownerOnlyPerms);
         } catch (UnsupportedOperationException | IOException e) {
             // Non-POSIX filesystem (e.g. Windows/CI): best-effort, perms are the S2 boundary.
         }

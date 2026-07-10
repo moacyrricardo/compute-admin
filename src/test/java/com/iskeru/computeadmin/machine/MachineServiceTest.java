@@ -6,6 +6,7 @@ import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.repository.TagRepository;
+import com.iskeru.computeadmin.machine.service.MachineAlreadyRegisteredException;
 import com.iskeru.computeadmin.machine.service.MachineNotFoundException;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
@@ -65,6 +66,26 @@ class MachineServiceTest {
         assertThat(machine.getOwner().getId()).isEqualTo(alice.getId());
         assertThat(asUser(alice, () -> machineService.list(null))).hasSize(1);
         assertThat(asUser(bob, () -> machineService.list(null))).isEmpty();
+    }
+
+    @Test
+    void register_DuplicateHostPortLoginUser_ThrowsAlreadyRegistered() {
+        asUser(alice, () -> machineService.register(new RegisterMachineInput("host-a", 22, "root")));
+
+        assertThatThrownBy(() -> asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("  host-a  ", 22, "  root  "))))
+                .isInstanceOf(MachineAlreadyRegisteredException.class);
+    }
+
+    @Test
+    void register_SameHostForAnotherUser_IsAllowed() {
+        asUser(alice, () -> machineService.register(new RegisterMachineInput("shared-host", 22, "root")));
+
+        Machine bobMachine = asUser(bob, () -> machineService.register(
+                new RegisterMachineInput("shared-host", 22, "root")));
+
+        assertThat(bobMachine.getId()).isNotBlank();
+        assertThat(bobMachine.getOwner().getId()).isEqualTo(bob.getId());
     }
 
     @Test

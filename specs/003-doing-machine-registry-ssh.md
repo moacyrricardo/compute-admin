@@ -47,13 +47,17 @@ with `List<Machine> findByOwnerId(String)` and
 **`machine/service`.**
 - `MachineService` — every method resolves `CurrentUser.require()` and scopes to
   the owner. `register(RegisterMachineInput)` (validate host non-blank, port
-  1–65535, loginUser non-blank; sets `owner = current user`; `@Transactional`),
+  1–65535, loginUser non-blank; sets `owner = current user`; `@Transactional`;
+  pre-checks the `uq_machine_owner_host_port_user` key and throws
+  `MachineAlreadyRegisteredException` — 409 — so re-adding a host is a clean
+  conflict, not the raw constraint-violation 500),
   `tag(id, Set<String>)` (get-or-create the current user's tags), `untag(id,
   name)`, `list(String tag)` (the current user's machines, all or by tag),
   `requireMachine(id)` (must belong to the current user, else
   `MachineNotFoundException` — 404, existence not leaked). `RegisterMachineInput`
   is a service-input record.
 - `MachineNotFoundException` (Javadoc: mapped to 404).
+- `MachineAlreadyRegisteredException` (Javadoc: mapped to 409).
 
 **`machine/api`.**
 - `MachineRS` (`@Component @Path("/machines")`, `@Secured`): `POST /` register; `GET /?tag=`
@@ -71,8 +75,13 @@ with `List<Machine> findByOwnerId(String)` and
   stdout/stderr chunks + completion).
 - `MinaSshExecutor` — **default** bean, Apache MINA SSHD client, authenticates
   with the app keypair, `AcceptAllServerKeyVerifier` (S3). `sudo` prefixes the
-  argv with `sudo -n` (passwordless, S5). argv passed as discrete arguments,
-  never a shell line (S4).
+  argv with `sudo -n` (passwordless, S5). SSH `exec` inherently runs a single
+  command string through the remote shell, so the executor POSIX-**single-quotes**
+  each argv element into that string — every typed parameter stays one literal
+  argument and cannot break out into an injection (S4). Only `LocalDevSshExecutor`
+  passes true argv (via `ProcessBuilder`, no shell); the `SshExecutor` port
+  contract is *argv-in, injection-safe* and the two adapters honour it by
+  different means.
 - `LocalDevSshExecutor` — `localssh` profile only; runs argv against localhost for
   offline work. The normal dev/verify path uses `MinaSshExecutor` against the
   Docker container.
@@ -106,10 +115,18 @@ installed in `authorized_keys`, and how the verify flow connects to it.
 **Tests.**
 - `MachineServiceTest` — `@DataJpaTest` + `@AutoConfigureTestDatabase(replace=NONE)`
   + `@Import(MachineService.class)`: register scopes to owner, dedup tags per
-  owner, list-by-tag, `requireMachine` on another user's machine → 404.
+  owner, list-by-tag, `requireMachine` on another user's machine → 404,
+  re-registering the same host/port/loginUser → `MachineAlreadyRegisteredException`.
+- `MachineAuditTest` — `@DataJpaTest` + `@Import(MachineService.class)`: a UI-scoped
+  `Machine` write opens a `machine_aud` revision whose `revinfo` row is stamped with
+  the acting `user_id` and `via = UI`; a system-scoped write stamps `user_id = null`
+  and `via = SYSTEM`. Reads back via the Envers `AuditReader`.
 - `MachineWebTest` — `@SpringBootTest(RANDOM_PORT)`: authenticate via the dev
   Google bypass (011), register + list round-trip; user B gets 404 on user A's
   machine. `@TestConfiguration @Bean @Primary` fake `SshExecutor`.
+- `MinaSshExecutorTest` — pure unit test of `assembleCommand`: each argv element is
+  POSIX single-quoted, spaces/quotes/shell metacharacters (`;`, `$(…)`, backticks)
+  stay one literal argument (S4), and `sudo` prepends bare `sudo -n`.
 - `SshKeyTest` — key generated on first boot, public key/fingerprint exposed.
 
 ## Known Gaps
