@@ -53,6 +53,12 @@ public class ListMachinesTool implements McpTool {
     }
 
     private McpSchema.CallToolResult call(McpSyncServerExchange exchange, Map<String, Object> arguments) {
+        // NOTE: this callback runs on a Reactor boundedElastic thread (the MCP SDK
+        // adapts sync tools via Mono.fromCallable(...).subscribeOn(...)), not the
+        // Tomcat request thread where ActorScopeFilter bound ScopedValue<Actor>.
+        // CurrentActor is therefore UNBOUND here — do not call CurrentActor.require()
+        // from a tool without first re-establishing the binding on this thread.
+        // See specs/002-doing-mcp-transport-seam.md, "Known Gaps".
         String tag = arguments == null ? null : (String) arguments.get("tag");
         List<String> machines = machineService.list(tag);
         try {

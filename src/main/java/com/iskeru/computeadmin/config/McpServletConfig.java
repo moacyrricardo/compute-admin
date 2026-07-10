@@ -21,6 +21,16 @@ import java.util.List;
  * MCP endpoint never touches Spring MVC and never pulls in
  * {@code spring-ai-starter-mcp-server-webmvc}.
  *
+ * <p><strong>Known gap — the ambient actor does not reach tool handlers.</strong>
+ * {@code ActorScopeFilter} binds {@code ScopedValue<Actor>} on the Tomcat request
+ * thread, but the MCP SDK (mcp 0.11.2) adapts a sync tool via
+ * {@code Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())}, so tool
+ * callbacks execute on a Reactor pool thread, not the request thread. Since a
+ * {@code ScopedValue} is thread-confined, {@code CurrentActor.require()} would
+ * throw inside any tool. A tool that actually needs the actor (spec 008/011) must
+ * re-establish the binding on the handler thread rather than assume it is present.
+ * See specs/002-doing-mcp-transport-seam.md, "Known Gaps".
+ *
  * <p>spec-002.
  */
 @Configuration
