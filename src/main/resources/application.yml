@@ -22,4 +22,7 @@ spring:
     enabled: true
 
 ca:
-  version: dev
+  # Filtered by the Maven resources plugin (spring-boot-starter-parent uses the
+  # @...@ delimiter) so the packaged jar reports the real build version. Falls
+  # back to the @Value default ("dev") for unfiltered IDE runs.
+  version: '@project.version@'
