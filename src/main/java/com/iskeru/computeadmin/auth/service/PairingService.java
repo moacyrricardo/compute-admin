@@ -100,11 +100,18 @@ public class PairingService {
         }
         if (isExpired(request)) {
             request.setStatus(PairingStatus.EXPIRED);
+            forget(request.getId());
             return PollResult.of(PollState.EXPIRED);
         }
         return switch (request.getStatus()) {
-            case DENIED -> PollResult.of(PollState.DENIED);
-            case EXPIRED, CONSUMED -> PollResult.of(PollState.EXPIRED);
+            case DENIED -> {
+                forget(request.getId());
+                yield PollResult.of(PollState.DENIED);
+            }
+            case EXPIRED, CONSUMED -> {
+                forget(request.getId());
+                yield PollResult.of(PollState.EXPIRED);
+            }
             case PENDING -> pollPending(request);
             case APPROVED -> drainApproved(request);
         };
@@ -128,6 +135,16 @@ public class PairingService {
         return plaintext == null
                 ? PollResult.of(PollState.EXPIRED)
                 : new PollResult(PollState.APPROVED, plaintext);
+    }
+
+    /**
+     * Drop the in-memory poll/plaintext state for a finished pairing so both maps
+     * stay bounded. A well-behaved client polls until it observes a terminal state,
+     * and that terminal poll evicts its own entries here.
+     */
+    private void forget(String pairingId) {
+        pendingPlaintext.remove(pairingId);
+        lastPollAt.remove(pairingId);
     }
 
     @Transactional

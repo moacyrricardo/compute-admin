@@ -41,10 +41,10 @@ public class PersonalToken {
             foreignKey = @ForeignKey(name = "fk_personal_token_owner"))
     private AppUser owner;
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 255)
     private String label;
 
-    @Column(name = "token_hash", nullable = false)
+    @Column(name = "token_hash", nullable = false, length = 64)
     private String tokenHash;
 
     @Column(name = "created_at", nullable = false)

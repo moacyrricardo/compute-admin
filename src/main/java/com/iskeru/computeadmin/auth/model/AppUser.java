@@ -33,13 +33,13 @@ public class AppUser {
     @Column(length = 36)
     private String id = UUID.randomUUID().toString();
 
-    @Column(nullable = false)
+    @Column(nullable = false, length = 320)
     private String email;
 
-    @Column
+    @Column(length = 255)
     private String name;
 
-    @Column(name = "google_sub", nullable = false)
+    @Column(name = "google_sub", nullable = false, length = 255)
     private String googleSub;
 
     @Column(name = "created_at", nullable = false)
