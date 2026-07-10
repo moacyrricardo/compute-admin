@@ -28,10 +28,16 @@ Action "restart nginx"  sudo=true
 
 **`recipe/model`.**
 - `Recipe` — `@Audited`; `String id`; `@ManyToOne Machine machine`; `name`;
+  `String description` (free text, display-only, never executed);
   `RecipeType type` (`NGINX | DOCKER | DATABASE | CRON | CUSTOM`, `@Enumerated
-  STRING`); `Instant createdAt`.
+  STRING`); `Instant createdAt`. A recipe belongs to exactly **one** machine;
+  cross-machine reuse comes from **blueprints** (spec 010), which instantiate
+  per-machine recipes — nullable provenance `sourceBlueprintId` +
+  `sourceBlueprintVersion` record where an instantiated recipe came from.
 - `Action` — `@Audited`; `String id`; `@ManyToOne Recipe recipe`; `name`;
-  `boolean sudo`; `ApprovalState approvalState` (`DRAFT | PENDING_APPROVAL |
+  `String description` (free text, display-only, never executed — this is what a
+  human reads when approving); `boolean sudo`; `ApprovalState approvalState`
+  (`DRAFT | PENDING_APPROVAL |
   APPROVED | REVOKED`, default `DRAFT`); `String approvedSnapshotHash` (nullable);
   `Instant approvedAt` + `Actor approvedByActor` (nullable). `@OneToMany` ordered
   `argTokens`, `@OneToMany paramDefs`.
@@ -76,9 +82,11 @@ sudo)`. Deterministic; independent of ids/timestamps.
 - `ActionRS` (`@Path("/actions")`): `POST /` add; `PUT /{id}` edit; `POST
   /{id}/submit`; `POST /{id}/approve`; `POST /{id}/revoke`. Returns `RecipeDtos`
   records.
-- `RecipeDtos`: `RecipeRequest`, `AddActionRequest(recipeId, name, sudo,
-  List<ArgTokenInput>, List<ParamDefInput>)`, `ActionView.of(Action)` (includes
-  `approvalState` and a `pendingApproval` flag), `ParamDefView`, `ArgTokenView`.
+- `RecipeDtos`: `RecipeRequest(machineId, name, description, type)`,
+  `AddActionRequest(recipeId, name, description, sudo, List<ArgTokenInput>,
+  List<ParamDefInput>)`, `ActionView.of(Action)` (includes `description`,
+  `approvalState`, and a `pendingApproval` flag), `RecipeView.of(Recipe)`
+  (includes `description` + provenance), `ParamDefView`, `ArgTokenView`.
 
 **Exceptions** (domain in `recipe/service`, mappers in `common`):
 `RecipeNotFoundException`/`ActionNotFoundException` (404),
