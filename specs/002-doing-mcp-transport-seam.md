@@ -1,5 +1,9 @@
 # 002 — MCP transport seam
 
+> **Status:** doing — branch `moacyrricardo/spec-002-mcp-transport-seam`
+> (stacked on `moacyrricardo/spec-001-project-skeleton`). Linear is blocked for
+> this repo, so there is no issue identifier.
+
 ## Context
 
 The app's reason to exist is an MCP server an agent drives, kept safe by the

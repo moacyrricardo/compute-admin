@@ -22,6 +22,10 @@
     <properties>
         <java.version>25</java.version>
         <resteasy-spring-boot.version>6.3.0.Final</resteasy-spring-boot.version>
+        <!-- MCP Java SDK: latest stable release at build time (spec-002). The
+             HTTP/SSE transport servlet lives here; the newer Streamable-HTTP
+             provider ships in the same artifact if we ever swap it in. -->
+        <mcp-sdk.version>0.11.2</mcp-sdk.version>
     </properties>
 
     <dependencies>
@@ -36,6 +40,15 @@
             <groupId>org.jboss.resteasy</groupId>
             <artifactId>resteasy-servlet-spring-boot-starter</artifactId>
             <version>${resteasy-spring-boot.version}</version>
+        </dependency>
+
+        <!-- MCP over HTTP/SSE via the MCP Java SDK. The transport is a raw servlet
+             (HttpServletSseServerTransportProvider) beside RESTEasy — never
+             spring-ai-starter-mcp-server-webmvc, never Spring MVC (spec-002). -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>${mcp-sdk.version}</version>
         </dependency>
 
         <dependency>
