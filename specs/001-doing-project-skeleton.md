@@ -1,5 +1,8 @@
 # 001 — Project skeleton
 
+> Status: **doing** — branch `moacyrricardo/spec-001-project-skeleton`. Linear is
+> BLOCKED for this repo, so no issue identifier.
+
 ## Context
 
 compute-admin is greenfield. Before any feature can land we need a buildable,

@@ -1,0 +1,25 @@
+# compute-admin base configuration (spec-001).
+spring:
+  application:
+    name: compute-admin
+  # Optional local secrets file (never committed).
+  config:
+    import: optional:file:./.env[.properties]
+  datasource:
+    url: jdbc:h2:file:./data/compute-admin;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      # Flyway owns the schema; Envers configured but audits nothing yet.
+      org.hibernate.envers.audit_table_suffix: _aud
+      org.hibernate.envers.store_data_at_delete: true
+  flyway:
+    enabled: true
+
+ca:
+  version: dev
