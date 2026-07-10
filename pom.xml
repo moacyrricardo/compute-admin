@@ -4,10 +4,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- Latest 3.5.x patch, not 3.5.0: the first 3.5 release predates the Java 25
+         GA and its bundled Byte Buddy can reject Java-25 class files at runtime. -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.0</version>
+        <version>3.5.16</version>
         <relativePath/>
     </parent>
 
