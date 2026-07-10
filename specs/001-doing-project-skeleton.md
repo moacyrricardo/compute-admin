@@ -21,7 +21,11 @@ one. Envers is configured but audits nothing yet.
 ## Implementation
 
 **Build (`pom.xml`).** `groupId com.iskeru`, `artifactId compute-admin`, Spring
-Boot **3.5.x**, Java **25**. Dependencies:
+Boot **3.5.x**, Java **25**. Pin the parent to the **latest 3.5.x patch** rather
+than the first `3.5.0` release: `3.5.0` (May 2025) predates the Java 25 GA
+(Sep 2025), so its bundled Byte Buddy / CGLIB is a runtime risk for Hibernate
+proxying and `@Configuration` CGLIB; the current patch ships Java-25-capable
+Byte Buddy and boots cleanly on the JDK 25 toolchain. Dependencies:
 - `spring-boot-starter-web` (embedded Tomcat only; MVC unused)
 - `resteasy-servlet-spring-boot-starter` (JAX-RS dispatcher)
 - `com.h2database:h2`
