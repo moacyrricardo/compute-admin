@@ -33,14 +33,20 @@ delegates to `RunService.run` (005). Refuses non-`APPROVED`/mutated/invalid via
 the typed exceptions surfaced as MCP tool errors. Streams output via **MCP
 progress** by subscribing to the run's `RunOutputHub` (005); returns `runId`.
 
+**Bootstrap tools (unauthenticated session only):** `begin_setup()` /
+`complete_setup(deviceCode)` — the device-authorization pairing from 011. They
+delegate to `PairingService`, expose no user data, and are the *only* tools a
+tokenless MCP session can call. A human completes the pairing (Google auth +
+approve) in the UI; the client then reconnects with the minted personal token.
+
 **Resources:** the app's public SSH key (from 003 `KeyService`) and run output.
 
 Each tool maps request → feature-service call → DTO; no repository access. The
 MCP session is authenticated by the caller's **personal token** (011): the
 `McpTokenAuthFilter` binds `AuthContext(userId, …, MCP)`, so every tool
 automatically scopes to that user's own machines/recipes/runs via the same
-owner-scoping services the REST layer uses. An unauthenticated MCP request is
-rejected (resolves S8).
+owner-scoping services the REST layer uses. A tokenless session can reach only the
+bootstrap tools below; all data/run tools are rejected (resolves S8).
 
 **Tests.**
 - `McpToolsWebTest` (`@SpringBootTest RANDOM_PORT`): register→add recipe→add
