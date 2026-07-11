@@ -2,12 +2,14 @@ package com.iskeru.computeadmin.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.common.CurrentUser;
+import com.iskeru.computeadmin.mcp.McpResource;
 import com.iskeru.computeadmin.mcp.McpTool;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
+import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.ServletRegistrationBean;
@@ -21,8 +23,8 @@ import java.util.function.BiFunction;
  * Wires the MCP transport as a <strong>raw servlet beside RESTEasy</strong> on the
  * same Tomcat: {@link HttpServletSseServerTransportProvider} registered as a
  * {@link ServletRegistrationBean} at {@code /mcp/*}, with the MCP {@code Server}
- * built over it and every registered {@link McpTool} bean contributed to it. The
- * MCP endpoint never touches Spring MVC and never pulls in
+ * built over it and every registered {@link McpTool} and {@link McpResource} bean
+ * contributed to it. The MCP endpoint never touches Spring MVC and never pulls in
  * {@code spring-ai-starter-mcp-server-webmvc}.
  *
  * <p>Since spec-011 the MCP surface is authenticated: {@code McpTokenAuthFilter}
@@ -38,10 +40,11 @@ import java.util.function.BiFunction;
  * (filter-bound) thread and {@code CurrentUser.require()} resolves the caller. This
  * is the recommended mode for a blocking transport.
  *
- * <p>Each tool is still wrapped here ({@link #secure}) to enforce the spec-008
- * bootstrap allowance: a tool that {@linkplain McpTool#requiresAuth() requires auth}
- * is refused as {@code unauthorized} when no caller is bound (a tokenless session),
- * so only the self-setup tools reach an unauthenticated agent.
+ * <p>Each tool and resource is still wrapped here ({@link #secure(McpTool)} /
+ * {@link #secure(McpResource)}) to enforce the spec-008 bootstrap allowance: one
+ * that {@linkplain McpTool#requiresAuth() requires auth} is refused as
+ * {@code unauthorized} when no caller is bound (a tokenless session), so only the
+ * self-setup tools reach an unauthenticated agent.
  *
  * <p>spec-002; MCP auth added in spec-011; actor propagation + bootstrap gate in
  * spec-008.
@@ -76,15 +79,22 @@ public class McpServletConfig {
     @Bean
     public McpSyncServer mcpSyncServer(HttpServletSseServerTransportProvider transportProvider,
                                        List<McpTool> tools,
+                                       List<McpResource> resources,
                                        @Value("${ca.version:dev}") String version) {
         return McpServer.sync(transportProvider)
                 .serverInfo("compute-admin", version)
-                .capabilities(McpSchema.ServerCapabilities.builder().tools(true).build())
+                // Advertise both tools and resources; neither subscribe nor
+                // list-changed notifications (the resource set is fixed at startup).
+                .capabilities(McpSchema.ServerCapabilities.builder()
+                        .tools(true)
+                        .resources(false, false)
+                        .build())
                 // Run tools on the (filter-bound) request thread so CurrentUser is in
                 // scope inside a tool — see the class Javadoc. The servlet transport
                 // is blocking, which is where immediate execution is appropriate.
                 .immediateExecution(true)
                 .tools(tools.stream().map(McpServletConfig::secure).toList())
+                .resources(resources.stream().map(McpServletConfig::secure).toList())
                 .build();
     }
 
@@ -111,6 +121,30 @@ public class McpServletConfig {
                     return handler.apply(exchange, request);
                 };
         return new McpServerFeatures.SyncToolSpecification(spec.tool(), null, wrapped);
+    }
+
+    /**
+     * Wraps a resource's read handler with the same spec-008 bootstrap allowance as
+     * {@link #secure(McpTool)}: on a tokenless session a resource that
+     * {@linkplain McpResource#requiresAuth() requires auth} is refused with an
+     * {@code unauthorized} error, so resources are never a side door around the
+     * bootstrap-only tool gate. A {@code resources/read} has no per-result error
+     * flag (unlike a tool call), so the refusal is surfaced by throwing an
+     * {@link McpError} the SDK maps to a JSON-RPC error.
+     */
+    private static McpServerFeatures.SyncResourceSpecification secure(McpResource resource) {
+        McpServerFeatures.SyncResourceSpecification spec = resource.specification();
+        boolean requiresAuth = resource.requiresAuth();
+        BiFunction<McpSyncServerExchange, McpSchema.ReadResourceRequest, McpSchema.ReadResourceResult> handler =
+                spec.readHandler();
+        BiFunction<McpSyncServerExchange, McpSchema.ReadResourceRequest, McpSchema.ReadResourceResult> wrapped =
+                (exchange, request) -> {
+                    if (requiresAuth && CurrentUser.optional().isEmpty()) {
+                        throw new McpError("unauthorized");
+                    }
+                    return handler.apply(exchange, request);
+                };
+        return new McpServerFeatures.SyncResourceSpecification(spec.resource(), wrapped);
     }
 
     @Bean

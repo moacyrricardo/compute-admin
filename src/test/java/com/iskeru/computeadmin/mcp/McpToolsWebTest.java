@@ -36,7 +36,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * then {@code run_action} succeeds and {@code get_run} shows the completed run. This
  * proves the create-open / approve-REST-only / run-when-approved invariant, and — by
  * every tool scoping to the token's user — that the caller is propagated to the tool
- * handler thread (spec-008 actor fix).
+ * handler thread (spec-008 actor fix). Finally it asserts the MCP <em>resources</em>
+ * are listed and readable: the app public SSH key and the run-output template
+ * resolved for the run just executed.
  *
  * <p>A {@code @Primary} fake {@link SshExecutor} emits deterministic output.
  *
@@ -140,6 +142,22 @@ class McpToolsWebTest {
             JsonNode fetched = callJson(client, "get_run", Map.of("runId", runId));
             assertThat(fetched.get("status").asText()).isEqualTo("DONE");
             assertThat(fetched.get("stdout").asText()).contains("hello from mcp run");
+
+            // --- resources are listed: the app public key and the run-output template ---
+            McpSchema.ListResourcesResult resources = client.listResources();
+            assertThat(resources.resources())
+                    .extracting(McpSchema.Resource::uri)
+                    .contains("ca://app/ssh-public-key", "run://{runId}/output");
+
+            // --- the app public-key resource is readable and in authorized_keys form ---
+            McpSchema.ReadResourceResult key = client.readResource(
+                    new McpSchema.ReadResourceRequest("ca://app/ssh-public-key"));
+            assertThat(resourceText(key)).startsWith("ssh-ed25519 ");
+
+            // --- the run-output resource resolves the templated {runId} to this run ---
+            McpSchema.ReadResourceResult output = client.readResource(
+                    new McpSchema.ReadResourceRequest("run://" + runId + "/output"));
+            assertThat(resourceText(output)).contains("hello from mcp run");
         }
     }
 
@@ -172,6 +190,11 @@ class McpToolsWebTest {
     private static String text(McpSchema.CallToolResult result) {
         assertThat(result.content()).isNotEmpty();
         return ((McpSchema.TextContent) result.content().get(0)).text();
+    }
+
+    private static String resourceText(McpSchema.ReadResourceResult result) {
+        assertThat(result.contents()).isNotEmpty();
+        return ((McpSchema.TextResourceContents) result.contents().get(0)).text();
     }
 
     private McpSyncClient connect(String token) {
