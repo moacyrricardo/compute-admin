@@ -8,6 +8,7 @@ import com.iskeru.computeadmin.recipe.model.ParamAllowedValue;
 import com.iskeru.computeadmin.recipe.model.ParamDef;
 import com.iskeru.computeadmin.recipe.model.ParamKind;
 import com.iskeru.computeadmin.recipe.model.Recipe;
+import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.model.TokenKind;
 import com.iskeru.computeadmin.recipe.repository.ActionRepository;
 import jakarta.ws.rs.BadRequestException;
@@ -53,6 +54,16 @@ public class ActionService {
                                   List<ArgTokenInput> argTokens, List<ParamDefInput> paramDefs) {
     }
 
+    /**
+     * Service-input for {@link #addCustomAction}. Wraps an existing script already on
+     * the box: {@code scriptPath} is an <strong>absolute</strong> path bound as the
+     * leading {@code LITERAL} token (never a param, so it can't vary at run time),
+     * optionally followed by declared typed {@code paramDefs}.
+     */
+    public record CustomActionInput(String machineId, String name, String scriptPath,
+                                    List<ParamDefInput> paramDefs, boolean sudo) {
+    }
+
     private final ActionRepository actions;
     private final RecipeService recipeService;
 
@@ -76,6 +87,53 @@ public class ActionService {
         action.setApprovalState(ApprovalState.DRAFT);
         applyStructure(action, input.argTokens(), input.paramDefs());
         return actions.save(action);
+    }
+
+    /**
+     * Wraps an existing on-box script as a {@code CUSTOM} recipe/action so it flows
+     * through the <strong>same</strong> gate (004) and run path (005) as everything
+     * else — no bypass. The {@code scriptPath} is validated as an absolute path at
+     * authoring time and stored as the leading {@code LITERAL} argv token (it is
+     * <strong>not</strong> a param, so it can't vary at run time); each declared
+     * param becomes a later {@code PARAM} token, subject to the identical 004
+     * add-action validation. Created {@code DRAFT}; only runnable once {@code
+     * APPROVED}. No free-form command param is ever allowed (S4).
+     *
+     * <p>spec-007.
+     */
+    @Transactional
+    public Action addCustomAction(CustomActionInput input) {
+        if (input.name() == null || input.name().isBlank()) {
+            throw new BadRequestException("name is required");
+        }
+        String scriptPath = input.scriptPath();
+        if (scriptPath == null || scriptPath.isBlank()) {
+            throw new BadRequestException("scriptPath is required");
+        }
+        scriptPath = scriptPath.trim();
+        if (!scriptPath.startsWith("/")) {
+            throw new BadRequestException("scriptPath must be an absolute path");
+        }
+
+        // A custom action lives in its own CUSTOM recipe on the target machine;
+        // recipeService.create scopes the machine to the current user (404 otherwise).
+        Recipe recipe = recipeService.create(new RecipeService.CreateRecipeInput(
+                input.machineId(), input.name().trim(), scriptPath, RecipeType.CUSTOM));
+
+        // Leading LITERAL = the fixed absolute path; then one PARAM token per declared
+        // param. The command shape is fixed literals; only declared typed params vary.
+        List<ParamDefInput> defs = input.paramDefs() == null ? List.of() : input.paramDefs();
+        List<ArgTokenInput> tokens = new ArrayList<>();
+        tokens.add(new ArgTokenInput(TokenKind.LITERAL, scriptPath));
+        for (ParamDefInput def : defs) {
+            String paramName = def == null || def.name() == null ? null : def.name().trim();
+            tokens.add(new ArgTokenInput(TokenKind.PARAM, paramName));
+        }
+
+        // Delegate to the ordinary add-action path so the 004 schema validation
+        // (param defs, PARAM↔def cross-checks) applies verbatim.
+        return addAction(new AddActionInput(
+                recipe.getId(), input.name(), scriptPath, input.sudo(), tokens, defs));
     }
 
     /**
