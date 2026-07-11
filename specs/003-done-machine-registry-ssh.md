@@ -142,3 +142,23 @@ installed in `authorized_keys`, and how the verify flow connects to it.
   the only boundary. The H2 file DB (fleet inventory) is likewise unencrypted at
   rest — broader than S2, which names only the key.
 - **S5 — `sudo -n` assumes passwordless sudo** on the target.
+
+## Implementation Notes (done)
+
+Branch `moacyrricardo/spec-003-machine-registry-ssh` (PR #6). Implemented per spec.
+How it differed / what was resolved during review:
+
+- **Envers validity strategy adopted** (`audit_strategy=ValidityAuditStrategy`,
+  `revend` column on `machine_aud`) to match ARCH.md, after an eval flagged an
+  initial default-strategy implementation. This sets the audit foundation every
+  later `_aud` table inherits.
+- **S4 wording reconciled.** `MinaSshExecutor` hands one POSIX-single-quoted
+  command string to the SSH exec channel (inherent to SSH exec) — injection-safe
+  via quoting, verified by `MinaSshExecutorTest`. The "never a shell line" phrasing
+  in ARCH S4 / gate-point-5 was corrected to "safely shell-escaped single line."
+- Added a **409 `MachineAlreadyRegisteredException`** on duplicate host/port/user.
+- **Deferred to fresh specs:** `ConnectivityCheckJob`'s fleet-wide SSH I/O inside a
+  single transaction, and per-`exec()` SSH client creation → belong to the
+  execution-engine design (spec 005). The **ambient-actor propagation gap on the
+  MCP tool thread** (`ScopedValue` is thread-confined; the MCP SDK dispatches off
+  the request thread) must be solved and tested when spec 008 wires real MCP tools.
