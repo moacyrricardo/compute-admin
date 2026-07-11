@@ -17,8 +17,8 @@ import java.util.Map;
  * param schema as {@code add_action}. It holds no approval logic and cannot approve
  * — a blueprint action has no approval state (asserted by {@code BlueprintGateTest}).
  *
- * <p><strong>Auth binding gap (inherited, spec 008):</strong> runs on a Reactor
- * thread where {@code CurrentUser} is unbound. See {@code ListMachinesTool}.
+ * <p>Scopes to the caller: the spec-008 wrapper in {@code config/McpServletConfig}
+ * re-binds {@code CurrentUser} on the dispatch thread before this handler runs.
  *
  * <p>spec-010.
  */
