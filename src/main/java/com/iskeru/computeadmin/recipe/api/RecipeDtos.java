@@ -42,6 +42,17 @@ public final class RecipeDtos {
                                     List<ArgTokenInput> argTokens, List<ParamDefInput> paramDefs) {
     }
 
+    /**
+     * {@code POST /api/actions/custom} body. Adds a custom command (an on-box script
+     * wrapped as an action) to a {@code CUSTOM} recipe: target an existing recipe by
+     * {@code recipeId}, or omit it and pass {@code recipeName} to get-or-create the
+     * named recipe on {@code machineId}. {@code actionName} names this command.
+     */
+    public record AddCustomActionRequest(String machineId, String recipeId, String recipeName,
+                                         String actionName, String scriptPath,
+                                         List<ParamDefInput> paramDefs, boolean sudo) {
+    }
+
     /** A recipe, including its description and blueprint provenance (spec 010). */
     public record RecipeView(String id, String machineId, String name, String description,
                              RecipeType type, String sourceBlueprintId, Integer sourceBlueprintVersion,

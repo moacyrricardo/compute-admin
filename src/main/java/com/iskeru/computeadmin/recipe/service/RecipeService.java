@@ -57,6 +57,28 @@ public class RecipeService {
     }
 
     /**
+     * Get-or-create a {@code CUSTOM} recipe named {@code name} on the current user's
+     * machine {@code machineId}: reuse an existing user-owned {@code CUSTOM} recipe
+     * with that name on that machine, else create one. This is what lets several
+     * custom commands (each its own action) be grouped under one named recipe.
+     *
+     * <p>spec-007.
+     */
+    @Transactional
+    public Recipe getOrCreateCustom(String machineId, String name) {
+        if (name == null || name.isBlank()) {
+            throw new BadRequestException("recipeName is required");
+        }
+        String trimmed = name.trim();
+        // requireMachine (via create) scopes to the current user and 404s a not-owned
+        // machine; the lookup below is likewise owner-scoped, so no cross-user reuse.
+        return recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
+                        machineId, CurrentUser.require().userId(), RecipeType.CUSTOM, trimmed)
+                .orElseGet(() -> create(
+                        new CreateRecipeInput(machineId, trimmed, null, RecipeType.CUSTOM)));
+    }
+
+    /**
      * The current user's recipe by id.
      *
      * @throws RecipeNotFoundException 404 if absent or owned by another user.

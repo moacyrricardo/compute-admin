@@ -14,18 +14,37 @@ A custom action is an ordinary `Action` (004 model) whose first argv token is a
 `PARAM` tokens. It uses the identical approval state machine, content-hash
 binding, and run path.
 
+A single `CUSTOM` recipe **groups several such custom commands** — each its own
+action with its own name, script and params. When authoring a custom command the
+caller either targets an existing `CUSTOM` recipe (`recipeId`) or names one
+(`recipeName`) that is reused-or-created; the action's own name is `actionName`.
+This just exposes what the 004 model already supported (a recipe holding many
+actions) — there is no longer a one-action-per-recipe restriction.
+
 ## Implementation
 
 - `Recipe.type = CUSTOM`.
-- `ActionService.addCustomAction(CustomActionInput(machineId, name, scriptPath,
-  List<ParamDefInput>, boolean sudo))`:
+- `ActionService.addCustomAction(CustomActionInput(machineId, recipeId /*nullable*/,
+  recipeName /*nullable*/, actionName, scriptPath, List<ParamDefInput>, boolean sudo))`:
+  - Resolve the target `CUSTOM` recipe first:
+    - if `recipeId` is non-null, load it owner-scoped — it must exist, be owned by
+      the current user (404 otherwise), be on `machineId` and be `RecipeType.CUSTOM`
+      (400 otherwise) — and add the action to it;
+    - else `recipeName` is required: get-or-create a `CUSTOM` recipe with that name
+      on `machineId` for the current user (reuse an existing user-owned `CUSTOM`
+      recipe with that name/machine, else create one), then add the action.
   - Validate `scriptPath` is an **absolute** path (`/…`) at authoring time; store
     it as the leading `LITERAL` `ArgToken` — it is **not** a param, so it can't
-    vary at run time.
+    vary at run time. The action's own name is `actionName`.
   - Append declared params as `PARAM` tokens with their `ParamDef`s; the same
     add-action validation (004) applies.
   - Created in `DRAFT`; runs only once `APPROVED`; subject to the 004 snapshot
     hash and the 005 run path.
+- `RecipeService.getOrCreateCustom(machineId, name)` is the owner-scoped
+  get-or-create-by-name helper backing the `recipeName` branch.
+- REST: `POST /api/actions/custom` (`ActionRS.addCustom`) with
+  `RecipeDtos.AddCustomActionRequest(machineId, recipeId?, recipeName?, actionName,
+  scriptPath, paramDefs, sudo)`.
 - No **free-form command** param is ever allowed (S4) — only declared typed
   params vary; the path and command shape are fixed literals.
 - UI + MCP `add_recipe`/`add_action` (008) reach this via `ActionService`.
@@ -54,8 +73,19 @@ leading `LITERAL` `ArgToken` and appending declared `PARAM` tokens with their
 `ParamDef`s. Authoring-time validation rejects relative/blank paths; the action
 is created `DRAFT` and reuses the 004 approval state machine, snapshot content
 hash, and the normal `RunService` gate — no bypass. No free-form command param
-is ever accepted (S4). The implementation did not deviate from the spec's
-Decision/Implementation sections.
+is ever accepted (S4).
+
+**Grouping added after review.** The first cut created a fresh one-action
+`CUSTOM` recipe on every call, so several custom commands could not share a
+named recipe. Reworked so a `CUSTOM` recipe bundles multiple custom commands,
+each its own script/params/name: `CustomActionInput` now carries
+`(machineId, recipeId?, recipeName?, actionName, scriptPath, paramDefs, sudo)`.
+`recipeId` targets an existing owner-scoped `CUSTOM` recipe on that machine
+(404 if not owned, 400 if wrong machine or non-`CUSTOM`); otherwise `recipeName`
+drives the new owner-scoped `RecipeService.getOrCreateCustom` helper. Exposed at
+`POST /api/actions/custom` via `RecipeDtos.AddCustomActionRequest`. The
+script/path/param/sudo handling and the S4 no-free-form-command rule are
+unchanged.
 
 ### Deferred to a future (new-arch) spec
 

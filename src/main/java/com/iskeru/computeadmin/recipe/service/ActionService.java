@@ -59,8 +59,14 @@ public class ActionService {
      * the box: {@code scriptPath} is an <strong>absolute</strong> path bound as the
      * leading {@code LITERAL} token (never a param, so it can't vary at run time),
      * optionally followed by declared typed {@code paramDefs}.
+     *
+     * <p>The action is grouped under one {@code CUSTOM} recipe: target an existing one
+     * by {@code recipeId} (owned, on {@code machineId}, {@code CUSTOM}), or omit it and
+     * pass {@code recipeName} to get-or-create the named recipe. {@code actionName} is
+     * this custom command's own name within that recipe.
      */
-    public record CustomActionInput(String machineId, String name, String scriptPath,
+    public record CustomActionInput(String machineId, String recipeId, String recipeName,
+                                    String actionName, String scriptPath,
                                     List<ParamDefInput> paramDefs, boolean sudo) {
     }
 
@@ -99,12 +105,18 @@ public class ActionService {
      * add-action validation. Created {@code DRAFT}; only runnable once {@code
      * APPROVED}. No free-form command param is ever allowed (S4).
      *
+     * <p>Several custom commands group under one {@code CUSTOM} recipe: target an
+     * existing recipe by {@code recipeId} (must be owned by the current user, on
+     * {@code machineId}, and of type {@code CUSTOM}), or omit it and pass {@code
+     * recipeName} to reuse-or-create the named recipe. Each action keeps its own
+     * name, script and params.
+     *
      * <p>spec-007.
      */
     @Transactional
     public Action addCustomAction(CustomActionInput input) {
-        if (input.name() == null || input.name().isBlank()) {
-            throw new BadRequestException("name is required");
+        if (input.actionName() == null || input.actionName().isBlank()) {
+            throw new BadRequestException("actionName is required");
         }
         String scriptPath = input.scriptPath();
         if (scriptPath == null || scriptPath.isBlank()) {
@@ -115,10 +127,25 @@ public class ActionService {
             throw new BadRequestException("scriptPath must be an absolute path");
         }
 
-        // A custom action lives in its own CUSTOM recipe on the target machine;
-        // recipeService.create scopes the machine to the current user (404 otherwise).
-        Recipe recipe = recipeService.create(new RecipeService.CreateRecipeInput(
-                input.machineId(), input.name().trim(), scriptPath, RecipeType.CUSTOM));
+        // Resolve the CUSTOM recipe this custom command belongs to. Either an explicit
+        // existing recipe, or get-or-create by name — so multiple custom commands can
+        // be bundled under one named recipe.
+        Recipe recipe;
+        if (input.recipeId() != null) {
+            // Owner-scoped: a not-owned/absent recipe is a 404 (existence never leaked).
+            recipe = recipeService.requireRecipe(input.recipeId());
+            if (input.machineId() == null || !recipe.getMachine().getId().equals(input.machineId())) {
+                throw new BadRequestException("recipe is not on machineId");
+            }
+            if (recipe.getType() != RecipeType.CUSTOM) {
+                throw new BadRequestException("recipe is not a CUSTOM recipe");
+            }
+        } else {
+            if (input.recipeName() == null || input.recipeName().isBlank()) {
+                throw new BadRequestException("recipeName is required when recipeId is absent");
+            }
+            recipe = recipeService.getOrCreateCustom(input.machineId(), input.recipeName());
+        }
 
         // Leading LITERAL = the fixed absolute path; then one PARAM token per declared
         // param. The command shape is fixed literals; only declared typed params vary.
@@ -133,7 +160,7 @@ public class ActionService {
         // Delegate to the ordinary add-action path so the 004 schema validation
         // (param defs, PARAM↔def cross-checks) applies verbatim.
         return addAction(new AddActionInput(
-                recipe.getId(), input.name(), scriptPath, input.sudo(), tokens, defs));
+                recipe.getId(), input.actionName(), scriptPath, input.sudo(), tokens, defs));
     }
 
     /**
