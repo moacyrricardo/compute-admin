@@ -18,7 +18,13 @@ import java.util.Map;
  * business logic and depends only on the feature service, never a repository.
  * This is the reference for the {@code mcp}-is-a-thin-adapter rule.
  *
- * <p>spec-002.
+ * <p>Scopes to the caller: {@code MachineService.list} reads
+ * {@code CurrentUser.require()}, which is in scope inside the tool because the
+ * server runs handlers on the filter-bound request thread (spec-008 immediate
+ * execution; see {@code config/McpServletConfig}). The earlier spec-002 note that
+ * {@code CurrentUser} was unbound inside a tool no longer applies.
+ *
+ * <p>spec-002; actor scoping enabled in spec-008.
  */
 @Component
 public class ListMachinesTool implements McpTool {
@@ -54,16 +60,9 @@ public class ListMachinesTool implements McpTool {
     }
 
     private McpSchema.CallToolResult call(McpSyncServerExchange exchange, Map<String, Object> arguments) {
-        // NOTE: this callback runs on a Reactor boundedElastic thread (the MCP SDK
-        // adapts sync tools via Mono.fromCallable(...).subscribeOn(...)), not the
-        // Tomcat request thread where McpTokenAuthFilter (spec-011) bound the
-        // ScopedValue<AuthContext>. CurrentUser is therefore UNBOUND here — do not
-        // call CurrentUser.require() from a tool without first re-establishing the
-        // binding on this thread. See specs/002-done-mcp-transport-seam.md, "Known Gaps".
+        // Under spec-008 immediate execution this runs on the filter-bound request
+        // thread, so MachineService.list can scope to the current user.
         String tag = arguments == null ? null : (String) arguments.get("tag");
-        // spec-003 changed MachineService.list to return owner-scoped Machine
-        // entities; serialize a flat summary (no lazy relations). Binding the
-        // caller so list() can scope is a spec-008 concern (see NOTE above).
         List<Map<String, Object>> summaries = machineService.list(tag).stream()
                 .map(ListMachinesTool::summarize)
                 .toList();
