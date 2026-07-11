@@ -1,0 +1,223 @@
+package com.iskeru.computeadmin.recipe.service;
+
+import com.iskeru.computeadmin.common.CurrentUser;
+import com.iskeru.computeadmin.recipe.model.Action;
+import com.iskeru.computeadmin.recipe.model.ApprovalState;
+import com.iskeru.computeadmin.recipe.model.ArgToken;
+import com.iskeru.computeadmin.recipe.model.ParamAllowedValue;
+import com.iskeru.computeadmin.recipe.model.ParamDef;
+import com.iskeru.computeadmin.recipe.model.ParamKind;
+import com.iskeru.computeadmin.recipe.model.Recipe;
+import com.iskeru.computeadmin.recipe.model.TokenKind;
+import com.iskeru.computeadmin.recipe.repository.ActionRepository;
+import jakarta.ws.rs.BadRequestException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+/**
+ * Authoring of actions, scoped per user through {@code recipe.machine.owner}. It
+ * builds the structured argv + typed param schema, validates the schema at write
+ * time (so a malformed action can never be approved), and — critically —
+ * <strong>resets approval on any structural edit</strong> so an action can't be
+ * approved benign then mutated (TOCTOU). That reset is enforced centrally here in
+ * {@link #editAction}, not left to callers.
+ *
+ * <p>spec-004.
+ */
+@Service
+public class ActionService {
+
+    /** One argv element: literal text, or a param reference (the param name in {@code value}). */
+    public record ArgTokenInput(TokenKind kind, String value) {
+    }
+
+    /** One typed parameter rule. Only the fields relevant to {@code kind} are used. */
+    public record ParamDefInput(String name, ParamKind kind, String pattern,
+                                Integer intMin, Integer intMax, List<String> allowedValues) {
+    }
+
+    /** Service-input for {@link #addAction}. */
+    public record AddActionInput(String recipeId, String name, String description, boolean sudo,
+                                 List<ArgTokenInput> argTokens, List<ParamDefInput> paramDefs) {
+    }
+
+    /** Service-input for {@link #editAction} — the mutable structural fields of an action. */
+    public record EditActionInput(String name, String description, boolean sudo,
+                                  List<ArgTokenInput> argTokens, List<ParamDefInput> paramDefs) {
+    }
+
+    private final ActionRepository actions;
+    private final RecipeService recipeService;
+
+    public ActionService(ActionRepository actions, RecipeService recipeService) {
+        this.actions = actions;
+        this.recipeService = recipeService;
+    }
+
+    /** Adds a new (DRAFT) action to one of the current user's recipes. */
+    @Transactional
+    public Action addAction(AddActionInput input) {
+        if (input.name() == null || input.name().isBlank()) {
+            throw new BadRequestException("name is required");
+        }
+        Recipe recipe = recipeService.requireRecipe(input.recipeId());
+        Action action = new Action();
+        action.setRecipe(recipe);
+        action.setName(input.name().trim());
+        action.setDescription(input.description());
+        action.setSudo(input.sudo());
+        action.setApprovalState(ApprovalState.DRAFT);
+        applyStructure(action, input.argTokens(), input.paramDefs());
+        return actions.save(action);
+    }
+
+    /**
+     * Replaces the structural fields of one of the current user's actions and
+     * <strong>resets its approval</strong> to {@link ApprovalState#DRAFT}, clearing
+     * the bound snapshot hash and the approval record. This is the single choke
+     * point that defeats approve-then-mutate.
+     */
+    @Transactional
+    public Action editAction(String actionId, EditActionInput input) {
+        if (input.name() == null || input.name().isBlank()) {
+            throw new BadRequestException("name is required");
+        }
+        Action action = requireAction(actionId);
+        action.setName(input.name().trim());
+        action.setDescription(input.description());
+        action.setSudo(input.sudo());
+        applyStructure(action, input.argTokens(), input.paramDefs());
+
+        // Central reset: any structural edit drops the action back to DRAFT so it
+        // must be re-reviewed and re-approved. Never left to callers.
+        action.setApprovalState(ApprovalState.DRAFT);
+        action.setApprovedSnapshotHash(null);
+        action.setApprovedAt(null);
+        action.setApprovedByUserId(null);
+        return actions.save(action);
+    }
+
+    /**
+     * The current user's action by id.
+     *
+     * @throws ActionNotFoundException 404 if absent or owned by another user.
+     */
+    public Action requireAction(String id) {
+        return actions.findByIdAndRecipe_Machine_Owner_Id(id, CurrentUser.require().userId())
+                .orElseThrow(() -> new ActionNotFoundException(id));
+    }
+
+    /** Rebuilds the argv tokens and param defs, validating the resulting schema. */
+    private void applyStructure(Action action, List<ArgTokenInput> tokenInputs, List<ParamDefInput> defInputs) {
+        List<ArgTokenInput> tokens = tokenInputs == null ? List.of() : tokenInputs;
+        List<ParamDefInput> defs = defInputs == null ? List.of() : defInputs;
+
+        Set<String> declaredNames = new HashSet<>();
+        // Mutate the existing collections so orphanRemoval deletes the old rows.
+        action.getParamDefs().clear();
+        for (ParamDefInput in : defs) {
+            ParamDef def = buildParamDef(action, in);
+            if (!declaredNames.add(def.getName())) {
+                throw new BadRequestException("Duplicate param definition: " + def.getName());
+            }
+            action.getParamDefs().add(def);
+        }
+
+        Set<String> referencedNames = new HashSet<>();
+        action.getArgTokens().clear();
+        int position = 0;
+        for (ArgTokenInput in : tokens) {
+            if (in == null || in.kind() == null) {
+                throw new BadRequestException("Each argToken needs a kind");
+            }
+            if (in.value() == null || in.value().isBlank()) {
+                throw new BadRequestException("Each argToken needs a value");
+            }
+            ArgToken token = new ArgToken();
+            token.setAction(action);
+            token.setPosition(position++);
+            token.setKind(in.kind());
+            token.setValue(in.value());
+            if (in.kind() == TokenKind.PARAM) {
+                if (!declaredNames.contains(in.value())) {
+                    throw new BadRequestException(
+                            "PARAM token references undeclared param: " + in.value());
+                }
+                referencedNames.add(in.value());
+            }
+            action.getArgTokens().add(token);
+        }
+
+        for (String declared : declaredNames) {
+            if (!referencedNames.contains(declared)) {
+                throw new BadRequestException("Param declared but never referenced: " + declared);
+            }
+        }
+    }
+
+    private ParamDef buildParamDef(Action action, ParamDefInput in) {
+        if (in == null || in.name() == null || in.name().isBlank()) {
+            throw new BadRequestException("Each param needs a name");
+        }
+        if (in.kind() == null) {
+            throw new BadRequestException("Param '" + in.name() + "' needs a kind");
+        }
+        ParamDef def = new ParamDef();
+        def.setAction(action);
+        def.setName(in.name().trim());
+        def.setKind(in.kind());
+        switch (in.kind()) {
+            case ALLOWED_SET -> {
+                List<String> values = in.allowedValues();
+                if (values == null || values.isEmpty()) {
+                    throw new BadRequestException(
+                            "ALLOWED_SET param '" + in.name() + "' needs at least one value");
+                }
+                List<ParamAllowedValue> allowed = new ArrayList<>();
+                for (String raw : values) {
+                    if (raw == null || raw.isEmpty()) {
+                        throw new BadRequestException(
+                                "ALLOWED_SET param '" + in.name() + "' has a blank value");
+                    }
+                    ParamAllowedValue value = new ParamAllowedValue();
+                    value.setParamDef(def);
+                    value.setValue(raw);
+                    allowed.add(value);
+                }
+                def.getAllowedValues().addAll(allowed);
+            }
+            case REGEX -> {
+                if (in.pattern() == null || in.pattern().isBlank()) {
+                    throw new BadRequestException("REGEX param '" + in.name() + "' needs a pattern");
+                }
+                try {
+                    Pattern.compile(in.pattern());
+                } catch (PatternSyntaxException e) {
+                    throw new BadRequestException(
+                            "REGEX param '" + in.name() + "' has an invalid pattern: " + e.getMessage());
+                }
+                def.setPattern(in.pattern());
+            }
+            case INT_RANGE -> {
+                if (in.intMin() == null || in.intMax() == null) {
+                    throw new BadRequestException(
+                            "INT_RANGE param '" + in.name() + "' needs intMin and intMax");
+                }
+                if (in.intMin() > in.intMax()) {
+                    throw new BadRequestException(
+                            "INT_RANGE param '" + in.name() + "' needs intMin <= intMax");
+                }
+                def.setIntMin(in.intMin());
+                def.setIntMax(in.intMax());
+            }
+        }
+        return def;
+    }
+}
