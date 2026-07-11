@@ -11,6 +11,7 @@ import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.model.TokenKind;
 import com.iskeru.computeadmin.recipe.service.ActionService.ArgTokenInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.ParamDefInput;
+import com.iskeru.computeadmin.recipe.service.ActionSnapshot;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -67,11 +68,20 @@ public final class RecipeDtos {
     /**
      * An action, including its description (what a human reads when approving), its
      * approval state and a convenience {@code pendingApproval} flag, plus the
-     * structured argv and param schema. The approved snapshot hash is intentionally
-     * not exposed.
+     * structured argv and param schema.
+     *
+     * <p>The raw approved snapshot hash is intentionally <em>not</em> exposed; instead
+     * {@code changedSinceApproval} is a server-derived boolean that is {@code true} only
+     * when the action is {@code APPROVED} yet its current content hash no longer matches
+     * the hash bound at approval (see {@code ActionSnapshot}). This is the "changed since
+     * approval — re-review" drift signal the UI shows: it is reachable when a blueprint
+     * re-instantiation mutates an already-approved action's structure without clearing
+     * {@code approvedSnapshotHash}, and it is the same mismatch {@code RunService} rejects
+     * at run time. The UI cannot compute it (it never receives the hash), so it must be
+     * derived here (spec-012).
      */
     public record ActionView(String id, String recipeId, String name, String description, boolean sudo,
-                             ApprovalState approvalState, boolean pendingApproval,
+                             ApprovalState approvalState, boolean pendingApproval, boolean changedSinceApproval,
                              String approvedByUserId, Instant approvedAt,
                              List<ArgTokenView> argTokens, List<ParamDefView> paramDefs) {
         public static ActionView of(Action action) {
@@ -83,9 +93,11 @@ public final class RecipeDtos {
             for (ParamDef def : action.getParamDefs()) {
                 defs.add(ParamDefView.of(def));
             }
+            boolean changedSinceApproval = action.getApprovalState() == ApprovalState.APPROVED
+                    && !ActionSnapshot.hash(action).equals(action.getApprovedSnapshotHash());
             return new ActionView(action.getId(), action.getRecipe().getId(), action.getName(),
                     action.getDescription(), action.isSudo(), action.getApprovalState(),
-                    action.getApprovalState() == ApprovalState.PENDING_APPROVAL,
+                    action.getApprovalState() == ApprovalState.PENDING_APPROVAL, changedSinceApproval,
                     action.getApprovedByUserId(), action.getApprovedAt(), tokens, defs);
         }
     }

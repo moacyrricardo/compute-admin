@@ -542,9 +542,10 @@
           controls.push(link("#/machines/" + p.mid + "/recipes/" + p.rid + "/actions/" + p.aid + "/run", "Run action", "btn btn--primary"));
           controls.push(h("button", { class: "btn btn--danger", onclick: function () { act("revoke"); } }, "Revoke"));
         }
-        if (action.approvalState === "REVOKED") {
-          controls.push(h("button", { class: "btn btn--ok", onclick: function () { act("approve"); } }, "Re-approve"));
-        }
+        // REVOKED is terminal: the backend permits no REVOKED -> APPROVED transition
+        // (re-enabling means editing the action, which resets it to DRAFT). We offer no
+        // control here rather than a button that always 409s. The revoked banner below
+        // explains the dead-end.
 
         var params = (action.paramDefs || []);
         var paramSection = params.length
@@ -575,6 +576,14 @@
                 "MCP can see this action but cannot run it until you approve here."))
           : null;
 
+        var revoked = action.approvalState === "REVOKED"
+          ? h("div", { class: "banner banner--warn", role: "note" },
+              h("div", { class: "banner-body" },
+                h("strong", { text: "Revoked. " }),
+                "This action can no longer run and cannot be re-approved directly. "
+                  + "Re-enabling it means editing the action, which returns it to draft to be submitted and approved afresh."))
+          : null;
+
         return h("div", null,
           crumbs(link("#/machines", "Machines"),
             link("#/machines/" + p.mid, machine.host),
@@ -583,6 +592,7 @@
             action.sudo ? h("span", { class: "badge-sudo", text: "sudo" }) : null]),
           changedBanner,
           pending,
+          revoked,
           action.description ? h("p", { class: "dim", text: action.description }) : null,
           h("div", { class: "card mt-4" },
             h("h2", { text: "Command" }),
