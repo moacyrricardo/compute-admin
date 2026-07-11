@@ -8,6 +8,27 @@ hand to an agent: **execution is gated by a UI-only approval.** Anything can be
 *registered* over MCP, but only a human clicking *approve* in the UI turns an
 action into something MCP is allowed to run.
 
+## Demo
+
+> Captured from the **design mock** (spec 012) — the app is being built one spec at
+> a time, so this shows the intended UX, not a shipped build.
+
+**Login, then authorize an agent over MCP** — you sign in; an MCP client requests
+pairing; you approve it and a per-user token is issued. The agent never
+authenticates itself.
+
+![Login and MCP pairing](docs/media/login-mcp.gif)
+
+**Run an approved recipe** — open an approved nginx action and run it; output
+streams live.
+
+![Run an nginx recipe](docs/media/run-nginx-reload.gif)
+
+**Run a parameterized action** — pick a validated parameter (`site`); the exact
+command previews as you choose, then runs.
+
+![Run a parameterized action](docs/media/run-parametrized-enable-site.gif)
+
 ## What it does
 
 - **Register machines** — an SSH-reachable host (host, port, login user), tagged
