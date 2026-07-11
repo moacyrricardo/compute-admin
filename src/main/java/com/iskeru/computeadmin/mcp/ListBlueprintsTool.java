@@ -16,8 +16,8 @@ import java.util.Map;
  * and serializes a flat summary. Holds no approval logic and cannot approve
  * (asserted by {@code BlueprintGateTest}).
  *
- * <p><strong>Auth binding gap (inherited, spec 008):</strong> runs on a Reactor
- * thread where {@code CurrentUser} is unbound. See {@code ListMachinesTool}.
+ * <p>Scopes to the caller: the spec-008 wrapper in {@code config/McpServletConfig}
+ * re-binds {@code CurrentUser} on the dispatch thread before this handler runs.
  *
  * <p>spec-010.
  */

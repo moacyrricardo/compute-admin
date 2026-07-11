@@ -18,9 +18,8 @@ import java.util.Map;
  * has no approval state and is never runnable, so there is nothing here to approve
  * (asserted by {@code BlueprintGateTest}).
  *
- * <p><strong>Auth binding gap (inherited, spec 008):</strong> this callback runs on
- * a Reactor thread where {@code CurrentUser} is unbound, so it is not yet callable
- * end to end — the binding is re-established by spec 008. See {@code ListMachinesTool}.
+ * <p>Scopes to the caller: the spec-008 wrapper in {@code config/McpServletConfig}
+ * re-binds {@code CurrentUser} on the dispatch thread before this handler runs.
  *
  * <p>spec-010.
  */
