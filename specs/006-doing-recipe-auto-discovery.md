@@ -1,5 +1,8 @@
 # 006 — Recipe auto-discovery
 
+> Status: **doing** — branch `moacyrricardo/spec-006-recipe-auto-discovery`.
+> Linear is BLOCKED for this repo, so there is no issue identifier.
+
 ## Context
 
 Hand-authoring every action is tedious. This spec adds **recipe discovery**: SSH
