@@ -1,5 +1,8 @@
 # 004 — Recipe & Action model, approval gate & audit
 
+> **Status:** done — branch `moacyrricardo/spec-004-recipe-action-approval-gate`
+> (merged to `main`). Linear is blocked for this repo, so no issue identifier.
+
 ## Context
 
 This is the **security core**. It defines recipes, the runnable **action**
