@@ -1,5 +1,8 @@
 # 012 — Web UI shell, design system & the approval screen
 
+**Status:** done · **Branch:** `moacyrricardo/spec-012-web-ui-and-design-system` ·
+**Linear:** blocked for this repo — tracked as `spec-012` (no issue identifier).
+
 ## Context
 
 The web UI is the **human side of the gate** — it is where a person signs in,
@@ -156,3 +159,49 @@ served under `/` and each screen's JSON contract is already covered by the backe
   is the mitigation and must be honored by every render fn.
 - Builds after the backend it renders (needs the machine/recipe/run/blueprint APIs);
   independent of the backend fan-out otherwise.
+
+## Implementation Notes
+
+The build landed as specified: a framework-free static shell (`index.html`) plus
+`tokens.css` (design tokens, light/dark via `prefers-color-scheme`), `app.css`
+(components incl. the `chip--{state}` component), and `app.js` (hash router +
+`fetch` + per-route render functions rendering from `/api` JSON). The
+security-critical approval screen renders the resolved command in mono with
+`LITERAL`/`PARAM` token distinction, the `sudo` `--s-warn` badge, provenance, and
+the "changed since approval" guard; the run form carries a per-`ParamKind` widget
+with a live resolved-command preview and a Run button gated until all params are
+set. Client-side rendering uses `textContent` (never `innerHTML`) for
+user/cloud-derived strings, honoring the spec's XSS mitigation.
+
+**Change division.** No `CONTRIBUTING.md` in this repo, so there is no project
+authority to assess the commit split against. For the record: the UI shipped
+across `spec-012` commits on the branch (mark doing; web UI shell + design system
++ JSON-driven screens; approval-drift banner wiring + dead-code drop; SSE
+exit-event render fix), with this closeout as the `doing → done` spec commit. Per
+the repo's blocked-Linear rule, commits use `spec-012` subjects and the spec
+carries no issue identifier.
+
+No API Diff subsection: `CLAUDE.md` `## API Modules` is **None**, and this branch
+is UI-only regardless.
+
+### Deferred (new-arch follow-ups)
+
+- **Real "Sign in with Google" is not actually wired in the UI.** The button only
+  toggles a textarea where a user must manually paste a Google ID-token
+  credential; there is no Google Identity Services integration (no GIS client
+  script, no client-id-configured button that mints the credential). The
+  dev-bypass path works fully and the backend `GoogleIdTokenServiceImpl` verifies
+  real tokens, but the production Google login flow needs its own follow-up
+  (external GIS script + `ca.auth.google-client-id` wiring). Consistent with S1'
+  deferring non-local use.
+- **MCP surface page (`screenMcp`) renders from a hardcoded `MCP_TOOLS` catalog in
+  `app.js`** rather than the "small describe tools/capabilities read source" the
+  spec calls for. No live capabilities endpoint exists yet, so this is a
+  reasonable v1, but the static list can silently drift from the real `/mcp`
+  surface as tools change; a later spec should expose and render a live
+  tool/capability catalog.
+- **Optional test-coverage:** no test asserts the new `changedSinceApproval` field
+  flips true on drift (the branch adds zero tests). Low severity because the
+  underlying condition is already covered at the service layer (`RunServiceTest`
+  exercises `ActionModifiedException` for `APPROVED`+hash-mismatch), and the field
+  is a thin re-derivation of that tested state.
