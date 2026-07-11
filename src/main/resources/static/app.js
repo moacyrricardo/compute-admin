@@ -748,8 +748,17 @@
         pauseBtn.textContent = paused ? "Resume auto-scroll" : "Pause auto-scroll";
       });
       var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      var exitValue = h("dd", { class: "mono", text: run.exitCode != null ? String(run.exitCode) : "—" });
 
+      /**
+       * spec-012: Render live run output. Only the {@code stdout}/{@code stderr}
+       * SSE streams are terminal lines; the terminal {@code exit} event carries the
+       * exit-code string and updates the header field instead of being echoed as a
+       * spurious output line.
+       */
       function appendOutput(stream, data) {
+        if (stream === "exit") { exitValue.textContent = data; return; }
+        if (stream !== "stdout" && stream !== "stderr") return;
         var span = h("span", { class: stream === "stderr" ? "stderr" : "" }, data + "\n");
         term.appendChild(span);
         if (!paused) term.scrollTop = term.scrollHeight; // instant jump, no animation
@@ -782,7 +791,7 @@
               h("h2", { text: "Output" }),
               h("div", { class: "row" },
                 h("dl", { class: "kv" },
-                  h("dt", { text: "exit" }), h("dd", { class: "mono", text: run.exitCode != null ? String(run.exitCode) : "—" })),
+                  h("dt", { text: "exit" }), exitValue),
                 pauseBtn)),
             h("p", { class: "small dim mt-2 mono" },
               "queued " + fmtTime(run.createdAt) + " · started " + fmtTime(run.startedAt) + " · finished " + fmtTime(run.finishedAt)),
