@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.recipe.repository;
 
 import com.iskeru.computeadmin.recipe.model.Recipe;
+import com.iskeru.computeadmin.recipe.model.RecipeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
@@ -20,4 +21,7 @@ public interface RecipeRepository extends JpaRepository<Recipe, String> {
     List<Recipe> findByMachine_Owner_Id(String ownerId);
 
     List<Recipe> findByMachine_IdAndMachine_Owner_Id(String machineId, String ownerId);
+
+    Optional<Recipe> findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
+            String machineId, String ownerId, RecipeType type, String name);
 }

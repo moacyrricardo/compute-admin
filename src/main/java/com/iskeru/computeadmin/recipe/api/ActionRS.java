@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.recipe.api;
 import com.iskeru.computeadmin.auth.api.Secured;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionService.AddActionInput;
+import com.iskeru.computeadmin.recipe.service.ActionService.CustomActionInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.EditActionInput;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
 import jakarta.ws.rs.BadRequestException;
@@ -49,6 +50,17 @@ public class ActionRS {
         AddActionInput input = new AddActionInput(body.recipeId(), body.name(), body.description(),
                 body.sudo(), body.argTokens(), body.paramDefs());
         return RecipeDtos.ActionView.of(actionService.addAction(input));
+    }
+
+    @POST
+    @Path("/custom")
+    public RecipeDtos.ActionView addCustom(RecipeDtos.AddCustomActionRequest body) {
+        if (body == null) {
+            throw new BadRequestException("body is required");
+        }
+        CustomActionInput input = new CustomActionInput(body.machineId(), body.recipeId(),
+                body.recipeName(), body.actionName(), body.scriptPath(), body.paramDefs(), body.sudo());
+        return RecipeDtos.ActionView.of(actionService.addCustomAction(input));
     }
 
     @PUT
