@@ -1,0 +1,84 @@
+/*
+ * spec-012 — Design tokens for the compute-admin web UI.
+ *
+ * A token-based, theme-aware design system: a cool-slate neutral ground, ONE
+ * accent (teal), and FUNCTIONAL SEMANTIC COLORS kept separate from the accent so
+ * operators can scan state (approval state, run status, connection status) by
+ * colour PLUS label. Light is the :root default; dark is applied via
+ * prefers-color-scheme. Values are fixed by the spec's token tables and are not a
+ * decision left to the build.
+ *
+ * Nothing here is a component rule — that is app.css. This file only declares
+ * custom properties.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* --- neutral ground + accent (light) ------------------------------------ */
+  --ground: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --text-dim: #475569;
+  --text-faint: #94a3b8;
+  --accent: #0891b2;
+
+  /* --- functional semantic colours (distinct from --accent) --------------- */
+  --s-ok: #16a34a;       /* APPROVED, run DONE, ONLINE */
+  --s-warn: #d97706;     /* PENDING_APPROVAL, sudo badge */
+  --s-bad: #dc2626;      /* REVOKED, run FAILED, UNREACHABLE */
+  --s-info: #2563eb;     /* run RUNNING / QUEUED */
+  --s-neutral: #94a3b8;  /* DRAFT, UNKNOWN, OFFLINE */
+
+  /* --- typography --------------------------------------------------------- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-xl: 28px;
+
+  --fw-regular: 400;
+  --fw-semibold: 600;
+
+  /* --- spacing (4px base) ------------------------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* --- radius + elevation ------------------------------------------------- */
+  --radius: 6px;
+  --radius-sm: 4px;
+  --elevation: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.10);
+
+  /* --- focus ring --------------------------------------------------------- */
+  --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0b1220;
+    --surface: #111827;
+    --surface-2: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --text-faint: #64748b;
+    --accent: #22d3ee;
+
+    --s-ok: #4ade80;
+    --s-warn: #fbbf24;
+    --s-bad: #f87171;
+    --s-info: #60a5fa;
+    --s-neutral: #64748b;
+
+    --elevation: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+}

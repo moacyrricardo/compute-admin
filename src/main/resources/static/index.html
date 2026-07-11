@@ -4,37 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>compute-admin</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body { font-family: system-ui, sans-serif; margin: 3rem auto; max-width: 40rem; padding: 0 1rem; }
-    h1 { font-size: 1.4rem; }
-    .status { font-family: ui-monospace, monospace; }
-    .ok { color: #2e7d32; }
-    .err { color: #c62828; }
-  </style>
+  <!-- spec-012: static JSON-driven shell. No framework, no build step. -->
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <h1>compute-admin</h1>
-  <p>MCP server + thin web UI for pre-approved operations on SSH-reachable machines.</p>
-  <p>Health: <span id="status" class="status">checking…</span></p>
+  <!-- Full-screen login (no shell). Shown by app.js when there is no session. -->
+  <div id="login-root" class="hidden"></div>
 
-  <script>
-    // spec-001: JSON-driven vanilla-JS shell. No framework, no build step.
-    fetch('/api/health')
-      .then(function (r) {
-        if (!r.ok) { throw new Error('HTTP ' + r.status); }
-        return r.json();
-      })
-      .then(function (data) {
-        var el = document.getElementById('status');
-        el.textContent = data.status + ' (version ' + data.version + ')';
-        el.className = 'status ok';
-      })
-      .catch(function (err) {
-        var el = document.getElementById('status');
-        el.textContent = 'unreachable: ' + err.message;
-        el.className = 'status err';
-      });
-  </script>
+  <!-- The application shell: brand, nav, top bar, and the routed view region.
+       app.js fills #view per the hash route and toggles .hidden on the roots. -->
+  <div id="shell-root" class="shell hidden">
+    <div class="brand">
+      <span class="dot" aria-hidden="true"></span>
+      <span>compute-admin</span>
+    </div>
+
+    <header class="topbar">
+      <div class="userbox">
+        <span id="user-name"></span>
+        <span id="user-email" class="email"></span>
+        <button id="sign-out" class="btn btn--sm" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <nav class="nav" aria-label="Primary">
+      <a href="#/machines" data-nav="machines">Machines</a>
+      <a href="#/blueprints" data-nav="blueprints">Blueprints</a>
+      <a href="#/runs" data-nav="runs">Runs</a>
+      <a href="#/mcp" data-nav="mcp">MCP surface</a>
+      <a href="#/tokens" data-nav="tokens">Tokens</a>
+      <a href="#/appkey" data-nav="appkey">App key</a>
+    </nav>
+
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="app.js"></script>
 </body>
 </html>
