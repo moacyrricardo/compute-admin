@@ -184,6 +184,35 @@ carries no issue identifier.
 No API Diff subsection: `CLAUDE.md` `## API Modules` is **None**, and this branch
 is UI-only regardless.
 
+### Live UI↔backend integration (follow-up)
+
+A later pass on this branch closed the last gap between the UI and the real
+backend, so every screen now drives live `/api` (and SSE) endpoints rather than
+any static data:
+
+- **New read endpoint for the MCP-surface screen.** `McpCatalogRS`
+  (`@Secured`, `GET /api/mcp/tools`) returns `McpCatalogDtos.Catalog` — tool
+  groups (Read / Create / Run / Bootstrap) each carrying `name` + human
+  `signature` + one-line `description`, the exposed resources, and an
+  `approveTool=false` flag that makes the "there is no approve tool" trust
+  statement data-driven. It is a curated read source (ARCH's "describe
+  tools/capabilities") matching spec-008's registered surface; it reaches no
+  repository and no approval service, so it passes `GateArchTest`'s scan of the
+  `mcp` package. `McpCatalogWebTest` covers the `@Secured` 401, the grouped
+  no-approve-tool catalogue, and a drift guard asserting the catalogue's tool
+  set equals the registered `McpTool` bean names.
+- **UI rewired.** `screenMcp` replaced its hardcoded `MCP_TOOLS` array with a
+  `fetch` of that endpoint. Every other screen was confirmed to already call the
+  real REST/SSE surface — machines, recipes/actions, approve, runs + SSE
+  streaming, blueprints, tokens, pairing, and the app SSH key — with no
+  remaining static stubs. XSS discipline (`textContent`-only) is unchanged.
+
+**Still deferred — real Google GIS (S1').** The dev-bypass sign-in is kept as-is;
+wiring the production Google Identity Services flow (external GIS client script +
+`ca.auth.google-client-id`) remains a follow-up, consistent with S1' deferring
+non-local use (the backend already verifies real ID tokens via
+`GoogleIdTokenServiceImpl`).
+
 ### Deferred (new-arch follow-ups)
 
 - **Real "Sign in with Google" is not actually wired in the UI.** The button only
@@ -194,12 +223,12 @@ is UI-only regardless.
   real tokens, but the production Google login flow needs its own follow-up
   (external GIS script + `ca.auth.google-client-id` wiring). Consistent with S1'
   deferring non-local use.
-- **MCP surface page (`screenMcp`) renders from a hardcoded `MCP_TOOLS` catalog in
-  `app.js`** rather than the "small describe tools/capabilities read source" the
-  spec calls for. No live capabilities endpoint exists yet, so this is a
-  reasonable v1, but the static list can silently drift from the real `/mcp`
-  surface as tools change; a later spec should expose and render a live
-  tool/capability catalog.
+- **MCP surface page (`screenMcp`) — RESOLVED (live integration below).** It
+  originally rendered from a hardcoded `MCP_TOOLS` catalog in `app.js`; it now
+  fetches `GET /api/mcp/tools` (`McpCatalogRS`), the "small describe
+  tools/capabilities read source" the spec calls for, and a `McpCatalogWebTest`
+  drift guard pins the catalogue to the registered `McpTool` bean names so it
+  cannot silently diverge from the real `/mcp` surface.
 - **Optional test-coverage:** no test asserts the new `changedSinceApproval` field
   flips true on drift (the branch adds zero tests). Low severity because the
   underlying condition is already covered at the service layer (`RunServiceTest`
