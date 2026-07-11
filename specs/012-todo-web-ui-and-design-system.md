@@ -76,25 +76,53 @@ as one so state reads at a glance (color **plus** label — never color alone, f
 accessibility).
 
 **Shell & routes** (hash-routed, one render fn each): sidebar nav — **Machines**,
-**Blueprints**, **Runs**, **Tokens** — + a top bar with the signed-in user and
-sign-out.
-- **Machines** — list with connection-status chips + tags; register form.
+**Blueprints**, **Runs**, **MCP surface**, **Tokens**, **App key** — + a top bar
+with the signed-in user and sign-out.
+- **Login** — full-screen (no shell): a sign-in card with **Sign in with Google**
+  (011) and, in the `dev` profile, an email **dev-bypass** field.
+- **Machines** — list with connection-status chips + tags; **Register machine**.
+- **Register machine + onboarding** — the connection form (host / port / login
+  user / tags) shown alongside **the app public key to install** — the key + copy
+  button + an `>> ~/.ssh/authorized_keys` snippet — then **Register & test
+  connection** → status flips to `ONLINE` on success. Sourced from 003's
+  `GET /api/ssh/public-key`.
+- **App SSH key** — standalone view of the single app-owned public key +
+  fingerprint + install snippet (one keypair for the whole fleet; the private key
+  never leaves the box). Also surfaced inline during onboarding.
 - **Machine detail** — its recipes → actions, each with an approval-state chip;
-  "Discover recipes" action; per-action row links to the approval screen / run.
+  "Discover recipes"; per-action row links to the approval screen; approved
+  actions expose a **Run** affordance.
 - **Approval screen (centerpiece)** — for one action: name + description; the
   **command rendered in mono** with `LITERAL` tokens plain and `PARAM` tokens
-  visually distinct (accent underline) each showing its rule (`ALLOWED_SET` values
-  / `REGEX` / `INT_RANGE`); the **`sudo` flag as a prominent `--s-warn` badge**;
-  provenance (who registered, when, blueprint source if any); and **Approve /
-  Revoke** buttons. If the action was edited since approval, a **`--s-bad`
-  "changed since approval — re-review" banner** (backed by the 004 content-hash).
-  Approve POSTs to `/api/actions/{id}/approve` (UI session only).
-- **Run view** — status chip + exit code + a mono "terminal" panel streaming
-  stdout/stderr live over the 005 SSE endpoint; auto-scroll with a pause toggle.
+  visually distinct (accent underline) each showing its rule (`ALLOWED_SET` /
+  `REGEX` / `INT_RANGE`); the **`sudo` flag as a prominent `--s-warn` badge**;
+  provenance (who registered, when, blueprint source if any); **Approve / Revoke**
+  (an approved action also shows **Run action**). If edited since approval, a
+  **`--s-bad` "changed since approval — re-review" banner** (backed by the 004
+  content-hash). Approve POSTs to `/api/actions/{id}/approve` (UI session only).
+- **Run screen (parameter entry)** — reached from an approved action. A param form
+  with a **widget per `ParamKind`**: `ALLOWED_SET` → dropdown, `REGEX` → text (the
+  pattern shown as a hint), `INT_RANGE` → number (min/max). A **live resolved-
+  command preview** fills each `PARAM` slot as values are chosen; the **Run button
+  stays disabled until all params are set**, with client-side checks mirroring the
+  server `ParamBinder` rule. Run → `run_action` via `RunService` (005).
+- **Run view** — the resolved **"command that ran"** (param values bound in, not
+  placeholders) + a **"parameters used"** panel + status chip + exit code + a mono
+  terminal. Running runs **stream** over the 005 SSE endpoint (auto-scroll + pause);
+  finished runs render at once; `FAILED` stderr is styled `--s-bad`.
 - **Blueprints** — list; author (name + actions); **instantiate** onto selected
   machines or a tag → shows the per-machine pending actions created.
-- **Auth** — Google sign-in landing; the **`/setup` pairing page** (011): shows the
-  requesting device's `userCode` and **Approve / Deny** for the MCP client.
+- **MCP surface** — read-only operator view of the `/mcp` tool catalog grouped
+  **Read / Create (never approves) / Run / Bootstrap**, each tool with its
+  signature + one-line description, a prominent **"there is no approve tool"**
+  callout, and a connection card (endpoint, `Bearer <personal token>`, "acts as
+  you", scope, resources). Renders from a small "describe tools/capabilities" read
+  source; makes the trust model legible to the human.
+- **Tokens & pairing** — list / create / revoke **personal MCP tokens**; **create
+  reveals the plaintext once** in a modal ("copy now — shown once"). The **`/setup`
+  pairing page** (011) shows the requesting client + `userCode` + expiry, an
+  **Approve / Deny**, a short **"how an agent connects"** explainer, and issues the
+  token via the same reveal-once modal on approval.
 
 **Accessibility & polish.** WCAG AA contrast on both themes; visible keyboard focus
 (`--accent` ring); state conveyed by label + icon, not color alone; honor
@@ -102,6 +130,12 @@ sign-out.
 everything through tokens/classes. All server-rendered text escaped via
 `common/HtmlEscaper`; client-side rendering sets `textContent`, never `innerHTML`,
 for any user/cloud-derived string (tags, names, output) to avoid XSS.
+
+**Visual reference.** A clickable static **mock** of every screen/flow above (the
+design tokens, the approval screen, the parameter-entry run form + live preview,
+the run view, the MCP-surface page, login, the app-key onboarding, and the
+token-reveal/pairing flow) was built and reviewed as the visual reference for this
+build — treat it as the intended look and interaction.
 
 **Tests / verification.** JS has no unit runner (matches birthday-rsvp); verify the
 shell + approval screen + live run output in a real browser via `/spec-test-live`
