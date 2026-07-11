@@ -942,58 +942,41 @@
   }
 
   // ----- MCP surface --------------------------------------------------------
-  // Rendered from a small assumed capability catalogue (ARCH.md "MCP surface"),
-  // NOT from spec-008 internals — the point is to make the trust model legible.
-
-  var MCP_TOOLS = [
-    { group: "Read", tools: [
-      { sig: "list_machines(tag?)", desc: "List the machines you own, optionally filtered by tag." },
-      { sig: "list_recipes(machineId)", desc: "Recipes on one of your machines." },
-      { sig: "list_actions(machineId, recipeId)", desc: "Actions, including ones still pending_approval." },
-      { sig: "get_run(runId)", desc: "Lifecycle + output of one of your runs." }
-    ] },
-    { group: "Create (never approves)", tools: [
-      { sig: "register_machine(host, port?, loginUser)", desc: "Register a machine you own." },
-      { sig: "tag_machine(machineId, tags)", desc: "Attach tags." },
-      { sig: "add_recipe(machineId, name, ...)", desc: "Author a recipe." },
-      { sig: "add_action(recipeId, ...)", desc: "Author an action — created DRAFT, not runnable." },
-      { sig: "discover_recipes(machineId)", desc: "Propose recipes by probing the host (all pending)." },
-      { sig: "discover_cloud(provider)", desc: "Import machines from a cloud account." }
-    ] },
-    { group: "Run", tools: [
-      { sig: "run_action(machineId, actionId, params)", desc: "Run an APPROVED action; refused otherwise or on invalid params. Streams output via MCP progress." }
-    ] },
-    { group: "Bootstrap", tools: [
-      { sig: "resource: app public SSH key", desc: "The key to install on targets' authorized_keys." },
-      { sig: "resource: run output", desc: "Captured stdout/stderr of a run." }
-    ] }
-  ];
+  // The catalogue is a live read from GET /api/mcp/tools (McpCatalogRS) rather than
+  // a hardcoded list — it stays in sync with the tools spec-008 actually registers.
+  // The point of the screen is to make the trust model legible: what an agent on
+  // /mcp can do, grouped by kind, and that there is no approve tool.
 
   function screenMcp() {
-    var groups = MCP_TOOLS.map(function (g) {
-      return h("div", { class: "section" }, h("h2", { text: g.group }),
-        h("ul", { class: "list mt-3" }, g.tools.map(function (t) {
-          return h("li", null,
-            h("code", { class: "mono", text: t.sig }),
-            h("p", { class: "small dim mt-2", text: t.desc }));
-        })));
+    mountAsync(function () {
+      return api("GET", "/mcp/tools").then(function (catalog) {
+        var groups = (catalog.groups || []).map(function (g) {
+          return h("div", { class: "section" }, h("h2", { text: g.group }),
+            h("ul", { class: "list mt-3" }, (g.tools || []).map(function (t) {
+              return h("li", null,
+                h("code", { class: "mono", text: t.signature }),
+                h("p", { class: "small dim mt-2", text: t.description }));
+            })));
+        });
+        var resources = (catalog.resources || []).join("; ") || "none";
+        return h("div", null,
+          pageHead("MCP surface", "What an agent connected to /mcp can do — as you, over a personal token."),
+          catalog.approveTool ? null : h("div", { class: "banner banner--warn", role: "note" },
+            h("div", { class: "banner-body" },
+              h("strong", { text: "There is no approve tool. " }),
+              "Registration and authoring are open to MCP, but approval is UI-only: an agent can propose and ask, and can only run actions you have approved here.")),
+          h("div", { class: "card" }, h("h2", { text: "Connection" }),
+            h("dl", { class: "kv mt-3" },
+              h("dt", { text: "Endpoint" }), h("dd", { class: "mono", text: location.origin + "/mcp" }),
+              h("dt", { text: "Auth" }), h("dd", { class: "mono", text: "Authorization: Bearer <personal token>" }),
+              h("dt", { text: "Identity" }), h("dd", { text: "The token acts as you; every tool scopes to your data." }),
+              h("dt", { text: "Scope" }), h("dd", { text: "Your machines, recipes, and runs only — not-owned rows read as 404." }),
+              h("dt", { text: "Resources" }), h("dd", { text: resources })),
+            h("p", { class: "small dim mt-3" }, "Create a token under ",
+              link("#/tokens", "Tokens", null), " or pair a client at ", h("code", { class: "mono", text: "/#/setup" }), ".")),
+          groups);
+      });
     });
-    mount(h("div", null,
-      pageHead("MCP surface", "What an agent connected to /mcp can do — as you, over a personal token."),
-      h("div", { class: "banner banner--warn", role: "note" },
-        h("div", { class: "banner-body" },
-          h("strong", { text: "There is no approve tool. " }),
-          "Registration and authoring are open to MCP, but approval is UI-only: an agent can propose and ask, and can only run actions you have approved here.")),
-      h("div", { class: "card" }, h("h2", { text: "Connection" }),
-        h("dl", { class: "kv mt-3" },
-          h("dt", { text: "Endpoint" }), h("dd", { class: "mono", text: location.origin + "/mcp" }),
-          h("dt", { text: "Auth" }), h("dd", { class: "mono", text: "Authorization: Bearer <personal token>" }),
-          h("dt", { text: "Identity" }), h("dd", { text: "The token acts as you; every tool scopes to your data." }),
-          h("dt", { text: "Scope" }), h("dd", { text: "Your machines, recipes, and runs only — not-owned rows read as 404." }),
-          h("dt", { text: "Resources" }), h("dd", { text: "App public SSH key; run output." })),
-        h("p", { class: "small dim mt-3" }, "Create a token under ",
-          link("#/tokens", "Tokens", null), " or pair a client at ", h("code", { class: "mono", text: "/#/setup" }), ".")),
-      groups));
   }
 
   // ----- Tokens & pairing ---------------------------------------------------
