@@ -178,6 +178,13 @@ public class ActionService {
         action.setName(input.name().trim());
         action.setDescription(input.description());
         action.setSudo(input.sudo());
+        // Force the orphan DELETEs of the old tokens/params before re-inserting, so a
+        // later autoflush in the same transaction (e.g. a blueprint re-instantiation
+        // that reconciles then re-reads) cannot hit the (action, position)/(action,
+        // name) unique constraints with insert-before-delete ordering.
+        action.getArgTokens().clear();
+        action.getParamDefs().clear();
+        actions.saveAndFlush(action);
         applyStructure(action, input.argTokens(), input.paramDefs());
 
         // Central reset: any structural edit drops the action back to DRAFT so it

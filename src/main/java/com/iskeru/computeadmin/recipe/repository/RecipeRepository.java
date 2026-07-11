@@ -24,4 +24,7 @@ public interface RecipeRepository extends JpaRepository<Recipe, String> {
 
     Optional<Recipe> findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
             String machineId, String ownerId, RecipeType type, String name);
+    /** The recipe already instantiated from a blueprint onto a given owned machine, if any (spec 010). */
+    Optional<Recipe> findByMachine_IdAndMachine_Owner_IdAndSourceBlueprintId(
+            String machineId, String ownerId, String sourceBlueprintId);
 }

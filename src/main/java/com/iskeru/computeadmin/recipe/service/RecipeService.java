@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Recipes, scoped per user. Ownership derives through {@code machine.owner}
@@ -97,5 +98,53 @@ public class RecipeService {
     public List<Action> listActions(String recipeId) {
         Recipe recipe = requireRecipe(recipeId);
         return actions.findByRecipe_IdOrderByName(recipe.getId());
+    }
+
+    /**
+     * The recipe already instantiated from {@code sourceBlueprintId} onto one of the
+     * current user's machines, if any (spec 010). Used by {@code InstantiationService}
+     * to reconcile a re-instantiation onto the same machine.
+     */
+    public Optional<Recipe> findInstantiated(String machineId, String sourceBlueprintId) {
+        return recipes.findByMachine_IdAndMachine_Owner_IdAndSourceBlueprintId(
+                machineId, CurrentUser.require().userId(), sourceBlueprintId);
+    }
+
+    /**
+     * Creates a recipe on one of the current user's machines carrying blueprint
+     * provenance (spec 010): {@code sourceBlueprintId} + {@code sourceBlueprintVersion}
+     * record where it was instantiated from.
+     */
+    @Transactional
+    public Recipe createInstantiated(String machineId, String name, String description, RecipeType type,
+                                     String sourceBlueprintId, int sourceBlueprintVersion) {
+        if (name == null || name.isBlank()) {
+            throw new BadRequestException("name is required");
+        }
+        Machine machine = machineService.requireMachine(machineId);
+        Recipe recipe = new Recipe();
+        recipe.setMachine(machine);
+        recipe.setName(name.trim());
+        recipe.setDescription(description);
+        recipe.setType(type == null ? RecipeType.CUSTOM : type);
+        recipe.setSourceBlueprintId(sourceBlueprintId);
+        recipe.setSourceBlueprintVersion(sourceBlueprintVersion);
+        return recipes.save(recipe);
+    }
+
+    /**
+     * Refreshes an instantiated recipe's display fields and its recorded blueprint
+     * version on re-instantiation (spec 010). The recipe must already be one of the
+     * current user's (scoped by the caller that located it).
+     */
+    @Transactional
+    public Recipe updateInstantiatedMeta(String recipeId, String name, String description, RecipeType type,
+                                         int sourceBlueprintVersion) {
+        Recipe recipe = requireRecipe(recipeId);
+        recipe.setName(name == null || name.isBlank() ? recipe.getName() : name.trim());
+        recipe.setDescription(description);
+        recipe.setType(type == null ? RecipeType.CUSTOM : type);
+        recipe.setSourceBlueprintVersion(sourceBlueprintVersion);
+        return recipes.save(recipe);
     }
 }
