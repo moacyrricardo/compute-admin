@@ -20,13 +20,13 @@ import org.springframework.test.context.ActiveProfiles;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Per-user isolation over the real HTTP surface (spec-011): unauthenticated
  * {@code /api} is 401; the dev Google bypass mints a distinct user per email;
- * user B cannot see or revoke user A's personal token (404, never 403); MCP
- * without a token is rejected and MCP with a user's token connects.
+ * user B cannot see or revoke user A's personal token (404, never 403); a tokenless
+ * MCP session reaches no user data (only the spec-008 bootstrap tools) and MCP with
+ * a user's token connects.
  *
  * <p>Machine/recipe/run ownership (also 404-on-cross-user) is enforced by the
  * retrofit in specs 003/004/005/010, once those entities exist; this test covers
@@ -78,9 +78,14 @@ class OwnershipWebTest {
     }
 
     @Test
-    void mcp_WithoutToken_IsRejected() {
+    void mcp_WithoutToken_ReachesNoUserData() {
+        // spec-008: a tokenless session may connect (for self-setup) but every
+        // data/run tool is refused — it reaches no user data (S8 preserved).
         try (McpSyncClient client = mcpClient(null)) {
-            assertThatThrownBy(client::initialize).isInstanceOf(Exception.class);
+            client.initialize();
+            McpSchema.CallToolResult machines = client.callTool(
+                    new McpSchema.CallToolRequest("list_machines", java.util.Map.of()));
+            assertThat(machines.isError()).isTrue();
         }
     }
 

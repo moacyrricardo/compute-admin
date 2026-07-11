@@ -34,10 +34,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * the dev Google bypass, and supplies a {@code @Primary} stub {@link
  * MachineService} so the assertion doesn't depend on the spec-002 stub's body.
  *
- * <p><strong>Scope note (unchanged from spec-002):</strong> this does not prove
- * that the bound {@code AuthContext} reaches a tool handler — the MCP SDK runs
- * sync tool callbacks on a Reactor thread, so {@code CurrentUser} is unbound
- * inside a tool. Propagation into tools remains a spec-008 concern.
+ * <p><strong>Scope note:</strong> this test only proves the transport/auth seam; a
+ * {@code @Primary} stub {@code MachineService} makes {@code list_machines} return
+ * {@code []} without reading {@code CurrentUser}. That the bound {@code AuthContext}
+ * actually reaches a tool handler (the spec-008 actor fix) is proven by
+ * {@code McpToolsWebTest}, whose tools all scope to the token's user.
  *
  * <p>spec-011.
  */

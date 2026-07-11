@@ -21,10 +21,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Unit-tests the identity scope seam: {@link CurrentUser#require()} fails when
  * unbound, {@link JwtScopeFilter} binds a UI context only for a valid JWT, and
- * {@link McpTokenAuthFilter} binds an MCP context for a valid token and rejects
- * an unauthenticated request with 401.
+ * {@link McpTokenAuthFilter} binds an MCP context for a valid token, rejects a
+ * presented-but-invalid token with 401, and — since spec-008 — lets a
+ * <strong>tokenless</strong> bootstrap session proceed unbound.
  *
- * <p>spec-011 (supersedes spec-002's {@code ActorScopeTest}).
+ * <p>spec-011 (supersedes spec-002's {@code ActorScopeTest}); bootstrap allowance
+ * added in spec-008.
  */
 class AuthScopeTest {
 
@@ -83,11 +85,12 @@ class AuthScopeTest {
     }
 
     @Test
-    void mcpFilter_WithoutToken_Rejects401() throws Exception {
+    void mcpFilter_WithInvalidToken_Rejects401() throws Exception {
         PersonalTokenService tokenService = tokenServiceReturning(null);
         McpTokenAuthFilter filter = new McpTokenAuthFilter(tokenService);
 
         MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("Authorization", "Bearer bad");
         MockHttpServletResponse response = new MockHttpServletResponse();
         AtomicReference<Boolean> chainCalled = new AtomicReference<>(false);
         FilterChain chain = (req, res) -> chainCalled.set(true);
@@ -96,6 +99,29 @@ class AuthScopeTest {
 
         assertThat(response.getStatus()).isEqualTo(401);
         assertThat(chainCalled.get()).isFalse();
+    }
+
+    @Test
+    void mcpFilter_WithoutToken_ProceedsUnboundForBootstrap() throws Exception {
+        // No Authorization header at all: a tokenless bootstrap session. It must
+        // proceed unbound (only begin_setup/complete_setup are reachable, enforced
+        // by the tool wrapper) — not be rejected. authenticate() is never consulted.
+        McpTokenAuthFilter filter = new McpTokenAuthFilter(tokenServiceThatFails());
+
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AtomicReference<Boolean> chainCalled = new AtomicReference<>(false);
+        AtomicReference<Boolean> boundInChain = new AtomicReference<>(false);
+        FilterChain chain = (req, res) -> {
+            chainCalled.set(true);
+            boundInChain.set(CurrentUser.optional().isPresent());
+        };
+
+        filter.doFilter(request, response, chain);
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(chainCalled.get()).isTrue();
+        assertThat(boundInChain.get()).isFalse();
     }
 
     private AuthContext runJwtFilter(String authHeader) throws Exception {
@@ -126,6 +152,16 @@ class AuthScopeTest {
             @Override
             public Optional<AppUser> authenticate(String plaintext) {
                 return Optional.ofNullable(user);
+            }
+        };
+    }
+
+    /** A {@link PersonalTokenService} that must not be consulted (tokenless path). */
+    private static PersonalTokenService tokenServiceThatFails() {
+        return new PersonalTokenService(null, null) {
+            @Override
+            public Optional<AppUser> authenticate(String plaintext) {
+                throw new AssertionError("authenticate must not be called for a tokenless request");
             }
         };
     }

@@ -1,9 +1,12 @@
 package com.iskeru.computeadmin.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iskeru.computeadmin.common.CurrentUser;
 import com.iskeru.computeadmin.mcp.McpTool;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.server.transport.HttpServletSseServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +15,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.function.BiFunction;
 
 /**
  * Wires the MCP transport as a <strong>raw servlet beside RESTEasy</strong> on the
@@ -23,16 +27,24 @@ import java.util.List;
  *
  * <p>Since spec-011 the MCP surface is authenticated: {@code McpTokenAuthFilter}
  * validates a per-user personal token on {@code /mcp/*} and binds an
- * {@code AuthContext} before this servlet runs. <strong>Known gap — that context
- * still does not reach tool handlers.</strong> The MCP SDK (mcp 0.11.2) adapts a
+ * {@code AuthContext} before this servlet runs. spec-008 makes that binding reach
+ * tool handlers by building the server with <strong>immediate execution</strong>
+ * ({@code .immediateExecution(true)}). By default the MCP SDK (mcp 0.11.2) adapts a
  * sync tool via {@code Mono.fromCallable(...).subscribeOn(Schedulers.boundedElastic())},
- * so tool callbacks execute on a Reactor pool thread, not the request thread.
- * Since a {@code ScopedValue} is thread-confined, {@code CurrentUser.require()}
- * would throw inside any tool. A tool that actually needs the caller (spec 008)
- * must re-establish the binding on the handler thread rather than assume it is
- * present. See specs/002-done-mcp-transport-seam.md, "Known Gaps".
+ * so a tool would run on a Reactor pool thread and the thread-confined
+ * {@code ScopedValue} bound by the filter would not follow. Immediate execution
+ * skips that offload; because the servlet-SSE transport already blocks the request
+ * thread on {@code session.handle(...).block()}, the tool runs on that same
+ * (filter-bound) thread and {@code CurrentUser.require()} resolves the caller. This
+ * is the recommended mode for a blocking transport.
  *
- * <p>spec-002; MCP auth added in spec-011.
+ * <p>Each tool is still wrapped here ({@link #secure}) to enforce the spec-008
+ * bootstrap allowance: a tool that {@linkplain McpTool#requiresAuth() requires auth}
+ * is refused as {@code unauthorized} when no caller is bound (a tokenless session),
+ * so only the self-setup tools reach an unauthenticated agent.
+ *
+ * <p>spec-002; MCP auth added in spec-011; actor propagation + bootstrap gate in
+ * spec-008.
  */
 @Configuration
 public class McpServletConfig {
@@ -68,8 +80,37 @@ public class McpServletConfig {
         return McpServer.sync(transportProvider)
                 .serverInfo("compute-admin", version)
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(true).build())
-                .tools(tools.stream().map(McpTool::specification).toList())
+                // Run tools on the (filter-bound) request thread so CurrentUser is in
+                // scope inside a tool — see the class Javadoc. The servlet transport
+                // is blocking, which is where immediate execution is appropriate.
+                .immediateExecution(true)
+                .tools(tools.stream().map(McpServletConfig::secure).toList())
                 .build();
+    }
+
+    /**
+     * Wraps a tool's handler to enforce the spec-008 bootstrap allowance. The caller
+     * is bound by {@link McpTokenAuthFilter} and, under immediate execution, is in
+     * scope on this thread. When no caller is bound (a tokenless bootstrap session),
+     * a tool that {@linkplain McpTool#requiresAuth() requires auth} is refused as
+     * {@code unauthorized}; only the self-setup tools run without a caller.
+     */
+    private static McpServerFeatures.SyncToolSpecification secure(McpTool tool) {
+        McpServerFeatures.SyncToolSpecification spec = tool.specification();
+        boolean requiresAuth = tool.requiresAuth();
+        BiFunction<McpSyncServerExchange, McpSchema.CallToolRequest, McpSchema.CallToolResult> handler =
+                spec.callHandler();
+        BiFunction<McpSyncServerExchange, McpSchema.CallToolRequest, McpSchema.CallToolResult> wrapped =
+                (exchange, request) -> {
+                    if (requiresAuth && CurrentUser.optional().isEmpty()) {
+                        return McpSchema.CallToolResult.builder()
+                                .addTextContent("{\"error\":\"unauthorized\"}")
+                                .isError(true)
+                                .build();
+                    }
+                    return handler.apply(exchange, request);
+                };
+        return new McpServerFeatures.SyncToolSpecification(spec.tool(), null, wrapped);
     }
 
     @Bean
