@@ -1,5 +1,9 @@
 # 008 — MCP write & run tools
 
+> **Status:** done — branch `moacyrricardo/spec-008-mcp-write-and-run-tools`
+> (PR #16), off `moacyrricardo/integration-core`. Linear is blocked for this repo,
+> so no issue identifier.
+
 ## Context
 
 002 proved the MCP seam with one read-only tool. This spec completes the MCP
@@ -68,3 +72,30 @@ bootstrap tools below; all data/run tools are rejected (resolves S8).
   S1/S8 objection (any local caller can hit `/api/.../approve`) is closed by 011.
 - **Still local (project decision).** Transport hardening beyond token auth
   (loopback bind, TLS, rate limiting) remains a tracked risk — see ARCH.md.
+
+## Implementation Notes (done)
+
+Branch `moacyrricardo/spec-008-mcp-write-and-run-tools` (PR #16), off
+`moacyrricardo/integration-core`. Implemented per spec; `mvn verify` green
+(125 tests). Notes:
+
+- **Read/create/run + bootstrap tools** landed as specified: thin `*Tool` beans
+  over the feature services, `list_actions` marks `pending_approval`,
+  `run_action` refuses non-`APPROVED`, and `begin_setup`/`complete_setup` are the
+  only tools a tokenless session reaches. `GateArchTest` confirms the `mcp`
+  package references neither a repository nor `ApprovalService`.
+- **Actor propagation resolved via immediate execution.** The MCP SDK (0.11.2)
+  by default adapts a sync tool onto a Reactor `boundedElastic` thread, where the
+  filter-bound `ScopedValue<AuthContext>` would not follow. The server is built
+  with `.immediateExecution(true)`: because the servlet-SSE transport already
+  blocks the request thread on `session.handle(...).block()`, each tool runs on
+  that same filter-bound thread and `CurrentUser.require()` resolves the caller.
+- **MCP Resources** (the spec-eval gap, added last): `capabilities().resources(…)`
+  enabled and two thin `McpResource` beans registered beside the tools —
+  `PublicKeyResource` (`ca://app/ssh-public-key`, via `KeyService`) and
+  `RunOutputResource` (`run://{runId}/output`, via `RunService.requireRun`,
+  owner-scoped). The SDK routes a concrete `resources/read` by matching its URI
+  against each registered URI treated as a template, so one `run-output` spec
+  serves every `runId` (extracted with the SDK's own template manager). Resource
+  reads go through the same tokenless-bootstrap gate as tools. `McpToolsWebTest`
+  asserts both resources are listed and readable.
