@@ -1,5 +1,8 @@
 # 010 — Recipe blueprints (author once, instantiate per-machine)
 
+**Status:** done · **Branch:** `moacyrricardo/spec-010-recipe-blueprints` ·
+**Linear:** blocked for this repo — tracked as `spec-010` (no issue identifier).
+
 ## Context
 
 Recipes are per-machine (spec 004): a `Recipe` belongs to one `Machine` and every
@@ -103,3 +106,76 @@ provenance columns `source_blueprint_id`/`source_blueprint_version` are added in
 Build after `001`–`008` (needs the 004 action model + content-hash edit path, and
 reuses the 006/007 action shapes). Independent of `009`; a strong first
 follow-up once the per-machine core works end to end.
+
+## Implementation Notes
+
+Built as specified — the `blueprint` package (model / repository / service / api),
+the four MCP create tools, and `V6__recipe_blueprint.sql`. The invariant holds:
+blueprints carry no approval state and no run path, and instantiation only writes
+per-machine `Recipe`/`Action` config, never approves and never runs. How the code
+diverged from or refined the spec:
+
+- **`instantiate` signature.** The spec's abstract `Target` became a concrete
+  `InstantiationService.InstantiateInput(Set<String> machineIds, String tag)`
+  record. Supplying **both or neither** is a `400` (`resolveTargets` uses an
+  exactly-one check); tag resolution reuses `MachineService.list(tag)`, which is
+  already owner-scoped, and explicit ids go through `MachineService.requireMachine`
+  (404 on a machine the current user doesn't own) — so ownership is enforced on
+  both target paths.
+- **New vs. changed actions land in different states** (a refinement of the spec's
+  "new/updated actions land PENDING_APPROVAL"). A brand-new instantiated action is
+  created then `submitForApproval`-ed to `PENDING_APPROVAL` (a submit, never an
+  approve). An **existing** action whose content changed is pushed through
+  `ActionService.editAction`, which — via the 004 content-hash rule — resets it to
+  `DRAFT` and clears its approval, so a re-instantiation surfaces changes for
+  re-submission + re-approval rather than silently re-arming an old approval. This
+  matches the Decision section's "drops back to DRAFT" wording.
+- **No-op re-instantiation preserves approvals.** Change detection compares a
+  transient, never-persisted `desiredHash(blueprintAction)` (an `Action` built from
+  the blueprint's tokens/params/sudo, hashed via `ActionSnapshot.hash`) against the
+  existing instance's snapshot hash. Equal hash ⇒ the action (and any approval) is
+  left completely untouched, so approving on machine A and re-instantiating an
+  unchanged blueprint keeps A approved — exactly the `InstantiationServiceTest`
+  case.
+- **Added `editBlueprintAction` (not in the spec's method list).** The spec listed
+  `createBlueprint / addBlueprintAction / editBlueprint / list`; the structural
+  edit of an individual blueprint action was needed to actually exercise the
+  version-bump → reconcile → DRAFT-reset flow, so `BlueprintService.editBlueprintAction`
+  and `PUT /blueprints/actions/{actionId}` were added. It bumps the owning
+  blueprint's `version` like `editBlueprint` does, and clears + `saveAndFlush`es the
+  old tokens/params before re-inserting so orphan deletes run before inserts and
+  cannot collide with the `(action, position)` / `(action, name)` unique
+  constraints (an insert-before-delete autoflush hazard). The REST surface is
+  correspondingly fuller than the spec's "CRUD + instantiate" sketch: it also
+  exposes `GET /{id}`, `GET /{id}/actions`, and `PUT /{id}`.
+- **Authoring validation is shared with 004** as specified — every `PARAM` token
+  must name a declared def, every declared def must be referenced, param rules are
+  well-formed, and a `CUSTOM` blueprint action's leading literal must be an absolute
+  path (the shared-`deploy.sh` case, spec 007).
+- **Migration scope.** Only `recipe_blueprint` and `blueprint_action` are
+  `@Audited` and get hand-written `_aud` companions (Envers validity strategy); the
+  structural child tables are `@NotAudited` (their content is captured indirectly by
+  an instantiated action's approved snapshot hash). The `recipe` provenance columns
+  (`source_blueprint_id` / `source_blueprint_version`) come from V4, as the spec
+  noted.
+
+**Tests.** `BlueprintServiceTest` (authoring + validation parity with 004),
+`InstantiationServiceTest` (instantiate onto multiple machines and by tag;
+provenance set; unchanged re-instantiation preserves an approval; version-bump
+re-instantiation resets a changed approved action to DRAFT), and `BlueprintGateTest`
+(extends `GateArchTest`: blueprint types have no approval state / no run path, and
+the blueprint MCP tools never reference `ApprovalService`).
+
+**Change division.** No `CONTRIBUTING.md` in the repo, so there is no project
+authority to assess against. For the record, the branch split cleanly by concern:
+model + repositories + V6 schema → services → REST + MCP tools → tests (one commit
+each, `spec-010 …` subjects), plus the isolated rename-to-doing commit, matching the
+global default (one logical concern per commit; migration travels with its model).
+
+**Deferred to new architecture** — `new-arch: []`. No new entries to ARCH.md's
+deferred-risk register: blueprints reuse the existing 004 gate and command model,
+are per-user (consistent with S1's resolution in spec 011), and the only security
+caveat — `CUSTOM` approval binds to the script path, not its contents on each
+target — is the pre-existing spec-007 / S4 gap, restated in Known Gaps, not a new
+risk. The feature-level follow-ups (tag auto-sync, drift enforcement) are recorded
+under Known Gaps above.
