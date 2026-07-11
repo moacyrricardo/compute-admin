@@ -41,3 +41,26 @@ the action runs through the normal `RunService` gate.
   v1. Combined with S5 (`sudo`), if that path is writable by a lesser-privileged
   user it is a privilege-escalation vector. Content pinning (hash the script at
   approval, verify before run) is a candidate hardening spec.
+
+## Implementation Notes
+
+**Status:** done. **Branch:** `moacyrricardo/spec-007-custom-command-recipes`
+(PR #11). Linear remains blocked for this repo, so the work carries `spec-007`
+commit subjects and no issue identifier.
+
+Implemented as specified: `ActionService.addCustomAction` builds an ordinary
+004 `Action` from `CustomActionInput`, storing the absolute `scriptPath` as the
+leading `LITERAL` `ArgToken` and appending declared `PARAM` tokens with their
+`ParamDef`s. Authoring-time validation rejects relative/blank paths; the action
+is created `DRAFT` and reuses the 004 approval state machine, snapshot content
+hash, and the normal `RunService` gate — no bypass. No free-form command param
+is ever accepted (S4). The implementation did not deviate from the spec's
+Decision/Implementation sections.
+
+### Deferred to a future (new-arch) spec
+
+- **Content-pinning for CUSTOM recipes:** hash the script bytes at approval time
+  and verify before each run. The spec's own Known Gaps section already flags
+  this as a candidate hardening spec (approval binds to a path, not contents;
+  combined with S5 sudo it is a privilege-escalation vector if the path is
+  writable by a lesser user). Correctly deferred, not part of this PR.
