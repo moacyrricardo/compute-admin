@@ -124,3 +124,23 @@ provenance columns for 010), `action`, `arg_token`, `param_def`,
   the eventual hardening.
 - Envers records the approval transition + ambient actor, but under S1/S8 the
   actor is unauthenticated — change history, not principal accountability.
+
+## Implementation Notes (done)
+
+Branch `moacyrricardo/spec-004-recipe-action-approval-gate` (PR #8), off `main`.
+Implemented per spec; `mvn verify` green (72 tests). Notes:
+
+- **Gate verified end to end** by spec-eval: REST/UI-only state machine, the
+  content-hash TOCTOU reset-on-edit, injection-safe `ParamBinder` (validated
+  argv), 404 owner-scoping via `recipe.machine.owner`, and `V4` `_aud` tables
+  matching spec-003's validity strategy.
+- **`GateArchTest`** is a source-file scan of the `mcp` package (no ArchUnit dep
+  added) asserting it references neither `ApprovalService` nor a `Repository` —
+  the machine-checkable proof MCP can't reach approval.
+- H2 reserved-word `value` → columns `token_value` / `allowed_value` (entity
+  fields stay `value`); ordered `LinkedHashSet` collections avoid
+  `MultipleBagFetchException` under `open-in-view=false`.
+- **Deferred to a fresh spec (low priority):** `ActionSnapshot`'s canonical
+  serialization uses unescaped `|`/newline delimiters — a theoretical
+  hash-collision surface, currently moot; harden only if the approval hash ever
+  becomes a cross-principal integrity control.
