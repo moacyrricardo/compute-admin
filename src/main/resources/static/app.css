@@ -285,6 +285,9 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
   word-break: break-word;
   line-height: 1.7;
 }
+/* For a single long unbreakable value (an SSH key, its fingerprint, an install
+   snippet): scroll horizontally instead of shattering the base64 mid-string. */
+.command--scroll { white-space: pre; word-break: normal; }
 .command .sudo-prefix { color: var(--s-warn); font-weight: var(--fw-semibold); }
 .tok-literal { color: var(--text); }
 .tok-param {

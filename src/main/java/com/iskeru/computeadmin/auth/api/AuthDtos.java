@@ -1,5 +1,6 @@
 package com.iskeru.computeadmin.auth.api;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.iskeru.computeadmin.auth.model.AppUser;
 import com.iskeru.computeadmin.auth.model.PairingRequest;
 import com.iskeru.computeadmin.auth.model.PersonalToken;
@@ -23,10 +24,16 @@ public final class AuthDtos {
     // --- auth ---------------------------------------------------------------
 
     /** {@code POST /api/auth/register} body: email, password, optional display name. */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record RegisterRequest(String email, String password, String name) {
     }
 
-    /** {@code POST /api/auth/login} body: email + password. */
+    /**
+     * {@code POST /api/auth/login} body: email + password. Unknown fields are ignored
+     * (defense-in-depth: a stray client field must never fail sign-in — see the login
+     * regression in {@code AuthWebTest}).
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record LoginRequest(String email, String password) {
     }
 
