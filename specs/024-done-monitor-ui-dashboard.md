@@ -1,12 +1,56 @@
 # 024 — Monitor UI dashboard (host panel + per-app cards, client-side polling)
 
-> **Status:** todo. Linear BLOCKED — commits use `spec-024`. Graduated from concern
+> **Status:** done. Branch `moacyrricardo/monitoring-021-025`. Linear BLOCKED —
+> commits use `spec-024`. Graduated from concern
 > [020](./020-todo-machine-monitoring.md). **Depends on
-> [022](./022-todo-monitoring-foundations.md)** (classification + fan-out output
-> labelling) and **≥1 monitor recipe** — build after/with
-> [023](./023-todo-monitor-machine-recipe.md); app cards come alive once
+> [022](./022-done-monitoring-foundations.md)** (classification + fan-out output
+> labelling) and **≥1 monitor recipe** — built after/with
+> [023](./023-done-monitor-machine-recipe.md); app cards come alive once
 > [025](./025-todo-app-monitor-recipes.md) lands. A working interactive mock of
 > exactly this dashboard exists; the layout below matches it.
+
+## Implementation notes
+
+Implemented as specified. Highlights and deviations:
+
+- **Backend — a new `monitor` module** (`monitor/api/MonitorRS` + `MonitorDtos`,
+  `monitor/service/MonitorService`), not an extension of an existing resource.
+  `GET /api/monitor` (`@Secured`, UI-only) returns a `Dashboard` of the user's
+  machines, each carrying its `MONITOR` actions **already split** host-vs-app by the
+  022 convention (`hasAppParam` = declares an `APP_PORT_LIST` param). This is the
+  only server-computed grouping; per-app-card keying and stdout parsing stay in the
+  browser. Ownership is delegated to `MachineService`/`RecipeService` (service→
+  service), so a not-owned id is simply absent. No schema change, no migration; no
+  `mcp`-package touch, so `GateArchTest` is unaffected. `ActionView` was left
+  untouched — the monitor view is a dedicated DTO carrying `recipeType`,
+  `hasAppParam`, `appName` (null until 025/026 supply it), `approvalState`,
+  `changedSinceApproval`, and the argv/param schema so the client can preview + run.
+- **UI — a new `#/monitor` screen** in the spec-012 shell (`static/app.js` +
+  `app.css`, nav link in `index.html`). Host panel with amber (≥75%) / red (≥90%)
+  threshold bars parsed client-side from `top`/`free`/`df` stdout (degrades to a raw
+  `<details>` block on parse failure, per the 023 known gap); per-app cards with a
+  framework badge (springboot/fastapi/generic, inferred from the recipe/action name),
+  an UP/DOWN pill, and a gate-safe run-chip row; a per-app detail drawer (Runtime
+  block, probed command, related actions). Client-side poll control
+  (`single`/5s/30s/1m/5m) with a **Run now** button and an **"updated Ns ago"**
+  heartbeat; timers are registered with a router teardown hook so they are cleared on
+  route-away (no leaked intervals). All remote stdout reaches the DOM via
+  `textContent`/`h()` only.
+- **Gate-safety.** Chips/related-action runs go through the ordinary `POST /api/runs`
+  path (approval + live-hash + params re-checked server-side). The client only offers
+  a run for an `APPROVED`, non-drifted action; an unapproved one renders disabled with
+  a link to the approval screen. Polling only auto-runs `APPROVED`, param-free host
+  actions.
+- **Honest current state (sequencing).** With 023's host monitor present, the host
+  panel is fully live. App cards render for `APP_PORT_LIST` monitor actions but light
+  up with real per-app data only once **025** (app-monitor recipes) and fan-out child-
+  output surfacing land — the fan-out parent run streams nothing itself, and `RunView`
+  exposes no child list yet. The Runtime block is a placeholder until those probes run.
+- **Tests.** `monitor/MonitorWebTest` (2): the endpoint enumerates only `MONITOR`
+  actions (a non-`MONITOR` action never surfaces), splits host vs app by `hasAppParam`,
+  and is owner-scoped (another user's monitors are invisible). Per spec-012's posture
+  the vanilla-JS UI has no JS unit harness; `mvn -q -B clean verify` is green
+  (193 tests, 0F/0E) and `GateArchTest` still passes.
 
 ## Context
 
