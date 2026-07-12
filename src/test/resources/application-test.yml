@@ -22,3 +22,8 @@ ca:
   # Keep the generated app SSH keypair (spec-003) out of ./data during tests.
   ssh:
     key-path: ./target/test-ssh/id_ed25519
+  run:
+    # Bound the run pool's shutdown drain (spec-016) to 1s in tests, matching the
+    # tightened lifecycle phase above, so closing a cached context never waits the
+    # 20s production default on a stray in-flight run.
+    shutdown-await-seconds: 1
