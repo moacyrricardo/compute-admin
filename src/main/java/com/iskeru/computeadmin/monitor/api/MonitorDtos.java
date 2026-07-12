@@ -6,6 +6,7 @@ import com.iskeru.computeadmin.machine.model.Tag;
 import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
+import com.iskeru.computeadmin.monitor.service.MonitorService.OpsAction;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ArgTokenView;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ParamDefView;
 import com.iskeru.computeadmin.recipe.model.Action;
@@ -16,6 +17,7 @@ import com.iskeru.computeadmin.recipe.model.ParamKind;
 import com.iskeru.computeadmin.recipe.model.Recipe;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.service.ActionSnapshot;
+import com.iskeru.computeadmin.recipe.service.ParamBinder;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -67,7 +69,8 @@ public final class MonitorDtos {
     public record MonitorMachineView(String machineId, String host, int port, String loginUser,
                                      MachineStatus status, List<String> tags,
                                      List<MonitorActionView> hostActions,
-                                     List<MonitorActionView> appActions) {
+                                     List<MonitorActionView> appActions,
+                                     List<AppOpView> appOps) {
         public static MonitorMachineView of(MachineMonitors m) {
             Machine machine = m.machine();
             TreeSet<String> tagNames = new TreeSet<>();
@@ -83,9 +86,63 @@ public final class MonitorDtos {
                     (view.hasAppParam() ? app : host).add(view);
                 }
             }
+            // App-ops (spec-026): approved actions with a reserved `app-name` param,
+            // each carrying the apps it targets so the client can key them to app cards.
+            List<AppOpView> appOps = new ArrayList<>();
+            for (OpsAction op : m.appOps()) {
+                appOps.add(AppOpView.of(op.action(), op.recipe(), machine.getId()));
+            }
             return new MonitorMachineView(machine.getId(), machine.getHost(), machine.getPort(),
-                    machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames), host, app);
+                    machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames), host, app, appOps);
         }
+    }
+
+    /**
+     * One app-ops action the dashboard can run from an app card (spec-026): an approved
+     * mutating action (restart / tail-logs / redeploy) of any recipe type that declares
+     * the reserved scalar {@code app-name} param. {@code targetApps} is the {@code
+     * app-name} {@code ALLOWED_SET}, the apps this action can target; {@code appParamName}
+     * names the param the UI locks to the card's app when pre-filling the run. It carries
+     * the full argv + param schema so the run form can prompt the remaining params and
+     * preview the exact command, gated by the unchanged run path.
+     */
+    public record AppOpView(String id, String machineId, String recipeId, String recipeName,
+                            RecipeType recipeType, String name, String description, boolean sudo,
+                            ApprovalState approvalState, boolean changedSinceApproval,
+                            String appParamName, List<String> targetApps,
+                            List<ArgTokenView> argTokens, List<ParamDefView> paramDefs) {
+        public static AppOpView of(Action action, Recipe recipe, String machineId) {
+            List<ParamDefView> defs = new ArrayList<>();
+            for (ParamDef def : action.getParamDefs()) {
+                defs.add(ParamDefView.of(def));
+            }
+            List<ArgTokenView> tokens = new ArrayList<>();
+            for (ArgToken token : action.getArgTokens()) {
+                tokens.add(ArgTokenView.of(token));
+            }
+            boolean changedSinceApproval = action.getApprovalState() == ApprovalState.APPROVED
+                    && !ActionSnapshot.hash(action).equals(action.getApprovedSnapshotHash());
+            return new AppOpView(action.getId(), machineId, recipe.getId(), recipe.getName(),
+                    recipe.getType(), action.getName(), action.getDescription(), action.isSudo(),
+                    action.getApprovalState(), changedSinceApproval,
+                    ParamBinder.APP_NAME_COMPONENT, ParamBinder.targetApps(action), tokens, defs);
+        }
+    }
+
+    /**
+     * The app-ops resolver (spec-026): every ops action on {@code machine} that can target
+     * {@code appName} — i.e. whose {@code targetApps} contains it (a single-value {@code
+     * app-name} equals it). This is the correlation the app card uses to list its runnable
+     * ops; it is a pure function of the view, so it is unit-testable without the wire.
+     */
+    public static List<AppOpView> opsForApp(MonitorMachineView machine, String appName) {
+        List<AppOpView> matches = new ArrayList<>();
+        for (AppOpView op : machine.appOps()) {
+            if (op.targetApps().contains(appName)) {
+                matches.add(op);
+            }
+        }
+        return matches;
     }
 
     /**

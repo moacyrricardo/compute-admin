@@ -87,7 +87,58 @@ class MonitorWebTest {
                 .doesNotContain(aAction);
     }
 
+    @Test
+    void dashboard_SurfacesApprovedAppOps_CorrelatedByAppNameParam() {
+        AuthDtos.Session owner = login("appops-owner@example.com");
+        String machineId = registerMachine(owner);
+        String recipe = createRecipe(owner, machineId, "systemd", RecipeType.SYSTEMD);
+
+        // An APPROVED ops action targeting two apps, and a not-yet-approved one.
+        String approvedOp = addOpsAction(owner, recipe, "restart", List.of("orders", "billing"));
+        approveAction(owner, approvedOp);
+        addOpsAction(owner, recipe, "tail-logs", List.of("orders"));
+
+        MonitorDtos.Dashboard dashboard = getDashboard(owner);
+        MonitorDtos.MonitorMachineView machine = machineFor(dashboard, machineId);
+
+        // Only the approved op surfaces (the facade never shows a runnable it would refuse),
+        // carrying its target apps and the reserved param name.
+        assertThat(machine.appOps()).extracting(MonitorDtos.AppOpView::id).containsExactly(approvedOp);
+        MonitorDtos.AppOpView op = machine.appOps().get(0);
+        assertThat(op.targetApps()).containsExactlyInAnyOrder("orders", "billing");
+        assertThat(op.appParamName()).isEqualTo("app-name");
+        assertThat(op.recipeType()).isEqualTo(RecipeType.SYSTEMD);
+
+        // The resolver keys the op to exactly the apps its `app-name` param can target.
+        assertThat(MonitorDtos.opsForApp(machine, "orders"))
+                .extracting(MonitorDtos.AppOpView::id).containsExactly(approvedOp);
+        assertThat(MonitorDtos.opsForApp(machine, "billing"))
+                .extracting(MonitorDtos.AppOpView::id).containsExactly(approvedOp);
+        assertThat(MonitorDtos.opsForApp(machine, "web")).isEmpty();
+    }
+
     // --- setup helpers ------------------------------------------------------
+
+    /** An ops action keyed by the reserved `app-name` ALLOWED_SET (spec-026). */
+    private String addOpsAction(AuthDtos.Session s, String recipeId, String name, List<String> apps) {
+        RecipeDtos.AddActionRequest body = new RecipeDtos.AddActionRequest(
+                recipeId, name, name + " op", true,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, "systemctl"),
+                        new ArgTokenInput(TokenKind.LITERAL, "restart"),
+                        new ArgTokenInput(TokenKind.PARAM, "app-name")),
+                List.of(new ParamDefInput("app-name", ParamKind.ALLOWED_SET, null, null, null, apps)));
+        return post("/api/actions", body, s.token(), RecipeDtos.ActionView.class).id();
+    }
+
+    private void approveAction(AuthDtos.Session s, String actionId) {
+        postNoBody("/api/actions/" + actionId + "/submit", s.token());
+        postNoBody("/api/actions/" + actionId + "/approve", s.token());
+    }
+
+    private void postNoBody(String path, String token) {
+        rest.exchange(path, HttpMethod.POST, new HttpEntity<>(bearer(token)), String.class);
+    }
+
 
     private MonitorDtos.Dashboard getDashboard(AuthDtos.Session s) {
         return rest.exchange("/api/monitor", HttpMethod.GET, new HttpEntity<>(bearer(s.token())),

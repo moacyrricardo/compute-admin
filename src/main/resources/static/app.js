@@ -190,7 +190,7 @@
     PENDING_APPROVAL: "warn",
     REVOKED: "bad", FAILED: "bad", UNREACHABLE: "bad", INTERRUPTED: "bad",
     RUNNING: "info", QUEUED: "info",
-    DRAFT: "neutral", UNKNOWN: "neutral", OFFLINE: "neutral"
+    DRAFT: "neutral", UNKNOWN: "neutral", OFFLINE: "neutral", STOPPED: "neutral"
   };
 
   /** The single state-chip component: colour PLUS label, never colour alone. */
@@ -717,7 +717,12 @@
 
   // ----- Run parameter entry ------------------------------------------------
 
-  function screenRunForm(p) {
+  function screenRunForm(p, query) {
+    query = query || {};
+    // spec-026: an ops action launched from an app card arrives with ?app-name=<app>.
+    // That value pre-fills and LOCKS the reserved `app-name` param; the remaining params
+    // are entered normally. The gate is still the server's — this only seeds the form.
+    var prefillApp = query["app-name"] || null;
     mountAsync(function () {
       return loadActionContext(p).then(function (ctx) {
         var action = ctx.action, machine = ctx.machine;
@@ -734,6 +739,10 @@
 
         var params = action.paramDefs || [];
         var values = {};
+        // Seed the locked app-name before the first preview so it renders filled.
+        if (prefillApp) {
+          params.forEach(function (def) { if (def.name === "app-name") values[def.name] = prefillApp; });
+        }
         var preview = renderCommand(action, values);
         var runBtn = h("button", { class: "btn btn--primary", disabled: true }, "Run");
 
@@ -747,6 +756,15 @@
 
         var fields = params.map(function (def) {
           var control, errEl = h("div", { class: "field-error hidden" });
+          // A pre-filled app-name is locked: shown read-only, its value already seeded
+          // into `values`, so it validates without user input (spec-026).
+          if (prefillApp && def.name === "app-name") {
+            control = h("input", { type: "text", class: "mono", value: prefillApp, disabled: true, readonly: true });
+            return h("div", { class: "field" },
+              h("label", { text: def.name }),
+              control,
+              h("div", { class: "hint", text: "locked to app " + prefillApp }));
+          }
           function onInput(v) {
             values[def.name] = v;
             var ok = validateParam(def, v);
@@ -779,6 +797,11 @@
             h("div", { class: "hint", text: paramRuleText(def) }),
             errEl);
         });
+
+        // Initial validity: a fully pre-filled op (e.g. restart, whose only param is the
+        // locked app-name) is runnable immediately; otherwise disabled until every param
+        // validates. Computed from `values`, so no DOM/refresh dependency (spec-026).
+        runBtn.disabled = !params.every(function (def) { return validateParam(def, values[def.name]); });
 
         runBtn.addEventListener("click", function () {
           runBtn.disabled = true;
@@ -853,6 +876,28 @@
       var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       var exitValue = h("dd", { class: "mono", text: run.exitCode != null ? String(run.exitCode) : "—" });
 
+      // spec-026: a Stop control cancels a live run (the follow-mode -f log case). Shown
+      // only while the run is non-terminal; POSTs /runs/{id}/cancel, which closes the SSH
+      // channel and marks the run STOPPED. Cancelling an already-terminal run is a no-op.
+      var TERMINAL = { DONE: 1, FAILED: 1, INTERRUPTED: 1, STOPPED: 1 };
+      var stopBtn = TERMINAL[run.status] ? null : h("button", { class: "btn btn--sm btn--danger" }, "Stop");
+      if (stopBtn) {
+        stopBtn.addEventListener("click", function () {
+          stopBtn.disabled = true;
+          stopBtn.textContent = "Stopping…";
+          api("POST", "/runs/" + encodeURIComponent(p.id) + "/cancel").then(function (fresh) {
+            toast("Run stopped");
+            var freshChip = chip(fresh.status);
+            statusChip.parentNode.replaceChild(freshChip, statusChip);
+            statusChip = freshChip;
+          }).catch(function (err) {
+            toast(err.message);
+            stopBtn.disabled = false;
+            stopBtn.textContent = "Stop";
+          });
+        });
+      }
+
       /**
        * spec-012: Render live run output. Only the {@code stdout}/{@code stderr}
        * SSE streams are terminal lines; the terminal {@code exit} event carries the
@@ -895,6 +940,7 @@
               h("div", { class: "row" },
                 h("dl", { class: "kv" },
                   h("dt", { text: "exit" }), exitValue),
+                stopBtn,
                 pauseBtn)),
             h("p", { class: "small dim mt-2 mono" },
               "queued " + fmtTime(run.createdAt) + " · started " + fmtTime(run.startedAt) + " · finished " + fmtTime(run.finishedAt)),
@@ -1424,6 +1470,61 @@
     });
   }
 
+  // ---- app-ops (spec-026) --------------------------------------------------
+  // App-ops surfaces approved mutating actions (restart / tail-logs / redeploy) on the
+  // card of every app their reserved `app-name` param can target. The correlation key is
+  // the param, not a machine tag or recipe label; targetApps is that param's ALLOWED_SET.
+
+  /** The machine's ops actions that can target `appName` (targetApps contains it). */
+  function opsForApp(mch, appName) {
+    return (mch.appOps || []).filter(function (op) {
+      return (op.targetApps || []).indexOf(appName) >= 0;
+    });
+  }
+
+  /**
+   * A run chip for one ops action on a given app: links to the run form with the app
+   * pre-filled and LOCKED (?app-name=<app>). The remaining params are entered there and
+   * the unchanged run path enforces the gate — this chip only navigates.
+   */
+  function opsRunChip(op, appName) {
+    var href = actionRunHref(op) + "?app-name=" + encodeURIComponent(appName);
+    return h("a", { class: "run-chip", href: href,
+      title: "Run " + op.name + " for " + appName },
+      op.name, h("span", { class: "run-chip-go", text: "run…" }));
+  }
+
+  /**
+   * The per-machine "App operations" section: one card per app the machine's approved
+   * ops actions can target, each listing those ops as pre-filled run chips. Returns null
+   * when the machine has no app-ops (so the section is omitted entirely).
+   */
+  function buildAppOpsSection(mch) {
+    var ops = mch.appOps || [];
+    if (!ops.length) return null;
+    var seen = {};
+    var appNames = [];
+    ops.forEach(function (op) {
+      (op.targetApps || []).forEach(function (a) {
+        if (!seen[a]) { seen[a] = true; appNames.push(a); }
+      });
+    });
+    appNames.sort();
+    if (!appNames.length) return null;
+    return h("div", { class: "app-ops" },
+      h("h3", { class: "mt-4", text: "App operations" }),
+      h("div", { class: "app-cards" }, appNames.map(function (appName) {
+        var matched = opsForApp(mch, appName);
+        return h("div", { class: "app-card" },
+          h("div", { class: "row-between" },
+            h("strong", { text: appName }),
+            h("span", { class: "tag", text: matched.length + (matched.length === 1 ? " op" : " ops") })),
+          h("div", { class: "run-chip-row mt-3" }, matched.map(function (op) {
+            return opsRunChip(op, appName);
+          })));
+      })));
+  }
+
   /**
    * Build one machine's block: a host panel (bars filled from the host monitor
    * actions each cycle) and the per-app cards. Returns { node, refresh } where
@@ -1507,6 +1608,12 @@
 
     renderHost({});
 
+    // App-ops (spec-026): a card per app the machine's approved ops actions can target,
+    // each listing those ops as pre-filled run chips. The apps come from the ops' own
+    // `app-name` ALLOWED_SET (server-provided targetApps), so an app surfaces here as
+    // soon as an approved restart/tail-logs/redeploy names it — no runtime poll needed.
+    var opsSection = buildAppOpsSection(mch);
+
     var statusChip = chip(mch.status);
     var node = h("section", { class: "section monitor-machine" },
       h("div", { class: "row-between" },
@@ -1517,7 +1624,8 @@
       hostPanel,
       rawWrap,
       appGrid ? h("h3", { class: "mt-4", text: "Apps" }) : null,
-      appGrid);
+      appGrid,
+      opsSection);
 
     function refresh() {
       // Only APPROVED, param-free host actions are poll-runnable (app probes need a
@@ -1602,7 +1710,7 @@
     { re: /^\/machines\/([^/]+)$/, fn: function (m) { screenMachineDetail({ mid: m[1] }); }, nav: "machines" },
     { re: /^\/monitor$/, fn: screenMonitor, nav: "monitor" },
     { re: /^\/machines\/([^/]+)\/recipes\/([^/]+)\/actions\/([^/]+)\/run$/,
-      fn: function (m) { screenRunForm({ mid: m[1], rid: m[2], aid: m[3] }); }, nav: "machines" },
+      fn: function (m, q) { screenRunForm({ mid: m[1], rid: m[2], aid: m[3] }, q); }, nav: "machines" },
     { re: /^\/machines\/([^/]+)\/recipes\/([^/]+)\/actions\/([^/]+)$/,
       fn: function (m) { screenApproval({ mid: m[1], rid: m[2], aid: m[3] }); }, nav: "machines" },
     { re: /^\/runs$/, fn: screenRuns, nav: "runs" },
