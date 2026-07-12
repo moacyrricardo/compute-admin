@@ -1,5 +1,14 @@
 # compute-admin base configuration (spec-001).
+server:
+  # Tomcat stops accepting new connections and drains in-flight requests — including
+  # the RunRS SSE output stream — before the context tears down (spec-016).
+  shutdown: graceful
 spring:
+  # Bound how long each shutdown phase waits for in-flight work to drain. Kept above
+  # the run pool's ca.run.shutdown-await-seconds (default 20s) so the run drain
+  # completes within the phase (spec-016).
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
   application:
     name: compute-admin
   # Optional local secrets file (never committed).
