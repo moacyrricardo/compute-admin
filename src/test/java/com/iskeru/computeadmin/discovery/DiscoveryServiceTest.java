@@ -86,6 +86,13 @@ class DiscoveryServiceTest {
         SshExecutor fakeSshExecutor() {
             return new FakeSshExecutor(DiscoveryServiceTest::respond);
         }
+
+        // @DataJpaTest does not autoconfigure Jackson; DiscoveryService needs an
+        // ObjectMapper to serialise app-monitor pre-fill lists (spec-025).
+        @Bean
+        com.fasterxml.jackson.databind.ObjectMapper objectMapper() {
+            return new com.fasterxml.jackson.databind.ObjectMapper();
+        }
     }
 
     @Autowired

@@ -1,5 +1,8 @@
 package com.iskeru.computeadmin.discovery.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iskeru.computeadmin.discovery.AppPortItem;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
@@ -88,12 +91,13 @@ public class DiscoveryService {
     private final List<RecipeDiscoverer> discoverers;
     private final TransactionTemplate tx;
     private final ApplicationEventPublisher events;
+    private final ObjectMapper json;
 
     public DiscoveryService(MachineService machineService, RecipeService recipeService,
                             ActionService actionService, ApprovalService approvalService,
                             SshExecutor ssh, List<RecipeDiscoverer> discoverers,
                             PlatformTransactionManager transactionManager,
-                            ApplicationEventPublisher events) {
+                            ApplicationEventPublisher events, ObjectMapper json) {
         this.machineService = machineService;
         this.recipeService = recipeService;
         this.actionService = actionService;
@@ -102,6 +106,7 @@ public class DiscoveryService {
         this.discoverers = discoverers;
         this.tx = new TransactionTemplate(transactionManager);
         this.events = events;
+        this.json = json;
     }
 
     /**
@@ -148,6 +153,14 @@ public class DiscoveryService {
             List<ReconciledAction> actions = new ArrayList<>();
             for (ProposedAction proposedAction : proposal.actions()) {
                 actions.add(reconcileAction(recipe, proposedAction));
+            }
+            // Refresh the discovery-pre-filled (app-name, port) list in place (spec-025).
+            // It is a runtime value, not part of any action's content hash (spec-022), so
+            // reconciling the apps never re-opens an approval — re-discovery just picks up
+            // a new/removed app on the same recipe (no duplicate card).
+            if (!proposal.appPortList().isEmpty()) {
+                recipe = recipeService.refreshDiscoveredAppPortList(
+                        recipe.getId(), toJson(proposal.appPortList()));
             }
             discovered.add(new DiscoveredRecipe(recipe, actions));
         }
@@ -196,5 +209,18 @@ public class DiscoveryService {
             // Revoked → leave it; do not resurrect.
             case REVOKED -> new ReconciledAction(existing, ReconcileOutcome.SKIPPED_REVOKED, null);
         };
+    }
+
+    /**
+     * Serialises the pre-filled items to the {@code [{"appName","port","runtime"}]}
+     * JSON array shape {@code RunService} binds per fan-out item (spec-022/025).
+     */
+    private String toJson(List<AppPortItem> items) {
+        try {
+            return json.writeValueAsString(items);
+        } catch (JsonProcessingException e) {
+            // Fixed record shape; a serialisation failure here is a programming error.
+            throw new IllegalStateException("Could not serialise app-port list", e);
+        }
     }
 }
