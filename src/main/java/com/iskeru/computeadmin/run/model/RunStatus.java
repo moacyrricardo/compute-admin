@@ -7,7 +7,7 @@ package com.iskeru.computeadmin.run.model;
  * never reported one / raised an error), or {@link #INTERRUPTED} (the process
  * that owned the run died before it finished, so the boot reconciler resolved it).
  *
- * <p>spec-005; {@link #INTERRUPTED} added in spec-016.
+ * <p>spec-005; {@link #INTERRUPTED} added in spec-016; {@link #STOPPED} in spec-026.
  */
 public enum RunStatus {
 
@@ -29,5 +29,14 @@ public enum RunStatus {
      * reconciler ({@code RunReconciler}) marked it terminal. The remote command's
      * true outcome is unknown; {@code exitCode = -1}. spec-016.
      */
-    INTERRUPTED
+    INTERRUPTED,
+
+    /**
+     * Terminal. The owner cancelled a live {@code RUNNING} run through
+     * {@code RunService.cancel(runId)} (e.g. to stop a follow-mode {@code -f} log
+     * stream): the SSH channel was closed and the run marked here. {@code exitCode}
+     * reflects the interrupted channel ({@code -1}); the captured output up to the
+     * cancel is retained. spec-026.
+     */
+    STOPPED
 }

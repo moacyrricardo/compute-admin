@@ -28,4 +28,27 @@ public interface SshExecutor {
 
     /** Runs {@code argv} on {@code target}, streaming output to {@code sink} (spec 005). */
     void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink);
+
+    /**
+     * As {@link #execStreaming(SshTarget, List, boolean, OutputSink)}, but registers the
+     * in-flight exec under {@code cancelKey} so a concurrent {@link #cancel(String)} can
+     * stop it — the capability follow-mode ({@code -f}) log streaming needs, since such a
+     * command never exits on its own (spec-026). The default ignores the key (an adapter
+     * with no cancellation support runs exactly as before); {@code MinaSshExecutor}
+     * overrides it to track the live channel.
+     */
+    default void execStreaming(SshTarget target, List<String> argv, boolean sudo,
+                               OutputSink sink, String cancelKey) {
+        execStreaming(target, argv, sudo, sink);
+    }
+
+    /**
+     * Cancels the in-flight streaming exec registered under {@code cancelKey}, closing
+     * its channel so its {@code execStreaming} returns. Returns {@code true} if a live
+     * exec was found and cancelled, {@code false} otherwise (already finished, never
+     * registered, or an adapter without cancellation). Idempotent. spec-026.
+     */
+    default boolean cancel(String cancelKey) {
+        return false;
+    }
 }

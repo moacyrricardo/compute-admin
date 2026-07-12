@@ -29,6 +29,7 @@ import com.iskeru.computeadmin.run.model.Run;
 import com.iskeru.computeadmin.run.model.RunStatus;
 import com.iskeru.computeadmin.run.repository.RunRepository;
 import com.iskeru.computeadmin.run.service.ActionModifiedException;
+import com.iskeru.computeadmin.run.service.RunNotFoundException;
 import com.iskeru.computeadmin.run.service.RunOutputHub;
 import com.iskeru.computeadmin.run.service.RunService;
 import com.iskeru.computeadmin.ssh.ExecResult;
@@ -52,8 +53,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -115,6 +119,16 @@ class RunServiceTest {
 
         final List<List<String>> argvCalls = new CopyOnWriteArrayList<>();
 
+        /**
+         * When set, the cancellable {@code execStreaming} <em>blocks</em> until
+         * {@link #cancel(String)} releases it — simulating a follow-mode ({@code -f})
+         * stream that never exits on its own, so a cancel test can prove the channel is
+         * stopped. Off by default, so every other test runs the fast one-shot path.
+         */
+        volatile boolean blockUntilCancelled = false;
+        final Map<String, CountDownLatch> latches = new ConcurrentHashMap<>();
+        final Set<String> cancelled = ConcurrentHashMap.newKeySet();
+
         @Override
         public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
             argvCalls.add(List.copyOf(argv));
@@ -126,6 +140,37 @@ class RunServiceTest {
             argvCalls.add(List.copyOf(argv));
             sink.onStdout("ok\n");
             sink.onComplete(0);
+        }
+
+        @Override
+        public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink,
+                                  String cancelKey) {
+            if (!blockUntilCancelled) {
+                execStreaming(target, argv, sudo, sink);
+                return;
+            }
+            argvCalls.add(List.copyOf(argv));
+            CountDownLatch latch = new CountDownLatch(1);
+            latches.put(cancelKey, latch);
+            sink.onStdout("streaming...\n");
+            try {
+                latch.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            // A cancelled follow-mode channel returns with no clean exit code (-1).
+            sink.onComplete(-1);
+        }
+
+        @Override
+        public boolean cancel(String cancelKey) {
+            cancelled.add(cancelKey);
+            CountDownLatch latch = latches.remove(cancelKey);
+            if (latch == null) {
+                return false;
+            }
+            latch.countDown();
+            return true;
         }
     }
 
@@ -167,6 +212,9 @@ class RunServiceTest {
     @BeforeEach
     void resetRecordedArgv() {
         ssh.argvCalls.clear();
+        ssh.blockUntilCancelled = false;
+        ssh.latches.clear();
+        ssh.cancelled.clear();
     }
 
     @Test
@@ -312,6 +360,74 @@ class RunServiceTest {
         await().atMost(2, TimeUnit.SECONDS).until(recorder::completed);
         assertThat(recorder.stream(RunOutputHub.OutputEvent.STDOUT)).contains("live");
         assertThat(recorder.stream(RunOutputHub.OutputEvent.EXIT)).contains("0");
+    }
+
+    // --- run cancellation (spec-026) ----------------------------------------
+
+    // NOT_SUPPORTED: commit so the after-commit dispatch fires and the run actually
+    // reaches the blocking (follow-mode) executor, then cancel it.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void cancel_RunningRun_ClosesChannel_MarksStopped_CompletesHub() {
+        ssh.blockUntilCancelled = true;
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedAction(true));
+
+        Run queued = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("svc", "nginx")));
+        String runId = queued.getId();
+
+        // The blocking executor holds the run in RUNNING until cancel releases it.
+        await().atMost(5, TimeUnit.SECONDS)
+                .until(() -> runs.findById(runId).orElseThrow().getStatus() == RunStatus.RUNNING);
+
+        // A live subscriber must be completed cleanly when the run is cancelled.
+        Recorder recorder = new Recorder();
+        asUser(user, () -> {
+            runService.subscribeToOutput(runId, recorder);
+            return null;
+        });
+
+        Run stopped = asUser(user, () -> runService.cancel(runId));
+        assertThat(stopped.getStatus()).isEqualTo(RunStatus.STOPPED);
+
+        // The transport was signalled and the run stays terminal STOPPED — the returning
+        // execStreaming's finish() must not override it back to DONE/FAILED.
+        await().atMost(5, TimeUnit.SECONDS).until(() -> ssh.cancelled.contains(runId));
+        await().atMost(5, TimeUnit.SECONDS).until(recorder::completed);
+        Run finished = runs.findById(runId).orElseThrow();
+        assertThat(finished.getStatus()).isEqualTo(RunStatus.STOPPED);
+        assertThat(finished.getExitCode()).isEqualTo(-1);
+        assertThat(finished.getFinishedAt()).isNotNull();
+    }
+
+    @Test
+    void cancel_NotOwnedRun_Is404() {
+        AppUser owner = saveUser();
+        AppUser other = saveUser();
+        Seed seed = asUser(owner, () -> seedAction(true));
+        // Default (rolled-back) tx: the after-commit dispatch never fires, so the run
+        // stays QUEUED — exactly the live run another user must not be able to cancel.
+        Run queued = asUser(owner, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("svc", "nginx")));
+
+        assertThatThrownBy(() -> asUser(other, () -> runService.cancel(queued.getId())))
+                .isInstanceOf(RunNotFoundException.class);
+    }
+
+    // NOT_SUPPORTED: let the (non-blocking) run finish DONE, then prove cancel is a no-op.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void cancel_TerminalRun_IsNoOp() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedAction(true));
+
+        Run queued = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("svc", "nginx")));
+        Run done = awaitTerminal(queued.getId());
+        assertThat(done.getStatus()).isEqualTo(RunStatus.DONE);
+
+        Run after = asUser(user, () -> runService.cancel(queued.getId()));
+        assertThat(after.getStatus()).isEqualTo(RunStatus.DONE);
+        // A terminal run is never signalled to the transport.
+        assertThat(ssh.cancelled).doesNotContain(queued.getId());
     }
 
     // --- fan-out (spec-022) -------------------------------------------------
