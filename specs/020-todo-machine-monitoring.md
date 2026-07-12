@@ -37,6 +37,16 @@ the refresh loop in the **browser**, not the server.
   e.g. `jvm.memory.used`, `http.server.requests`) — to build the per-app monitor view.
   Other app types (nginx status, a database ping, …) become sibling app-monitor recipes
   later.
+- **Auto-discovered (reuses the spec-006 `RecipeDiscoverer` port).** Discovery proposes
+  these like any other recipe (as `PENDING_APPROVAL`, never auto-run):
+  - `monitor machine` — universal, proposed on **every** reachable box.
+  - `springboot monitor` — proposed **pre-filled** with the `(app-name, port)` pairs a
+    read-only probe detects: enumerate listening TCP ports owned by `java` processes
+    (`ss -ltnp`, fallback `netstat -ltnp`), map each PID → cmdline (`/proc/<pid>/cmdline`
+    or `ps`) to derive an **app-name** (the `-jar <name>.jar` / main class / a
+    `-Dspring.application.name=` if present) and its **listening port**, and optionally
+    confirm it's Spring Boot by GETting `/actuator/health` on that port. The operator
+    reviews/edits the proposed pairs before approving.
 
 ## Open Questions
 
@@ -62,9 +72,14 @@ the refresh loop in the **browser**, not the server.
    non-persisted execution path.
 5. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
    `springboot monitor` outputs are laid out (gauges? raw text? parsed values?).
-6. **Discovery:** is `monitor machine` **auto-proposed** by discovery on every box (it's
-   universal) or a fixed built-in; is `springboot monitor` proposed when a listening JVM
-   is detected?
+6. **JVM/port detection method & privileges (for the `springboot monitor` proposal).**
+   `ss -ltnp` shows the **PID/cmdline of a socket's owner only with sufficient privilege** —
+   an unprivileged login user sees its *own* listeners' PIDs but not other users' (S5). So
+   auto-detection may miss JVMs run by other users unless the probe can `sudo`. Decide:
+   probe as the login user only (miss cross-user apps, note the gap), or allow an optional
+   `sudo -n` read for detection. Also: which signal names the app — jar name vs
+   `-Dspring.application.name` vs the actuator `/info` — and how confident must we be it's
+   Spring Boot before proposing (actuator probe vs just "a JVM listening")?
 
 ## Leaning (to confirm)
 
