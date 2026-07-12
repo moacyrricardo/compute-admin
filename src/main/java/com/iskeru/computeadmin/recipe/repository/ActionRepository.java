@@ -18,4 +18,11 @@ public interface ActionRepository extends JpaRepository<Action, String> {
     Optional<Action> findByIdAndRecipe_Machine_Owner_Id(String id, String ownerId);
 
     List<Action> findByRecipe_IdOrderByName(String recipeId);
+
+    /**
+     * An action by name within a recipe — the per-recipe name lookup discovery
+     * reconciliation matches on (spec-021). The recipe id is already owner-scoped by
+     * the caller ({@code ActionService.findOnRecipe}), so no owner join is needed here.
+     */
+    Optional<Action> findByRecipe_IdAndName(String recipeId, String name);
 }
