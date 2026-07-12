@@ -1,75 +1,75 @@
 # 020 — Machine monitoring (concern)
 
 > **Concern** (exploratory — options open, not a decided spec). Linear is BLOCKED;
-> commits use `spec-020`. Resolves to a spec once the questions below are answered.
+> commits use `spec-020`. Graduates to a spec once the gate question (Q1 below) and a
+> couple of details are settled. The overall shape is now fairly concrete (see Design);
+> what stays open is mostly the read-only-approval decision.
 
 ## Problem
 
-We want to **monitor** a machine's health — starting with **memory**, and almost
-certainly **CPU/load** and **disk** too. The question is *how* monitoring should fit
-compute-admin's model: it is an SSH-recipe engine with a **UI-only approval gate** on
-every action, no time-series storage, and no scheduler beyond the connectivity cron and
-the run-output eviction job. "Monitor overall memory" can mean anything from "run
-`free -m` and show it" to "sample every machine every minute, chart it, and alert on a
-threshold" — those are wildly different sizes.
+We want to **monitor** machine health — memory, disk, CPU — and also **per-app**
+health (a single machine often runs several Spring Boot apps on different ports). It
+must fit compute-admin's model: an SSH-recipe engine with a **UI-only approval gate**
+on every action, no time-series storage, and no general scheduler. The tension is
+between "run a read once and show it" and "keep it fresh" — resolved below by putting
+the refresh loop in the **browser**, not the server.
 
-## Hypotheses / Options
+## Design (the intended shape)
 
-**(A) On-demand monitor recipe (small; fits the model).**
-A built-in `MONITOR` recipe type whose actions are **read-only** metric reads —
-memory (`free -m`), disk (`df -h`), load/procs (`uptime`, `top -bn1`). You run them like
-any recipe and view the captured output. Reuses the entire existing run/stream/audit
-machinery; nearly free.
-- *Pro:* tiny, consistent, no new subsystem.
-- *Con / open question:* every action today requires **UI approval** before it can run.
-  Approving a harmless `free -m` read is friction — so do read-only monitor actions get a
-  **carve-out from the gate** (auto-approved / a distinct "read-only" action class)? That
-  touches the core invariant. The invariant is really about **mutating** actions; a
-  principled "read-only actions may run without approval" rule could be sound — but it is a
-  real security decision that must be made explicitly, not slipped in.
-
-**(B) Continuous polling + dashboard/alerts (large; a real monitoring subsystem).**
-The app periodically samples memory/CPU/disk across machines, stores a **time-series**,
-renders **charts**, and fires **threshold alerts**.
-- *Pro:* actual "monitoring" (trends, alerting, at-a-glance fleet health).
-- *Con:* new storage + retention, a sampling scheduler (bounded like the connectivity
-  job), an alerting channel, and substantial UI. Large; multiple specs' worth.
-
-**(C) Hybrid / staged.** Ship (A) now (on-demand read-only reads), and treat (B)
-(sampling, charts, alerts) as a follow-up once the read actions and the gate carve-out
-exist.
+- **A monitor dashboard driven by recipes.** The dashboard renders the output of
+  monitor **recipe actions** (the existing run/stream machinery), per machine.
+- **Client-side polling setting.** Each dashboard defaults to a **single request**
+  (run once, show the result). The user can switch it to **poll** — every **30s / 1min /
+  …** — and the *browser* re-runs the actions on that interval. No server-side sampler,
+  no stored time-series in v1: the dashboard shows the *current* reading, refreshed at
+  the chosen cadence. (Historical charts / retention would be a separate, later concern.)
+- **Built-in recipe: `monitor machine`.** Read-only actions for the core vitals:
+  - memory — `free -m` (or parse `/proc/meminfo`),
+  - disk — `df -h`,
+  - CPU / load — `uptime` / `top -bn1` / `/proc/loadavg`.
+- **Built-in recipe: `springboot monitor`.** Parameterised by **one or more ports**
+  (a machine runs many Spring Boot apps), producing a per-port health/metrics read —
+  e.g. hit each app's actuator (`curl -s localhost:<port>/actuator/health`) or a
+  port/process liveness check. The `port` parameter is validated (INT_RANGE) and
+  **repeatable / multi-value** so one action covers several apps on the box.
 
 ## Open Questions
 
-1. **Metrics scope for v1:** memory only, or memory + CPU/load + disk (+ top processes)?
-2. **The approval gate for read-only actions** (the crux): are metric reads auto-runnable,
-   or do they go through the same UI approval as mutating actions? If auto-runnable, how do
-   we *structurally* distinguish read-only from mutating so the carve-out can't be abused to
-   run a mutating command unapproved (mirroring how `GateArchTest` structurally protects the
-   invariant today)?
-3. **Delivery:** on-demand (run + view, option A) vs continuous (sample + chart + alert,
-   option B) vs hybrid (C)?
-4. **If continuous:** sampling cadence, time-series storage (H2 rows? a bounded ring?),
-   retention, and where the sampling scheduler lives (a bounded job like connectivity).
-5. **Alerting (if any):** thresholds per-machine vs global; channel (UI banner only? email —
-   which we don't have; the S-register notes no SMTP).
-6. **Discovery:** is a monitor recipe **auto-proposed** by discovery (like nginx/docker), or
-   a fixed built-in every machine gets?
-7. **View:** per-machine panel vs a fleet-wide health overview.
+1. **The approval gate for read-only actions (the crux — must be decided before build).**
+   Every action today needs UI approval before it runs. A dashboard that polls `free -m`
+   every 30s cannot ask for approval each tick — so **read-only monitor actions must be
+   runnable without per-run approval**. How do we grant that *without* denting the core
+   invariant? Likely a structural **read-only action class** that may auto-run, guarded
+   the same way the gate is today (a `GateArchTest`-style invariant: read-only actions
+   carry no mutation, mutating actions stay strictly UI-approved). This is a real security
+   decision, not an implementation detail.
+2. **Multi-value `port` parameter.** The current `ParamDef` binds one value per param;
+   `springboot monitor` wants several ports in one run. Extend `ParamKind` to a repeatable
+   value, or run the action once per port and aggregate? Affects `ParamBinder`/argv binding.
+3. **Spring Boot health source:** actuator `/actuator/health` (assumes actuator exposed,
+   maybe secured) vs a plain port-open/process check. Configurable per action?
+4. **Dashboard polling mechanics:** re-invoke `run` per tick (a new `Run` row each poll —
+   noisy, interacts with run retention/eviction) vs a lightweight "read now" path that
+   doesn't persist a full Run for every poll. The read-only class (Q1) may want its own
+   non-persisted execution path.
+5. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
+   `springboot monitor` outputs are laid out (gauges? raw text? parsed values?).
+6. **Discovery:** is `monitor machine` **auto-proposed** by discovery on every box (it's
+   universal) or a fixed built-in; is `springboot monitor` proposed when a listening JVM
+   is detected?
 
-## Leaning (to be confirmed)
+## Leaning (to confirm)
 
-Start with **(A)**: a built-in read-only `MONITOR` recipe (memory + disk + load), and
-**resolve Q2 head-on** — most likely a structural "read-only action" class that may run
-without UI approval, guarded the same way the gate is (an ArchTest-style invariant), with
-mutating actions still strictly gated. Defer continuous sampling / charts / alerting (B) to
-a follow-up spec if the on-demand reads prove insufficient. This keeps the first increment
-small and inside the existing model while forcing the one genuine security decision into the
-open. **Not prescriptive yet** — this graduates to a spec once Q1–Q3 (at least) are decided.
+Build it as: **read-only `monitor machine` + `springboot monitor` recipes**, surfaced on a
+**recipe-driven dashboard with a client-side poll setting (default one-shot; 30s/1min/…)**,
+**no server-side time-series in v1**. Resolve **Q1** first — a structural read-only action
+class that runs without per-run approval while mutating actions stay gated — because
+polling makes per-run approval impossible and this is the one genuine security decision.
+Everything else (multi-port binding, actuator-vs-port-check, poll persistence) is
+implementation detail to pin when this graduates to a spec.
 
 ## Sequencing
 
-Independent of 018/019, though it benefits from them (tag/filter monitored machines;
-"reached" events could gate sampling). Do **not** start building until this concern is
-resolved into a spec — the approval-gate carve-out (Q2) is a decision that must not be left
-to the implementer.
+Independent of 018/019 but benefits from them (tag/filter which machines to monitor).
+**Do not build until Q1 (the read-only-gate carve-out) is decided** — that must not be
+left to the implementer.

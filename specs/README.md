@@ -32,7 +32,7 @@ merges and renames it).
 | 017 | Transaction-boundary strategy | ⚪ todo | **concern** (exploratory, options open) — `TransactionTemplate` (A, as-built) vs bean-refactor (B) vs `@Async`+future (C) for "I/O outside tx, persist in a short tx" |
 | 018 | Machine tags: filtering & auto-tagging | ⚪ todo | filter machines by tag; auto-tag from login-user + OS/cloud probe |
 | 019 | Event-driven connectivity status | ⚪ todo | `MachineReached` event + async listener updates status (fixes stale UNREACHABLE pill); manual test-connection |
-| 020 | Machine monitoring | ⚪ todo | **concern** — on-demand read-only monitor recipe (memory/CPU/disk) vs continuous polling+alerts; read-only-gate question |
+| 020 | Machine monitoring | ⚪ todo | **concern** — recipe-driven dashboard w/ client-side poll (default one-shot; 30s/1min); `monitor machine` (mem/disk/cpu) + `springboot monitor` (per-port) recipes; read-only-gate question |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
