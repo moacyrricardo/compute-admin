@@ -8,6 +8,15 @@
 spring:
   datasource:
     url: jdbc:h2:mem:compute-admin-test;DB_CLOSE_DELAY=-1
+  # Bound context teardown so the test JVM exits promptly. At JVM shutdown Spring
+  # closes every cached @SpringBootTest context; Tomcat's graceful-shutdown phase
+  # would otherwise wait the 30s default `timeout-per-shutdown-phase` for any
+  # still-open async request (e.g. an SSE output stream a *WebTest left draining),
+  # which manifests as Surefire force-killing the fork ("kill self fork JVM ...
+  # 30 seconds after System.exit(0)") and adds ~30s of dead time to every build.
+  # Tests assert on responses already received, so nothing needs the grace period.
+  lifecycle:
+    timeout-per-shutdown-phase: 1s
 
 ca:
   # Keep the generated app SSH keypair (spec-003) out of ./data during tests.
