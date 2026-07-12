@@ -52,17 +52,33 @@ the **browser**, not the server.
     (default `/openapi.json`) and an optional `/metrics` scrape when present. *Note:*
     gunicorn/uvicorn run several worker PIDs per app — the process probe aggregates across
     workers.
-  - Other app types (nginx status, a DB ping, …) are further siblings later.
-- **Auto-discovered (reuses the spec-006 `RecipeDiscoverer` port).** Discovery proposes
-  these like any other recipe (as `PENDING_APPROVAL`, never auto-run):
+  - **`generic app monitor` (fallback).** For any listening app discovery **cannot**
+    classify as a known framework: **process probe only** (`port→PID→/proc`:
+    RSS/CPU/threads/uptime), no endpoint assumptions. Guarantees every detected app still
+    gets real resource metrics even when we don't know what it is.
+  - Other framework-specific siblings (nginx status, a DB ping, …) come later; anything
+    unrecognised falls back to `generic app monitor`.
+- **How the UI assembles the dashboard (monitor-action classification).** Monitor actions
+  are **marked as monitors** so the UI can enumerate them without hard-coding a recipe list:
+  the dashboard lists **all actions classified `monitor`** across the user's recipes and
+  groups them — **host-level** monitors (`monitor machine`: CPU/RAM/disk, no app param) into
+  a host panel, and **app-level** monitors (those carrying the `(app-name, port)` param) into
+  a **per-app card**, correlating each app's several endpoint actions (health, beans, …)
+  under its name. This convention — *monitor classification + the `(app-name, port)` param* —
+  is exactly what lets the specific (`springboot`, `fastapi`) and `generic` recipes coexist:
+  the UI keys off the classification, not off which recipe produced the action. *(Pin at
+  build: classification via a `RecipeType.MONITOR` vs a per-action monitor flag.)*
+- **Auto-discovered & routed (reuses the spec-006 `RecipeDiscoverer` port).** Discovery
+  proposes monitors like any recipe (`PENDING_APPROVAL`, never auto-run):
   - `monitor machine` — universal, proposed on **every** reachable box.
-  - `springboot monitor` — proposed **pre-filled** with the `(app-name, port)` pairs a
-    read-only probe detects: enumerate listening TCP ports owned by `java` processes
-    (`ss -ltnp`, fallback `netstat -ltnp`), map each PID → cmdline (`/proc/<pid>/cmdline`
-    or `ps`) to derive an **app-name** (the `-jar <name>.jar` / main class / a
-    `-Dspring.application.name=` if present) and its **listening port**, and optionally
-    confirm it's Spring Boot by GETting `/actuator/health` on that port. The operator
-    reviews/edits the proposed pairs before approving.
+  - **App monitors, routed by classification.** A read-only probe enumerates listening TCP
+    ports owned by app processes (`ss -ltnp`, fallback `netstat`), maps each PID → cmdline
+    (`/proc/<pid>/cmdline` / `ps`) to an **app-name** + **port**, then **classifies** the app
+    and proposes the matching recipe pre-filled with the `(app-name, port)`:
+    - Spring Boot (java + `-jar`/main class, or `/actuator/health` responds) → **`springboot monitor`**;
+    - FastAPI (uvicorn/gunicorn cmdline, or `/openapi.json` responds) → **`fastapi monitor`**;
+    - otherwise → **`generic app monitor`** (process-probe only).
+    The operator reviews/edits the proposed apps before approving.
 
 ## Approval model (clarification — there is no per-run approval)
 
@@ -123,11 +139,13 @@ for zero benefit, since one approval already unlocks unlimited (including polled
 
 ## Leaning (to confirm)
 
-Two **read-only** recipes — **`monitor machine`** (CPU, RAM+swap, disk) and an app-monitor
-family starting with **`springboot monitor`** (per `(app-name, port)`, via actuator) —
-**auto-discovered and approved once like any recipe**, surfaced on a recipe-driven UI with
-a **client-side poll setting (default single; 5s/30s/1min/5min)**, **no server-side
-time-series in v1**. **Q1 and Q2 are now decided** — Q1: accept per-poll `Run` rows + add
+A host recipe **`monitor machine`** (CPU, RAM+swap, disk) plus an **app-monitor family** —
+specific **`springboot monitor`** (actuator) and **`fastapi monitor`** (process + optional
+`/openapi.json`·`/metrics`), with a **`generic app monitor`** (process-probe only) fallback
+for apps discovery can't classify — all **discovery-routed, per `(app-name, port)`, and
+approved once like any recipe**. Surfaced on a UI that **enumerates monitor-classified
+actions** into a host panel + per-app cards, with a **client-side poll setting (default
+single; 5s/30s/1min/5min)**, **no server-side time-series in v1**. **Q1 and Q2 are now decided** — Q1: accept per-poll `Run` rows + add
 run-row pruning (non-persisted "read-now" path is forward work); Q2: one action per actuator
 endpoint, each taking a repeatable `(app-name, port)` list executed by **fan-out** (fixed
 template per item), the UI pivoting into per-app cards. Everything else (endpoint set,
