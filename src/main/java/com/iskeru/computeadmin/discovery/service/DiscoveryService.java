@@ -10,9 +10,9 @@ import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.Recipe;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionService.AddActionInput;
+import com.iskeru.computeadmin.recipe.service.ActionService.EditActionInput;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
-import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -38,13 +38,46 @@ import java.util.List;
  * ownership scoping and the gate stay centralised. A not-owned machine reads as 404
  * ({@link MachineService#requireMachine(String)}).
  *
- * <p>spec-006.
+ * <p><strong>Idempotent re-discovery (spec-021).</strong> A discovered recipe's
+ * identity is the triple {@code (machine, type, name)}; discovery
+ * <em>reconciles</em> rather than duplicates. Each proposed recipe is
+ * get-or-created by that triple, and each proposed action is matched by name within
+ * it: a missing action is added and submitted; a not-yet-approved (DRAFT/PENDING)
+ * one is refreshed in place; an already-{@code APPROVED} one is left untouched — if
+ * the proposal now differs from what was approved, that is <em>surfaced</em>
+ * (never auto-adopted, never duplicated). Approval stays UI-only.
+ *
+ * <p>spec-006; idempotency in spec-021.
  */
 @Service
 public class DiscoveryService {
 
-    /** A persisted proposal: the pending recipe and its pending actions. */
-    public record DiscoveredRecipe(Recipe recipe, List<Action> actions) {
+    /**
+     * What reconciliation did with one proposed action on a re-discovery (spec-021):
+     * <ul>
+     *   <li>{@code CREATED} — no such action existed; added and submitted.
+     *   <li>{@code REFRESHED} — a not-yet-approved action's proposal was re-applied.
+     *   <li>{@code UNCHANGED} — an approved action whose proposal still matches.
+     *   <li>{@code DIFFERS_AWAITING_REAPPROVAL} — an approved action whose proposal
+     *       now differs; the approval is left intact and the new definition surfaced.
+     *   <li>{@code SKIPPED_REVOKED} — a revoked action, left as-is (not resurrected).
+     * </ul>
+     */
+    public enum ReconcileOutcome {
+        CREATED, REFRESHED, UNCHANGED, DIFFERS_AWAITING_REAPPROVAL, SKIPPED_REVOKED
+    }
+
+    /**
+     * One reconciled action and how discovery treated it. {@code proposed} carries the
+     * newly-proposed definition only for {@code DIFFERS_AWAITING_REAPPROVAL} (so the UI
+     * can show "discovery would change this approved action — review and re-approve to
+     * adopt"); it is {@code null} otherwise.
+     */
+    public record ReconciledAction(Action action, ReconcileOutcome outcome, ProposedAction proposed) {
+    }
+
+    /** A reconciled proposal: the recipe and its reconciled actions. */
+    public record DiscoveredRecipe(Recipe recipe, List<ReconciledAction> actions) {
     }
 
     private final MachineService machineService;
@@ -108,19 +141,60 @@ public class DiscoveryService {
     private List<DiscoveredRecipe> persist(String machineId, List<ProposedRecipe> proposals) {
         List<DiscoveredRecipe> discovered = new ArrayList<>();
         for (ProposedRecipe proposal : proposals) {
-            Recipe recipe = recipeService.create(new CreateRecipeInput(
-                    machineId, proposal.name(), proposal.description(), proposal.type()));
-            List<Action> actions = new ArrayList<>();
+            // Reconcile by identity triple (machine, type, name): reuse the recipe this
+            // discoverer owns on this machine, never mint a duplicate (spec-021).
+            Recipe recipe = recipeService.getOrCreateDiscovered(
+                    machineId, proposal.type(), proposal.name(), proposal.description());
+            List<ReconciledAction> actions = new ArrayList<>();
             for (ProposedAction proposedAction : proposal.actions()) {
-                Action action = actionService.addAction(new AddActionInput(
-                        recipe.getId(), proposedAction.name(), proposedAction.description(),
-                        proposedAction.sudo(), proposedAction.argTokens(), proposedAction.paramDefs()));
-                // Benign DRAFT → PENDING_APPROVAL; never approve (approval is UI-only).
-                approvalService.submitForApproval(action.getId());
-                actions.add(action);
+                actions.add(reconcileAction(recipe, proposedAction));
             }
             discovered.add(new DiscoveredRecipe(recipe, actions));
         }
         return discovered;
+    }
+
+    /**
+     * Reconciles one proposed action against the recipe's existing action of the same
+     * name, applying the spec-021 state-machine rules. Every write goes through the 004
+     * services ({@link ActionService}/{@link ApprovalService}); discovery never
+     * approves and never edits an approved action.
+     */
+    private ReconciledAction reconcileAction(Recipe recipe, ProposedAction proposed) {
+        Action existing = actionService.findOnRecipe(recipe.getId(), proposed.name()).orElse(null);
+        if (existing == null) {
+            // No such action → add it (DRAFT) and submit → PENDING_APPROVAL (today's path).
+            Action added = actionService.addAction(new AddActionInput(
+                    recipe.getId(), proposed.name(), proposed.description(),
+                    proposed.sudo(), proposed.argTokens(), proposed.paramDefs()));
+            Action pending = approvalService.submitForApproval(added.getId());
+            return new ReconciledAction(pending, ReconcileOutcome.CREATED, null);
+        }
+        return switch (existing.getApprovalState()) {
+            // Not yet approved → refresh the proposal in place (picks up a changed
+            // ALLOWED_SET etc.), keeping it PENDING_APPROVAL. editAction resets it to
+            // DRAFT, so re-submit; safe because it is only ever called here on a
+            // not-yet-approved action.
+            case DRAFT, PENDING_APPROVAL -> {
+                Action edited = actionService.editAction(existing.getId(), new EditActionInput(
+                        proposed.name(), proposed.description(), proposed.sudo(),
+                        proposed.argTokens(), proposed.paramDefs()));
+                Action pending = approvalService.submitForApproval(edited.getId());
+                yield new ReconciledAction(pending, ReconcileOutcome.REFRESHED, null);
+            }
+            // Approved → never touch the approval. Compare the proposed definition's
+            // content hash against the one bound at approval: equal ⇒ no-op; different
+            // ⇒ surface the diff so a human can review and re-approve to adopt.
+            case APPROVED -> {
+                String proposedHash = actionService.snapshotHashOf(
+                        proposed.sudo(), proposed.argTokens(), proposed.paramDefs());
+                if (proposedHash.equals(existing.getApprovedSnapshotHash())) {
+                    yield new ReconciledAction(existing, ReconcileOutcome.UNCHANGED, null);
+                }
+                yield new ReconciledAction(existing, ReconcileOutcome.DIFFERS_AWAITING_REAPPROVAL, proposed);
+            }
+            // Revoked → leave it; do not resurrect.
+            case REVOKED -> new ReconciledAction(existing, ReconcileOutcome.SKIPPED_REVOKED, null);
+        };
     }
 }

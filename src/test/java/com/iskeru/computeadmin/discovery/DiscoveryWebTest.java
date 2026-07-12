@@ -2,6 +2,7 @@ package com.iskeru.computeadmin.discovery;
 
 import com.iskeru.computeadmin.auth.api.AuthDtos;
 import com.iskeru.computeadmin.discovery.api.DiscoveryDtos;
+import com.iskeru.computeadmin.discovery.service.DiscoveryService;
 import com.iskeru.computeadmin.machine.api.MachineDtos;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
 import com.iskeru.computeadmin.ssh.ExecResult;
@@ -89,9 +90,12 @@ class DiscoveryWebTest {
                 .filter(r -> r.recipe().name().equals("nginx"))
                 .findFirst().orElseThrow();
         assertThat(nginx.actions()).isNotEmpty();
-        assertThat(nginx.actions()).allSatisfy(action -> {
-            assertThat(action.approvalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
-            assertThat(action.pendingApproval()).isTrue();
+        assertThat(nginx.actions()).allSatisfy(reconciled -> {
+            // First discovery of this machine → every action is freshly CREATED, pending.
+            assertThat(reconciled.outcome())
+                    .isEqualTo(DiscoveryService.ReconcileOutcome.CREATED);
+            assertThat(reconciled.action().approvalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
+            assertThat(reconciled.action().pendingApproval()).isTrue();
         });
     }
 
