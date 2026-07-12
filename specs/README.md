@@ -33,7 +33,7 @@ merges and renames it).
 | 018 | Machine tags: filtering & auto-tagging | ✅ done | filter machines by tag; auto-tag from login-user + OS/cloud probe |
 | 019 | Event-driven connectivity status | ✅ done | `MachineReached` event + async listener updates status (fixes stale UNREACHABLE pill); manual test-connection |
 | 020 | Machine monitoring | 🟢 graduated | **umbrella concern of record** — resolved into specs 021–026 (build order below); keeps the problem framing + the Q1/Q2 decisions |
-| 021 | Discovery idempotency | ⚪ todo | resolves **H2** — re-discovery reconciles by `(machine, type, name)` instead of duplicating; refresh DRAFT/PENDING proposals in place, surface a diff on APPROVED-differs; uniqueness guard. **Monitoring prerequisite (build first)** |
+| 021 | Discovery idempotency | ✅ done | resolves **H2** — re-discovery reconciles by `(machine, type, name)` instead of duplicating; refresh DRAFT/PENDING proposals in place, surface a diff on APPROVED-differs; uniqueness guard. **Monitoring prerequisite (build first)** |
 | 022 | Monitoring foundations | ⚪ todo | the decisions spec — `RecipeType.MONITOR` (display-only, gate unchanged); `appName`(+`runtime`) label convention + double-detection link; `APP_PORT_LIST` param + **fan-out run mode** (S4-safe: fixed template per item, never a shell loop); run-row pruning (extends 013 eviction) |
 | 023 | `monitor machine` recipe | ⚪ todo | universal read-only host vitals — cpu (`top -bn1`), ram+swap (`free -m`), disk (`df -h`); auto-proposed on every reachable box; no app param (→ host panel) |
 | 024 | Monitor UI dashboard | ⚪ todo | enumerates `MONITOR` actions → host panel + per-app cards (framework badge, UP/DOWN pill, run-chip row) + detail drawer (Runtime block, related actions runnable inline, gate-safe); client-side poll single/5s/30s/1m/5m; theme-aware, textContent-only (012) |
@@ -88,7 +88,7 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 their shared root cause (holding a resource across network I/O); ✅ **shipped on
 `main`**. **H5 → spec 015** (custom-script content-pinning, ⚪ todo) — a *security*
 spec beside the ARCH S-register (posture, not robustness); resolves H5 and hardens
-S5. **H2 → spec 021** (discovery idempotency, ⚪ todo) — the monitoring
+S5. **H2 → spec 021** (discovery idempotency, ✅ done) — the monitoring
 prerequisite. **H4 / H7** remain backlog.
 
 **Post-v1 follow-ups (authored, awaiting build):** **015** (content-pinning, the
