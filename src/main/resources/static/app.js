@@ -188,7 +188,7 @@
   var CHIP = {
     APPROVED: "ok", DONE: "ok", ONLINE: "ok",
     PENDING_APPROVAL: "warn",
-    REVOKED: "bad", FAILED: "bad", UNREACHABLE: "bad",
+    REVOKED: "bad", FAILED: "bad", UNREACHABLE: "bad", INTERRUPTED: "bad",
     RUNNING: "info", QUEUED: "info",
     DRAFT: "neutral", UNKNOWN: "neutral", OFFLINE: "neutral"
   };

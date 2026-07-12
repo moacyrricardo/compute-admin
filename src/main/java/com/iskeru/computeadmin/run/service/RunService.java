@@ -53,9 +53,11 @@ import java.util.Map;
  * exactly what will run, and the command dispatched <strong>asynchronously</strong>
  * onto the bounded {@code runExecutor} pool. The async task flips the run to
  * {@code RUNNING}, streams output through {@link RunOutputHub} while appending it to
- * the run, and lands on {@code DONE}/{@code FAILED} with the captured exit code.
- * Submission is deferred to <em>after commit</em> so the worker can never observe a
- * run that has not yet been persisted.
+ * the run, and lands on {@code DONE}/{@code FAILED} with the captured exit code — or,
+ * if the owning process died mid-run, on {@code INTERRUPTED} once the boot
+ * {@code RunReconciler} resolves the orphaned row (spec-016). Submission is deferred
+ * to <em>after commit</em> so the worker can never observe a run that has not yet
+ * been persisted.
  *
  * <p>spec-005.
  */
@@ -150,22 +152,34 @@ public class RunService {
      * not-owned or absent id is a 404 before any streaming starts).
      *
      * <p>A live run ({@code QUEUED}/{@code RUNNING}) attaches to the hub for the
-     * buffered prefix then the live tail. A terminal run ({@code DONE}/{@code FAILED})
-     * attaches only <em>if its channel is still retained</em>
+     * buffered prefix then the live tail. A terminal run ({@code DONE}/{@code FAILED}/
+     * {@code INTERRUPTED}) attaches only <em>if its channel is still retained</em>
      * ({@link RunOutputHub#attachIfPresent}); once the channel has been evicted the
      * subscriber is served from the persisted, append-only {@code Run} instead — which
      * is exactly what a live replay would have produced. This avoids resurrecting an
      * evicted channel (which would create an empty one and hang forever). spec-013.
+     *
+     * <p>An {@code INTERRUPTED} run (resolved by the boot {@code RunReconciler}) has
+     * no live channel — the process that owned it died — so treating it as terminal
+     * here is what makes a post-reconcile subscribe replay from the persisted row
+     * instead of hanging on a freshly created live channel. spec-016.
      */
     public void subscribeToOutput(String id, RunOutputHub.Subscriber subscriber) {
         Run run = requireRun(id);
-        if (run.getStatus() == RunStatus.DONE || run.getStatus() == RunStatus.FAILED) {
+        if (isTerminal(run.getStatus())) {
             if (!hub.attachIfPresent(id, subscriber)) {
                 replayPersisted(run, subscriber);
             }
         } else {
             hub.subscribe(id, subscriber);
         }
+    }
+
+    /** Whether a status is terminal (no further events will ever arrive). spec-016. */
+    private static boolean isTerminal(RunStatus status) {
+        return status == RunStatus.DONE
+                || status == RunStatus.FAILED
+                || status == RunStatus.INTERRUPTED;
     }
 
     /**
