@@ -1,5 +1,13 @@
 # 011 — User accounts, authentication & ownership
 
+> **⚠ Authentication mechanism superseded by [spec 014](./014-todo-email-password-auth.md).**
+> The Google Sign-In parts of this spec — `POST /auth/google`,
+> `GoogleIdTokenService`/`DevGoogleIdTokenService`, and the `AppUser.googleSub`
+> field/column — are **replaced by email + password** registration/login in 014.
+> Everything else here (the JWT session, per-user MCP personal tokens, the pairing
+> flow, `AuthContext`/`CurrentUser`/`Via`, `@Secured`, and the ownership→404 model)
+> remains authoritative.
+
 > **Status:** done — branch `moacyrricardo/spec-011-user-accounts-auth-ownership`
 > (stacked on `moacyrricardo/spec-002-mcp-transport-seam`). Linear is BLOCKED for
 > this repo, so no issue identifier. The per-entity ownership retrofit
