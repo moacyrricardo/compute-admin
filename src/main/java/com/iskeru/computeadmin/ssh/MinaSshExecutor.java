@@ -18,6 +18,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
@@ -55,6 +57,14 @@ public class MinaSshExecutor implements SshExecutor {
     private final Supplier<SshClient> clientFactory;
     private final Object clientLock = new Object();
     private volatile SshClient client;
+
+    /**
+     * Live cancellable execs by {@code cancelKey} (the run id, spec-026). An entry is
+     * present only for the window a streaming exec is blocked in {@code channel.waitFor};
+     * {@link #cancel(String)} closes that channel so the wait returns and the run lands
+     * terminal.
+     */
+    private final Map<String, ChannelExec> cancellable = new ConcurrentHashMap<>();
 
     @Autowired
     public MinaSshExecutor(KeyService keyService,
@@ -112,13 +122,38 @@ public class MinaSshExecutor implements SshExecutor {
 
     @Override
     public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink) {
+        execStreaming(target, argv, sudo, sink, null);
+    }
+
+    @Override
+    public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink,
+                              String cancelKey) {
         OutputStream out = chunkStream(sink::onStdout);
         OutputStream err = chunkStream(sink::onStderr);
-        int exit = run(target, argv, sudo, out, err);
+        int exit = run(target, argv, sudo, out, err, cancelKey);
         sink.onComplete(exit);
     }
 
+    @Override
+    public boolean cancel(String cancelKey) {
+        if (cancelKey == null) {
+            return false;
+        }
+        ChannelExec channel = cancellable.remove(cancelKey);
+        if (channel == null) {
+            return false;
+        }
+        // Closing the channel wakes the blocked waitFor in run(); true = graceful/immediate.
+        channel.close(true);
+        return true;
+    }
+
     private int run(SshTarget target, List<String> argv, boolean sudo, OutputStream out, OutputStream err) {
+        return run(target, argv, sudo, out, err, null);
+    }
+
+    private int run(SshTarget target, List<String> argv, boolean sudo, OutputStream out, OutputStream err,
+                    String cancelKey) {
         String command = assembleCommand(argv, sudo);
         try (ClientSession session = client()
                 .connect(target.loginUser(), target.host(), target.port())
@@ -130,9 +165,21 @@ public class MinaSshExecutor implements SshExecutor {
                 channel.setOut(out);
                 channel.setErr(err);
                 channel.open().verify(connectTimeout);
-                channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), execTimeout);
-                Integer exit = channel.getExitStatus();
-                return exit == null ? -1 : exit;
+                // Register the open channel so a concurrent cancel(cancelKey) can close it
+                // and unblock the waitFor below (spec-026). Deregistered before the channel
+                // is closed by try-with-resources so a stale key never targets a dead channel.
+                if (cancelKey != null) {
+                    cancellable.put(cancelKey, channel);
+                }
+                try {
+                    channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), execTimeout);
+                    Integer exit = channel.getExitStatus();
+                    return exit == null ? -1 : exit;
+                } finally {
+                    if (cancelKey != null) {
+                        cancellable.remove(cancelKey);
+                    }
+                }
             }
         } catch (IOException e) {
             throw new SshExecutionException(target, e);

@@ -63,6 +63,17 @@ public class RunRS {
         return RunDtos.RunView.of(runService.requireRun(id));
     }
 
+    /**
+     * Cancels a live run (spec-026) — the Stop control behind follow-mode log streaming.
+     * Owner-scoped in the service (a not-owned/absent id is 404); a no-op on an
+     * already-terminal run. Returns the run's updated lifecycle view.
+     */
+    @POST
+    @Path("/{id}/cancel")
+    public RunDtos.RunView cancel(@PathParam("id") String id) {
+        return RunDtos.RunView.of(runService.cancel(id));
+    }
+
     @GET
     @Path("/{id}/output")
     @Produces(MediaType.SERVER_SENT_EVENTS)

@@ -312,6 +312,40 @@ public class RunService {
     }
 
     /**
+     * Cancels one of the current user's live runs — the capability follow-mode
+     * ({@code -f}) log streaming needs, since such a command never exits on its own
+     * (spec-026). Owner-scoped through {@link #requireRun} (a not-owned/absent id 404s),
+     * and a <strong>no-op on an already-terminal run</strong> (returned as-is).
+     *
+     * <p>The run is marked {@link RunStatus#STOPPED} and committed <em>first</em>; only
+     * <strong>after commit</strong> is the transport signalled to close the channel and
+     * the hub channel completed. That ordering makes cancellation win the race: by the
+     * time {@code execStreaming} returns and {@code finish(...)} runs, the persisted
+     * {@code STOPPED} is visible and {@code finish} no-ops on the terminal run. Completing
+     * the hub detaches any live subscriber cleanly (reusing the spec-013 terminal-run
+     * handling); it is idempotent with the worker's own completion.
+     *
+     * @throws RunNotFoundException 404 if absent or owned by another user.
+     */
+    @Transactional
+    public Run cancel(String id) {
+        Run run = requireRun(id);
+        if (isTerminal(run.getStatus())) {
+            return run;
+        }
+        run.setStatus(RunStatus.STOPPED);
+        run.setExitCode(-1);
+        run.setFinishedAt(Instant.now());
+        Run saved = runs.save(run);
+        String runId = saved.getId();
+        submitAfterCommit(() -> {
+            ssh.cancel(runId);
+            hub.complete(runId, -1);
+        });
+        return saved;
+    }
+
+    /**
      * Subscribes to a run's output after confirming the current user owns it (a
      * not-owned or absent id is a 404 before any streaming starts).
      *
@@ -339,11 +373,12 @@ public class RunService {
         }
     }
 
-    /** Whether a status is terminal (no further events will ever arrive). spec-016. */
+    /** Whether a status is terminal (no further events will ever arrive). spec-016/026. */
     private static boolean isTerminal(RunStatus status) {
         return status == RunStatus.DONE
                 || status == RunStatus.FAILED
-                || status == RunStatus.INTERRUPTED;
+                || status == RunStatus.INTERRUPTED
+                || status == RunStatus.STOPPED;
     }
 
     /**
@@ -393,7 +428,9 @@ public class RunService {
         };
         try {
             // sudo is already baked into argv by the binder, so pass sudo=false here.
-            ssh.execStreaming(target, argv, false, sink);
+            // The run id is the cancel key: cancel(runId) closes this channel so a
+            // follow-mode (-f) stream can be stopped (spec-026).
+            ssh.execStreaming(target, argv, false, sink, runId);
             // The SSH channel executed (whatever the command's exit code): the box is
             // reachable, so announce it. A listener refreshes the machine to ONLINE
             // asynchronously (via = SYSTEM); a connection failure throws below and
@@ -408,6 +445,11 @@ public class RunService {
 
     private void markRunning(String runId) {
         runs.findById(runId).ifPresent(run -> {
+            // Only a still-QUEUED run advances to RUNNING: a run cancelled while queued is
+            // already terminal (STOPPED) and must not be revived by the late worker (spec-026).
+            if (run.getStatus() != RunStatus.QUEUED) {
+                return;
+            }
             run.setStatus(RunStatus.RUNNING);
             run.setStartedAt(Instant.now());
             runs.save(run);
@@ -416,6 +458,11 @@ public class RunService {
 
     private void finish(String runId, String stdout, String stderr, int exitCode) {
         runs.findById(runId).ifPresent(run -> {
+            // A run already marked terminal wins: a cancel (STOPPED) committed before the
+            // channel closed must not be overwritten by the returning execStreaming (spec-026).
+            if (isTerminal(run.getStatus())) {
+                return;
+            }
             run.setStdout(stdout);
             run.setStderr(stderr);
             run.setExitCode(exitCode);
