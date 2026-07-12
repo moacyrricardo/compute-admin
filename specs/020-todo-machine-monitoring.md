@@ -16,22 +16,27 @@ the refresh loop in the **browser**, not the server.
 
 ## Design (the intended shape)
 
-- **A monitor dashboard driven by recipes.** The dashboard renders the output of
-  monitor **recipe actions** (the existing run/stream machinery), per machine.
-- **Client-side polling setting.** Each dashboard defaults to a **single request**
-  (run once, show the result). The user can switch it to **poll** — every **30s / 1min /
-  …** — and the *browser* re-runs the actions on that interval. No server-side sampler,
-  no stored time-series in v1: the dashboard shows the *current* reading, refreshed at
-  the chosen cadence. (Historical charts / retention would be a separate, later concern.)
+- **The monitor is a UI driven by a monitor recipe.** The dashboard renders the output
+  of monitor **recipe actions** (the existing run/stream machinery), per machine — the
+  monitoring "logic" is just recipes; the UI presents them.
+- **Client-side polling setting.** The dashboard defaults to a **single request** (run
+  once, show the result). The user can switch the refresh cadence to **every 5s / 30s /
+  1min / 5min**, and the *browser* re-runs the actions on that interval. No server-side
+  sampler, no stored time-series in v1: the dashboard shows the *current* reading,
+  refreshed at the chosen cadence. (Historical charts / retention would be a separate,
+  later concern.)
 - **Built-in recipe: `monitor machine`.** Read-only actions for the core vitals:
-  - memory — `free -m` (or parse `/proc/meminfo`),
-  - disk — `df -h`,
-  - CPU / load — `uptime` / `top -bn1` / `/proc/loadavg`.
-- **Built-in recipe: `springboot monitor`.** Parameterised by **one or more ports**
-  (a machine runs many Spring Boot apps), producing a per-port health/metrics read —
-  e.g. hit each app's actuator (`curl -s localhost:<port>/actuator/health`) or a
-  port/process liveness check. The `port` parameter is validated (INT_RANGE) and
-  **repeatable / multi-value** so one action covers several apps on the box.
+  - **CPU usage** — `top -bn1` / `/proc/stat` / `uptime` load,
+  - **RAM + swap usage** — `free -m` (or parse `/proc/meminfo`; both mem and swap),
+  - **disk usage** — `df -h`.
+- **App-monitoring recipes (a family; first one: `springboot monitor`).** For apps
+  running on the box. `springboot monitor` is parameterised by **(app-name, port) pairs**
+  — a machine can run **several** Spring Boot apps, so the recipe takes a repeatable
+  `(app-name, port)` so each app is labelled and probed. Each app's read uses Spring
+  Boot's **actuator endpoints** — `/actuator/health` plus others (`/info`, `/metrics`,
+  e.g. `jvm.memory.used`, `http.server.requests`) — to build the per-app monitor view.
+  Other app types (nginx status, a database ping, …) become sibling app-monitor recipes
+  later.
 
 ## Open Questions
 
@@ -43,9 +48,12 @@ the refresh loop in the **browser**, not the server.
    the same way the gate is today (a `GateArchTest`-style invariant: read-only actions
    carry no mutation, mutating actions stay strictly UI-approved). This is a real security
    decision, not an implementation detail.
-2. **Multi-value `port` parameter.** The current `ParamDef` binds one value per param;
-   `springboot monitor` wants several ports in one run. Extend `ParamKind` to a repeatable
-   value, or run the action once per port and aggregate? Affects `ParamBinder`/argv binding.
+2. **Repeatable composite `(app-name, port)` parameter (the biggest modelling question).**
+   The current `ParamDef` binds a single scalar per param; `springboot monitor` wants a
+   *list of `(app-name, port)` pairs* in one action (label + probe each app). Options:
+   extend the param model to a repeatable composite; model each app as its own
+   action/instance; or run once per pair and aggregate in the UI. Touches
+   `ParamDef`/`ParamBinder` and possibly the action shape.
 3. **Spring Boot health source:** actuator `/actuator/health` (assumes actuator exposed,
    maybe secured) vs a plain port-open/process check. Configurable per action?
 4. **Dashboard polling mechanics:** re-invoke `run` per tick (a new `Run` row each poll —
@@ -60,9 +68,10 @@ the refresh loop in the **browser**, not the server.
 
 ## Leaning (to confirm)
 
-Build it as: **read-only `monitor machine` + `springboot monitor` recipes**, surfaced on a
-**recipe-driven dashboard with a client-side poll setting (default one-shot; 30s/1min/…)**,
-**no server-side time-series in v1**. Resolve **Q1** first — a structural read-only action
+Build it as: a read-only **`monitor machine`** recipe (CPU, RAM+swap, disk) plus an
+**app-monitor family** starting with **`springboot monitor`** (per `(app-name, port)`,
+via actuator endpoints), surfaced on a **recipe-driven UI with a client-side poll setting
+(default single; 5s/30s/1min/5min)**, **no server-side time-series in v1**. Resolve **Q1** first — a structural read-only action
 class that runs without per-run approval while mutating actions stay gated — because
 polling makes per-run approval impossible and this is the one genuine security decision.
 Everything else (multi-port binding, actuator-vs-port-check, poll persistence) is
