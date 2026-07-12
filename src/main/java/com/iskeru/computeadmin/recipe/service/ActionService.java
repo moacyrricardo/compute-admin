@@ -243,12 +243,22 @@ public class ActionService {
         List<ParamDefInput> defs = defInputs == null ? List.of() : defInputs;
 
         Set<String> declaredNames = new HashSet<>();
+        String appPortListName = null;
         // Mutate the existing collections so orphanRemoval deletes the old rows.
         action.getParamDefs().clear();
         for (ParamDefInput in : defs) {
             ParamDef def = buildParamDef(action, in);
             if (!declaredNames.add(def.getName())) {
                 throw new BadRequestException("Duplicate param definition: " + def.getName());
+            }
+            if (def.getKind() == ParamKind.APP_PORT_LIST) {
+                // At most one repeatable composite per action (spec-022): a fan-out is
+                // over a single (app-name, port) list, and the item components bind to
+                // the fixed component names, which cannot serve two composites.
+                if (appPortListName != null) {
+                    throw new BadRequestException("An action may declare at most one APP_PORT_LIST param");
+                }
+                appPortListName = def.getName();
             }
             action.getParamDefs().add(def);
         }
@@ -269,11 +279,25 @@ public class ActionService {
             token.setKind(in.kind());
             token.setValue(in.value());
             if (in.kind() == TokenKind.PARAM) {
-                if (!declaredNames.contains(in.value())) {
+                if (declaredNames.contains(in.value())) {
+                    // A composite is never referenced directly by a token — only via its
+                    // components — so a bare reference to it is a malformed template.
+                    if (in.value().equals(appPortListName)) {
+                        throw new BadRequestException(
+                                "APP_PORT_LIST param '" + in.value()
+                                        + "' must be referenced by its '"
+                                        + ParamBinder.APP_NAME_COMPONENT + "'/'"
+                                        + ParamBinder.PORT_COMPONENT + "' components, not by name");
+                    }
+                    referencedNames.add(in.value());
+                } else if (appPortListName != null && ParamBinder.isAppPortComponent(in.value())) {
+                    // A fan-out template references the item's app-name/port components,
+                    // which the single declared APP_PORT_LIST composite supplies per item.
+                    referencedNames.add(appPortListName);
+                } else {
                     throw new BadRequestException(
                             "PARAM token references undeclared param: " + in.value());
                 }
-                referencedNames.add(in.value());
             }
             action.getArgTokens().add(token);
         }
@@ -339,6 +363,11 @@ public class ActionService {
                 }
                 def.setIntMin(in.intMin());
                 def.setIntMax(in.intMax());
+            }
+            // A repeatable composite has a fixed item schema (the app-name pattern +
+            // port range are constants on ParamBinder), so there is no per-instance
+            // config to store; the kind alone carries the meaning (and is hashed). spec-022.
+            case APP_PORT_LIST -> {
             }
         }
         return def;
