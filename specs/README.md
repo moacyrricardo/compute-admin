@@ -40,6 +40,7 @@ merges and renames it).
 | 025 | App-monitor recipes | ⚪ todo | `springboot`(actuator + process supplement)/`fastapi`(process + optional `/openapi.json`·`/metrics`)/`generic`(process-only) — discovery-routed via `ss -ltnp`→PID→cmdline classifier, pre-filled `(app-name,port)`, container name recovered from `/proc/<pid>/cgroup`; login-user only (S5) |
 | 026 | App-ops recipes | ⚪ todo | `appName`+`opKind` label **facade** over existing runtime recipes (docker/systemd/custom) — NOT a new recipe class; optional `SystemdDiscoverer`; bounded `tail-logs` fits today, **follow mode (`-f`) blocked on a new run-cancellation engine addition** (spec'd here); redeploy stays `CUSTOM`/blueprint |
 | 027 | Signal-driven machine unreachability | ⚪ todo | **concern** — the going-**OFFLINE**/UNREACHABLE counterpart to 019's instant going-**ONLINE** event: flip faster than the 5-min cron **without flapping** (leaning: a connect-failure triggers an immediate authoritative confirmation probe, not a direct flip). Builds on 019 (PR #30) |
+| 028 | Machine name & MCP identity hardening | ⚪ todo | **security** (ARCH **S9**): MCP identifies machines by `id`+user-provided `name`, hides `host`/`port`/`loginUser`; adds a required per-owner-unique **name** at registration; splits the MCP view (`id/name/tags/status`) from the full UI view; `register_machine` still takes host as input but stops echoing it |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
