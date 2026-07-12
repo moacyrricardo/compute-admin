@@ -16,9 +16,12 @@ import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInp
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
+import com.iskeru.computeadmin.recipe.repository.ActionRepository;
+import com.iskeru.computeadmin.recipe.repository.RecipeRepository;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
+import com.iskeru.computeadmin.machine.repository.MachineRepository;
 import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,8 +34,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 import static com.iskeru.computeadmin.discovery.FakeSshExecutor.notFound;
@@ -80,11 +88,28 @@ class DiscoveryServiceTest {
     @Autowired
     private AppUserRepository users;
 
+    @Autowired
+    private MachineRepository machines;
+
+    @Autowired
+    private RecipeRepository recipes;
+
+    @Autowired
+    private ActionRepository actions;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     private AppUser alice;
 
     @BeforeEach
     void seedUser() {
         alice = saveUser("alice@example.com");
+        // The fake bean is a context-cached singleton reused across methods; reset its
+        // recordings so each test asserts only its own probes.
+        FakeSshExecutor fake = (FakeSshExecutor) ssh;
+        fake.commands.clear();
+        fake.transactionActive.clear();
     }
 
     @Test
@@ -137,6 +162,54 @@ class DiscoveryServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         asUser(bob, () -> discoveryService.discover(aliceMachineId)))
                 .isInstanceOf(com.iskeru.computeadmin.machine.service.MachineNotFoundException.class);
+    }
+
+    // NOT_SUPPORTED so the probe phase runs with NO ambient transaction (the seam the
+    // fake records) and the persist phase's own TransactionTemplate really commits.
+    // Because that commits into the shared in-memory DB, it registers under a unique
+    // owner and deletes its committed rows afterward (test-isolation hazard, spec-013).
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void discover_RunsProbesOutsideTransaction_AndPersistsPending() {
+        AppUser owner = saveUser("probe-" + UUID.randomUUID() + "@example.com");
+        FakeSshExecutor fake = (FakeSshExecutor) ssh;
+
+        List<DiscoveredRecipe> discovered = asUser(owner, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("probe-host", 22, "deploy"));
+            return discoveryService.discover(machine.getId());
+        });
+        try {
+            // The read-only probes ran, and none of them saw an active transaction.
+            assertThat(fake.transactionActive).isNotEmpty();
+            assertThat(fake.transactionActive).allMatch(active -> !active);
+
+            // Proposals still land PENDING_APPROVAL; discovery never approves.
+            List<Action> persisted = discovered.stream().flatMap(d -> d.actions().stream()).toList();
+            assertThat(persisted).isNotEmpty();
+            assertThat(persisted).allSatisfy(action ->
+                    assertThat(action.getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL));
+        } finally {
+            cleanUpCommitted(owner, discovered);
+        }
+    }
+
+    /**
+     * Deletes the rows the {@code NOT_SUPPORTED} probe test committed to the shared DB
+     * — including the {@code @BeforeEach} {@code alice} user, which also commits under
+     * a {@code NOT_SUPPORTED} method and would otherwise collide with every later test
+     * that registers {@code alice@example.com}.
+     */
+    private void cleanUpCommitted(AppUser owner, List<DiscoveredRecipe> discovered) {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.executeWithoutResult(status -> {
+            for (DiscoveredRecipe d : discovered) {
+                d.actions().forEach(action -> actions.deleteById(action.getId()));
+                recipes.deleteById(d.recipe().getId());
+            }
+            machines.findByOwnerId(owner.getId()).forEach(machine -> machines.deleteById(machine.getId()));
+            users.deleteById(owner.getId());
+            users.deleteById(alice.getId());
+        });
     }
 
     private static ExecResult respond(List<String> argv) {
