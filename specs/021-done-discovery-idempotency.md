@@ -1,10 +1,45 @@
 # 021 — Discovery idempotency (reconcile, don't duplicate)
 
-> **Status:** todo. Linear is BLOCKED for this repo, so there is no issue
-> identifier — commits use `spec-021`. **Prerequisite for the monitoring specs
+> **Status:** done. **Branch:** `moacyrricardo/monitoring-021-025`. Linear is
+> BLOCKED for this repo, so there is no issue identifier — commits use `spec-021`.
+> **Prerequisite for the monitoring specs
 > (022–026):** monitoring re-runs discovery routinely (a box gains/loses apps),
 > and today every re-run *duplicates* the proposed recipes, which would render the
 > monitor UI (024) as duplicate app cards. Fix idempotency first.
+
+## Implementation notes
+
+Shipped as specified; the reconciliation state machine and the "surface, don't
+mutate" rule for APPROVED-differs landed exactly as decided. Deviations from the
+spec text:
+
+- **Migration is `V9`, not `V8`.** `V8` was already taken by spec-018
+  (`V8__machine_facts_probed_at.sql`) on `main`; the next free version is
+  `V9__recipe_unique_per_machine.sql`. Same content: dedup-then-constrain, keeping
+  the earliest recipe per `(machine, type, name)` (tie-broken by smaller id),
+  dropping the redundant recipes' action subtrees and any runs recorded against
+  those redundant copies, then adding `uq_recipe_machine_type_name`.
+- **The `(machine, type, name)` finder already existed.** `RecipeRepository`
+  already had `findByMachine_IdAndMachine_Owner_IdAndTypeAndName` (it backed
+  `getOrCreateCustom`); `RecipeService.getOrCreateDiscovered` reuses it, so no new
+  finder was needed there.
+- **`DiscoveryService` stays repository-free.** The per-recipe action lookup is
+  exposed as `ActionService.findOnRecipe(recipeId, name)` (owner-scoped via
+  `requireRecipe`) wrapping the new `ActionRepository.findByRecipe_IdAndName`, so
+  reconciliation never touches a repository directly.
+- **Approved-differs hashing** is computed by `ActionService.snapshotHashOf(sudo,
+  argTokens, paramDefs)`, which builds a transient `Action` through the same
+  `applyStructure` validation the write path uses and hashes it via
+  `ActionSnapshot.hash(...)` — no persisted entity, compared against the stored
+  `approvedSnapshotHash`.
+- **Result shape.** `DiscoveredRecipe.actions()` now carries `ReconciledAction`
+  (action + `ReconcileOutcome` + the newly-proposed def for
+  `DIFFERS_AWAITING_REAPPROVAL`); the REST DTO gained `ReconciledActionView`
+  surfacing the outcome and, for a differing approved action, the proposed
+  argv/params.
+
+`mvn -q -B clean verify` is green (173 tests, 0F/0E); `GateArchTest` still passes —
+approval remains UI-only.
 
 ## Context
 
