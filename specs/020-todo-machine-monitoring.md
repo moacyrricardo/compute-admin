@@ -1,18 +1,19 @@
 # 020 — Machine monitoring (concern)
 
 > **Concern** (exploratory — options open, not a decided spec). Linear is BLOCKED;
-> commits use `spec-020`. Graduates to a spec once the gate question (Q1 below) and a
-> couple of details are settled. The overall shape is now fairly concrete (see Design);
-> what stays open is mostly the read-only-approval decision.
+> commits use `spec-020`. The shape is concrete (see Design); what's open is **modelling
+> detail** (Open Questions), not a security decision. *(An earlier draft of this concern
+> wrongly framed a "per-run approval / read-only carve-out" problem — corrected in the
+> Approval-model note below: there is no per-run approval, so polling is a non-issue for
+> the gate.)*
 
 ## Problem
 
-We want to **monitor** machine health — memory, disk, CPU — and also **per-app**
-health (a single machine often runs several Spring Boot apps on different ports). It
-must fit compute-admin's model: an SSH-recipe engine with a **UI-only approval gate**
-on every action, no time-series storage, and no general scheduler. The tension is
-between "run a read once and show it" and "keep it fresh" — resolved below by putting
-the refresh loop in the **browser**, not the server.
+We want to **monitor** machine health — CPU, RAM/swap, disk — and also **per-app**
+health (a box often runs several Spring Boot apps on different ports), inside
+compute-admin's model: an SSH-recipe engine with **UI-only approval**, no time-series
+storage, and no general scheduler. Readings stay fresh by putting the refresh loop in
+the **browser**, not the server.
 
 ## Design (the intended shape)
 
@@ -48,17 +49,32 @@ the refresh loop in the **browser**, not the server.
     confirm it's Spring Boot by GETting `/actuator/health` on that port. The operator
     reviews/edits the proposed pairs before approving.
 
+## Approval model (clarification — there is no per-run approval)
+
+compute-admin approves an **action once** (UI-only): once an action's command template +
+param schema is `APPROVED`, it runs **whenever** — from the UI *or* MCP — with params
+validated against the approved schema; the content-hash only blocks *drift* (an edited
+action drops back to `DRAFT`). **There is no per-run approval.** That
+approve-once-then-run-freely model is exactly what lets an MCP agent run approved actions
+autonomously — it's core to how MCP works.
+
+So a **polling dashboard is not a gate problem**: it just **re-runs an already-approved
+monitor action** every tick. Monitor recipes are proposed by discovery as
+`PENDING_APPROVAL` and approved **once** like any recipe. **No "read-only carve-out" is
+needed or wanted** — auto-approving anything would weaken the UI-only-approval invariant
+for zero benefit, since one approval already unlocks unlimited (including polled) runs.
+
 ## Open Questions
 
-1. **The approval gate for read-only actions (the crux — must be decided before build).**
-   Every action today needs UI approval before it runs. A dashboard that polls `free -m`
-   every 30s cannot ask for approval each tick — so **read-only monitor actions must be
-   runnable without per-run approval**. How do we grant that *without* denting the core
-   invariant? Likely a structural **read-only action class** that may auto-run, guarded
-   the same way the gate is today (a `GateArchTest`-style invariant: read-only actions
-   carry no mutation, mutating actions stay strictly UI-approved). This is a real security
-   decision, not an implementation detail.
-2. **Repeatable composite `(app-name, port)` parameter (the biggest modelling question).**
+1. **Poll persistence / audit noise (the real question polling raises).** Each `run`
+   today persists a `Run` row and is audited (who/what/when/exit). Polling `monitor
+   machine` every 5s ≈ **12 Run rows/min per action** — DB growth + audit-trail noise.
+   Options: (a) accept it and lean on **run retention** (extend spec-013's output eviction
+   to also prune old `Run` rows); (b) add a lightweight **"read-now" path** for read-only
+   monitor actions that executes + returns output **without persisting a `Run`** (telemetry
+   reads then aren't audited — a deliberate trade). This — not approval — is the decision to
+   settle before build.
+2. **Repeatable composite `(app-name, port)` parameter (biggest modelling stretch).**
    The current `ParamDef` binds a single scalar per param; `springboot monitor` wants a
    *list of `(app-name, port)` pairs* in one action (label + probe each app). Options:
    extend the param model to a repeatable composite; model each app as its own
@@ -66,34 +82,30 @@ the refresh loop in the **browser**, not the server.
    `ParamDef`/`ParamBinder` and possibly the action shape.
 3. **Spring Boot health source:** actuator `/actuator/health` (assumes actuator exposed,
    maybe secured) vs a plain port-open/process check. Configurable per action?
-4. **Dashboard polling mechanics:** re-invoke `run` per tick (a new `Run` row each poll —
-   noisy, interacts with run retention/eviction) vs a lightweight "read now" path that
-   doesn't persist a full Run for every poll. The read-only class (Q1) may want its own
-   non-persisted execution path.
-5. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
+4. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
    `springboot monitor` outputs are laid out (gauges? raw text? parsed values?).
-6. **JVM/port detection method & privileges (for the `springboot monitor` proposal).**
+5. **JVM/port detection method & privileges (for the `springboot monitor` proposal).**
    `ss -ltnp` shows the **PID/cmdline of a socket's owner only with sufficient privilege** —
    an unprivileged login user sees its *own* listeners' PIDs but not other users' (S5). So
    auto-detection may miss JVMs run by other users unless the probe can `sudo`. Decide:
    probe as the login user only (miss cross-user apps, note the gap), or allow an optional
    `sudo -n` read for detection. Also: which signal names the app — jar name vs
    `-Dspring.application.name` vs the actuator `/info` — and how confident must we be it's
-   Spring Boot before proposing (actuator probe vs just "a JVM listening")?
+   Spring Boot before proposing?
 
 ## Leaning (to confirm)
 
-Build it as: a read-only **`monitor machine`** recipe (CPU, RAM+swap, disk) plus an
-**app-monitor family** starting with **`springboot monitor`** (per `(app-name, port)`,
-via actuator endpoints), surfaced on a **recipe-driven UI with a client-side poll setting
-(default single; 5s/30s/1min/5min)**, **no server-side time-series in v1**. Resolve **Q1** first — a structural read-only action
-class that runs without per-run approval while mutating actions stay gated — because
-polling makes per-run approval impossible and this is the one genuine security decision.
-Everything else (multi-port binding, actuator-vs-port-check, poll persistence) is
-implementation detail to pin when this graduates to a spec.
+Two **read-only** recipes — **`monitor machine`** (CPU, RAM+swap, disk) and an app-monitor
+family starting with **`springboot monitor`** (per `(app-name, port)`, via actuator) —
+**auto-discovered and approved once like any recipe**, surfaced on a recipe-driven UI with
+a **client-side poll setting (default single; 5s/30s/1min/5min)**, **no server-side
+time-series in v1**. The one thing worth settling before build is **Q1 (persist every poll
+vs a non-persisted read path)** — it shapes storage/audit. Everything else (composite param,
+actuator-vs-port-check, layout, detection privileges) is implementation detail. **No
+approval-invariant tension** — one approval unlocks polled runs.
 
 ## Sequencing
 
-Independent of 018/019 but benefits from them (tag/filter which machines to monitor).
-**Do not build until Q1 (the read-only-gate carve-out) is decided** — that must not be
-left to the implementer.
+Independent of 018/019 (benefits from tags to filter which machines to monitor). Reuses
+the spec-006 discovery port and the spec-013 run/eviction machinery. Graduates to a spec
+once **Q1 (poll persistence)** and **Q2 (composite `(app-name, port)` param)** are decided.
