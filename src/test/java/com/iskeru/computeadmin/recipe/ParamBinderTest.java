@@ -123,7 +123,62 @@ class ParamBinderTest {
                 .isInstanceOf(ParamValidationException.class);
     }
 
+    // --- APP_PORT_LIST fan-out item binding (spec-022, S4 per item) ---------
+
+    @Test
+    void bind_AppPortItem_BindsFixedTemplateAsDiscreteArgv() {
+        Action action = appProbeAction();
+
+        // One item's components bind to the fixed single-app template as DISCRETE argv
+        // elements — never a concatenated or shell-quoted line.
+        List<String> argv = binder.bind(action, Map.of("app-name", "orders", "port", "8080"));
+
+        assertThat(argv).containsExactly("probe", "orders", "8080");
+    }
+
+    @Test
+    void bind_AppPortItem_BadAppName_IsRejected() {
+        Action action = appProbeAction();
+
+        // A space / shell metacharacters are outside the fixed app-name charset.
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-name", "orders; rm -rf /", "port", "8080")))
+                .isInstanceOf(ParamValidationException.class);
+    }
+
+    @Test
+    void bind_AppPortItem_PortOutOfRange_IsRejected() {
+        Action action = appProbeAction();
+
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-name", "orders", "port", "99999")))
+                .isInstanceOf(ParamValidationException.class);
+    }
+
+    @Test
+    void bind_AppPortItem_NonIntegerPort_IsRejected() {
+        Action action = appProbeAction();
+
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-name", "orders", "port", "eighty")))
+                .isInstanceOf(ParamValidationException.class);
+    }
+
     // --- fixtures -----------------------------------------------------------
+
+    /**
+     * A fan-out probe: a fixed single-app template referencing the {@code app-name}
+     * and {@code port} components, plus one {@code APP_PORT_LIST} composite param.
+     */
+    private Action appProbeAction() {
+        return action(false,
+                List.of(literal("probe"), param("app-name"), param("port")),
+                List.of(appPortListDef("apps")));
+    }
+
+    private ParamDef appPortListDef(String name) {
+        ParamDef def = new ParamDef();
+        def.setName(name);
+        def.setKind(ParamKind.APP_PORT_LIST);
+        return def;
+    }
 
     private Action restartAction(boolean sudo) {
         return action(sudo,
