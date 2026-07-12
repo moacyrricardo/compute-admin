@@ -84,7 +84,9 @@ public class PairingService {
         request.setStatus(PairingStatus.PENDING);
         request.setExpiresAt(Instant.now().plus(ttl));
         requests.save(request);
-        String verificationUrl = baseUrl + "/setup?user_code=" + request.getUserCode();
+        // The UI is a hash-routed SPA served at "/", so the verification URL must point at
+        // the in-app route (/#/setup), not a server path (/setup) — the latter 404s.
+        String verificationUrl = baseUrl + "/#/setup?user_code=" + request.getUserCode();
         return new BeginResult(deviceCode, request.getUserCode(), verificationUrl,
                 ttl.toSeconds(), intervalSeconds);
     }

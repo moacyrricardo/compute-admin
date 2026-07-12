@@ -68,6 +68,15 @@ class PairingServiceTest {
     }
 
     @Test
+    void begin_VerificationUrl_PointsAtTheSpaHashRoute() {
+        PairingService.BeginResult begun = pairing.begin();
+
+        // Regression: the UI is a hash-routed SPA served at "/", so the verification URL
+        // must be the in-app route (/#/setup) — a server path (/setup) 404s.
+        assertThat(begun.verificationUrl()).contains("/#/setup?user_code=" + begun.userCode());
+    }
+
+    @Test
     void approve_ThenPoll_ReturnsTokenOnceThenConsumed() {
         PairingService.BeginResult begun = pairing.begin();
 
