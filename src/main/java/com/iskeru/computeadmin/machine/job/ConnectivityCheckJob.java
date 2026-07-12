@@ -1,5 +1,6 @@
 package com.iskeru.computeadmin.machine.job;
 
+import com.iskeru.computeadmin.machine.event.MachineReachedEvent;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.model.MachineStatus;
 import com.iskeru.computeadmin.machine.repository.MachineRepository;
@@ -7,6 +8,7 @@ import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import com.iskeru.computeadmin.ssh.SshTarget;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,7 +43,15 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code ScopedValue} that does not propagate into them anyway — so the
  * {@code via = SYSTEM} stamp comes only from the job thread's write.
  *
- * <p>spec-003; concurrency + transaction scoping in spec-013.
+ * <p><strong>Going-away authority (spec-019).</strong> This job remains the sole
+ * authority for the ONLINE → OFFLINE/UNREACHABLE transition (a machine that dies is
+ * detected within one cron interval). The event path added in spec-019 only provides
+ * <em>immediate</em> positive ONLINE feedback from real usage; on an ONLINE probe the
+ * job also publishes a {@link MachineReachedEvent} so other listeners share that
+ * signal, but the write-on-change status update keeps it from double-writing.
+ *
+ * <p>spec-003; concurrency + transaction scoping in spec-013; reachability event in
+ * spec-019.
  */
 @Component
 public class ConnectivityCheckJob {
@@ -57,14 +67,17 @@ public class ConnectivityCheckJob {
     private final MachineRepository machines;
     private final SshExecutor ssh;
     private final TransactionTemplate tx;
+    private final ApplicationEventPublisher events;
     private final int concurrency;
 
     public ConnectivityCheckJob(MachineRepository machines, SshExecutor ssh,
                                 PlatformTransactionManager transactionManager,
+                                ApplicationEventPublisher events,
                                 @Value("${ca.connectivity.concurrency:8}") int concurrency) {
         this.machines = machines;
         this.ssh = ssh;
         this.tx = new TransactionTemplate(transactionManager);
+        this.events = events;
         this.concurrency = Math.max(1, concurrency);
     }
 
@@ -86,7 +99,15 @@ public class ConnectivityCheckJob {
                 futures.add(pool.submit(() -> new Probed(probe.id(), probe(probe.target()))));
             }
             for (Future<Probed> future : futures) {
-                apply(await(future));
+                Probed probed = await(future);
+                apply(probed);
+                // Announce reachability so other listeners (spec-018's facts probe)
+                // react to the same signal the run/discovery paths emit. The status
+                // write above already set ONLINE, so MachineStatusUpdater's reload is a
+                // write-on-change no-op — the two never double-write. spec-019.
+                if (probed.status() == MachineStatus.ONLINE) {
+                    events.publishEvent(new MachineReachedEvent(probed.id(), Instant.now()));
+                }
             }
         } finally {
             pool.shutdownNow();
