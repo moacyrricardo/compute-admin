@@ -13,16 +13,15 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * A signed-in user. First Google login self-registers one (keyed by
- * {@code googleSub}); every owned entity points its {@code owner} here. Not
+ * A signed-in user. Self-registers via email + password (the bcrypt hash lives in
+ * {@code passwordHash}); every owned entity points its {@code owner} here. Not
  * Envers-audited — user records are not versioned config.
  *
- * <p>spec-011.
+ * <p>spec-011; email+password since spec-014 (replacing the Google subject).
  */
 @Entity
 @Table(name = "app_user", uniqueConstraints = {
-        @UniqueConstraint(name = "uq_app_user_email", columnNames = "email"),
-        @UniqueConstraint(name = "uq_app_user_google_sub", columnNames = "google_sub")
+        @UniqueConstraint(name = "uq_app_user_email", columnNames = "email")
 })
 @Getter
 @Setter
@@ -39,8 +38,8 @@ public class AppUser {
     @Column(length = 255)
     private String name;
 
-    @Column(name = "google_sub", nullable = false, length = 255)
-    private String googleSub;
+    @Column(name = "password_hash", nullable = false, length = 255)
+    private String passwordHash;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();

@@ -51,7 +51,7 @@ class PairingServiceTest {
     void seedUser() {
         human = new AppUser();
         human.setEmail("human@example.com");
-        human.setGoogleSub("dev|human@example.com");
+        human.setPasswordHash("$2a$10$fixturehashfixturehashfixturehashfixturehashfixT");
         human.setName("human");
         human = users.save(human);
     }

@@ -45,7 +45,7 @@ class PersonalTokenServiceTest {
     void seedUser() {
         owner = new AppUser();
         owner.setEmail("owner@example.com");
-        owner.setGoogleSub("dev|owner@example.com");
+        owner.setPasswordHash("$2a$10$fixturehashfixturehashfixturehashfixturehashfixT");
         owner.setName("owner");
         owner = users.save(owner);
     }

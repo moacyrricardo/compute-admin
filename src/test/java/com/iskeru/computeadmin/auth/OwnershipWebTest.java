@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Per-user isolation over the real HTTP surface (spec-011): unauthenticated
- * {@code /api} is 401; the dev Google bypass mints a distinct user per email;
+ * {@code /api} is 401; email+password registration mints a distinct user per email;
  * user B cannot see or revoke user A's personal token (404, never 403); a tokenless
  * MCP session reaches no user data (only the spec-008 bootstrap tools) and MCP with
  * a user's token connects.
@@ -51,7 +51,7 @@ class OwnershipWebTest {
     }
 
     @Test
-    void googleLogin_DistinctEmails_MintDistinctUsers() {
+    void registration_DistinctEmails_MintDistinctUsers() {
         AuthDtos.Session a = login("a@example.com");
         AuthDtos.Session b = login("b@example.com");
 
@@ -104,7 +104,10 @@ class OwnershipWebTest {
     // --- helpers ------------------------------------------------------------
 
     private AuthDtos.Session login(String email) {
-        return rest.postForObject("/api/auth/google", new AuthDtos.GoogleLogin(email), AuthDtos.Session.class);
+        // Each email is a fresh user here, so registering is the login: it mints the
+        // same JWT+user a subsequent /login would, in one call.
+        return rest.postForObject("/api/auth/register",
+                new AuthDtos.RegisterRequest(email, "password-123", null), AuthDtos.Session.class);
     }
 
     private AuthDtos.CreatedTokenView createToken(String jwt, String label) {

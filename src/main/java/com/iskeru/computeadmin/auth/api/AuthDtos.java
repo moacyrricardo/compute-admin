@@ -22,9 +22,12 @@ public final class AuthDtos {
 
     // --- auth ---------------------------------------------------------------
 
-    /** {@code POST /api/auth/google} body: the Google credential (ID token, or a
-     *  raw email under the dev bypass). */
-    public record GoogleLogin(String credential) {
+    /** {@code POST /api/auth/register} body: email, password, optional display name. */
+    public record RegisterRequest(String email, String password, String name) {
+    }
+
+    /** {@code POST /api/auth/login} body: email + password. */
+    public record LoginRequest(String email, String password) {
     }
 
     /** A signed-in user, safe to expose. */

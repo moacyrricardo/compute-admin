@@ -121,7 +121,7 @@ class MachineAuditTest {
     private AppUser saveUser(String email) {
         AppUser user = new AppUser();
         user.setEmail(email);
-        user.setGoogleSub("dev|" + email);
+        user.setPasswordHash("$2a$10$fixturehashfixturehashfixturehashfixturehashfixT");
         user.setName(email.substring(0, email.indexOf('@')));
         return users.save(user);
     }

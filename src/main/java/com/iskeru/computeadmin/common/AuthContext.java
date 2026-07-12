@@ -13,7 +13,7 @@ package com.iskeru.computeadmin.common;
  */
 public record AuthContext(String userId, String email, Via via) {
 
-    /** A UI-authenticated context (Google JWT). */
+    /** A UI-authenticated context (app JWT from email+password sign-in). */
     public static AuthContext ui(String userId, String email) {
         return new AuthContext(userId, email, Via.UI);
     }
