@@ -1,11 +1,42 @@
 # 022 — Monitoring foundations (classification, app-label convention, fan-out run mode)
 
-> **Status:** todo. Linear BLOCKED — commits use `spec-022`. This is the
-> **decisions spec** graduated from concern [020](./020-todo-machine-monitoring.md):
-> it pins the shared model that every monitor recipe (023, 025) and the app-ops
-> facade (026) and the dashboard (024) build on. No UI and no specific recipes here.
+> **Status:** done. Branch `moacyrricardo/monitoring-021-025` (PR #35). Linear
+> BLOCKED — commits use `spec-022`. This is the **decisions spec** graduated from
+> concern [020](./020-todo-machine-monitoring.md): it pins the shared model that
+> every monitor recipe (023, 025) and the app-ops facade (026) and the dashboard
+> (024) build on. No UI and no specific recipes here.
 > **Depends on [021](./021-todo-discovery-idempotency.md)** (re-discovery must
 > reconcile, or the dashboard shows duplicate app cards).
+
+## Implementation notes (as-built)
+
+Implemented exactly to the decision. Deviations / concretions worth recording:
+
+- **Fan-out item encoding.** The `APP_PORT_LIST` composite is one `ParamDef` (a
+  marker of kind `APP_PORT_LIST`, no per-instance config — the app-name charset and
+  port range are fixed constants on `ParamBinder`). The fixed single-app template
+  references the item's two components by the reserved names **`app-name`** and
+  **`port`** (constants `ParamBinder.APP_NAME_COMPONENT`/`PORT_COMPONENT`); a token
+  may not reference the composite by its own name. `RunService` reads the runtime
+  item list from the composite param's value as a **JSON array** of
+  `{"appName", "port"}` objects, builds a per-item scalar map, and calls the
+  **unchanged** `ParamBinder.bind(...)` once per item. `bind` gained only the
+  per-item component validation (fixed pattern / `[1,65535]`), leaving the scalar
+  `ALLOWED_SET`/`REGEX`/`INT_RANGE` path byte-for-byte unchanged — a scalar action
+  is literally the N=1 case.
+- **Migration is `V9`→`V10`.** The spec named `V9__run_fanout_parent.sql`, but `V9`
+  was already taken on `main` by spec-021 (`recipe_unique_per_machine`), so the
+  fan-out migration shipped as **`V10__run_fanout_parent.sql`**.
+- **`app_label` column.** Alongside the spec's `parent_run_id`, the child row also
+  carries a nullable `app_label` (the item's `appName`) so the dashboard (024) can
+  route per-app output without re-parsing `params_json`. Presentation metadata only.
+- **Parent aggregation** is recomputed convergently each time a child finishes
+  (`DONE` iff all children `DONE`, else `FAILED`); the parent stays `QUEUED` until
+  every child is terminal, so pruning never touches an in-flight fan-out.
+- **Pruning** (`RunRowEvictionJob`) deletes by **top-level unit** (a fan-out parent
+  or a standalone run + its children), children first (self-FK), never a
+  non-terminal row. Config keys `ca.run.row-retention` (default `24h`),
+  `ca.run.rows-per-action-max` (default `500`), `ca.run.row-eviction-cron`.
 
 ## Context
 
