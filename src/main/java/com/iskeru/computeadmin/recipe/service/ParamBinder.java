@@ -93,6 +93,13 @@ public class ParamBinder {
             ParamDef def = defsByName.get(paramName);
             if (def != null && def.getKind() != ParamKind.APP_PORT_LIST) {
                 validate(def, value);
+                // spec-026: a scalar param named `app-name` is the app-ops correlation
+                // key. On ANY action (monitor or ops) its bound value must also satisfy
+                // the fixed app-name charset, so the key can never widen the S4 surface
+                // — even if a (mis)authored ALLOWED_SET admitted an odd literal.
+                if (APP_NAME_COMPONENT.equals(paramName)) {
+                    validateAppPortComponent(APP_NAME_COMPONENT, value);
+                }
             } else if (hasAppPortList && isAppPortComponent(paramName)) {
                 // A fan-out template binds the item's app-name/port components against
                 // the fixed item schema — never a caller-supplied rule.
@@ -118,6 +125,47 @@ public class ParamBinder {
     /** Whether {@code name} is one of the two fan-out item component names (spec-022). */
     public static boolean isAppPortComponent(String name) {
         return APP_NAME_COMPONENT.equals(name) || PORT_COMPONENT.equals(name);
+    }
+
+    /**
+     * Whether {@code def} is the app-ops correlation key (spec-026): a <strong>scalar</strong>
+     * param named {@link #APP_NAME_COMPONENT} (not the {@code APP_PORT_LIST} composite,
+     * whose {@code app-name} is a per-item <em>component</em>, not a param). An ops action
+     * declares exactly this to say which app(s) it targets.
+     */
+    public static boolean isReservedAppNameParam(ParamDef def) {
+        return def != null
+                && APP_NAME_COMPONENT.equals(def.getName())
+                && def.getKind() != ParamKind.APP_PORT_LIST;
+    }
+
+    /** Whether {@code action} carries the reserved scalar {@code app-name} param (spec-026). */
+    public static boolean hasReservedAppNameParam(Action action) {
+        for (ParamDef def : action.getParamDefs()) {
+            if (isReservedAppNameParam(def)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The apps an ops action can target: the {@code ALLOWED_SET} values of its reserved
+     * {@code app-name} param (spec-026). Empty when the action carries no such param, or
+     * when it is not enumerable (a {@code REGEX}/other kind — not surfaced on app cards).
+     * This is the resolver the dashboard uses to match an action to an app card.
+     */
+    public static List<String> targetApps(Action action) {
+        for (ParamDef def : action.getParamDefs()) {
+            if (isReservedAppNameParam(def) && def.getKind() == ParamKind.ALLOWED_SET) {
+                List<String> apps = new ArrayList<>();
+                for (ParamAllowedValue allowed : def.getAllowedValues()) {
+                    apps.add(allowed.getValue());
+                }
+                return apps;
+            }
+        }
+        return List.of();
     }
 
     /**

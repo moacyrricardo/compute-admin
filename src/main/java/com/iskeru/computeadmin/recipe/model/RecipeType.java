@@ -12,7 +12,13 @@ package com.iskeru.computeadmin.recipe.model;
  * and no auto-approval. Persisted {@code @Enumerated(STRING)}, so appending a value
  * is a non-breaking change (no ordinal renumber). spec-022.
  *
- * <p>spec-004; {@code MONITOR} added in spec-022.
+ * <p>{@link #SYSTEMD} tags a recipe of systemd-unit lifecycle ops discovered by
+ * {@code SystemdDiscoverer} (spec-026) — the bare-systemd analogue of {@link #DOCKER}.
+ * Its actions are ordinary approved actions keyed by the reserved {@code app-name}
+ * param (the app-ops facade), not a new gate. Appended, so its {@code STRING} ordinal
+ * needs no migration.
+ *
+ * <p>spec-004; {@code MONITOR} added in spec-022; {@code SYSTEMD} in spec-026.
  */
 public enum RecipeType {
     NGINX,
@@ -20,5 +26,6 @@ public enum RecipeType {
     DATABASE,
     CRON,
     CUSTOM,
-    MONITOR
+    MONITOR,
+    SYSTEMD
 }

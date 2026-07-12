@@ -161,7 +161,49 @@ class ParamBinderTest {
                 .isInstanceOf(ParamValidationException.class);
     }
 
+    // --- reserved app-name ops param (spec-026) -----------------------------
+
+    @Test
+    void bind_ReservedAppNameOpsParam_BindsAllowedApp() {
+        Action action = opsAction("orders", "billing");
+
+        assertThat(binder.bind(action, Map.of("app-name", "orders")))
+                .containsExactly("systemctl", "restart", "orders");
+    }
+
+    @Test
+    void bind_ReservedAppNameOpsParam_NonMember_IsRejected() {
+        Action action = opsAction("orders", "billing");
+
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-name", "web")))
+                .isInstanceOf(ParamValidationException.class);
+    }
+
+    @Test
+    void targetApps_OfOpsAction_AreItsAppNameAllowedSet() {
+        Action action = opsAction("orders", "billing");
+
+        assertThat(ParamBinder.hasReservedAppNameParam(action)).isTrue();
+        assertThat(ParamBinder.targetApps(action)).containsExactly("orders", "billing");
+    }
+
+    @Test
+    void hasReservedAppNameParam_FalseForFanOutComposite() {
+        // The APP_PORT_LIST composite carries app-name as a per-item component, NOT the
+        // reserved scalar ops param — so a monitor probe is not mistaken for an ops action.
+        assertThat(ParamBinder.hasReservedAppNameParam(appProbeAction())).isFalse();
+        assertThat(ParamBinder.targetApps(appProbeAction())).isEmpty();
+    }
+
     // --- fixtures -----------------------------------------------------------
+
+    /** An ops action keyed by the reserved scalar {@code app-name} ALLOWED_SET (spec-026). */
+    private Action opsAction(String... apps) {
+        return action(false,
+                List.of(literal("systemctl"), literal("restart"), param("app-name")),
+                List.of(allowedSetDef("app-name", apps)));
+    }
+
 
     /**
      * A fan-out probe: a fixed single-app template referencing the {@code app-name}

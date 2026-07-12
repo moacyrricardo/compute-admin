@@ -320,6 +320,16 @@ public class ActionService {
         def.setAction(action);
         def.setName(in.name().trim());
         def.setKind(in.kind());
+        // spec-026: reserve the `app-name` param name. A scalar `app-name` is the app-ops
+        // correlation key, so it must be an ALLOWED_SET of valid app identifiers — that is
+        // what lets the dashboard enumerate the apps the action targets. (The APP_PORT_LIST
+        // composite is exempt: its `app-name` is a fixed per-item component, not this param.)
+        boolean reservedAppName = ParamBinder.APP_NAME_COMPONENT.equals(def.getName())
+                && in.kind() != ParamKind.APP_PORT_LIST;
+        if (reservedAppName && in.kind() != ParamKind.ALLOWED_SET) {
+            throw new BadRequestException(
+                    "Param 'app-name' is reserved and must be an ALLOWED_SET of target apps");
+        }
         switch (in.kind()) {
             case ALLOWED_SET -> {
                 List<String> values = in.allowedValues();
@@ -332,6 +342,10 @@ public class ActionService {
                     if (raw == null || raw.isEmpty()) {
                         throw new BadRequestException(
                                 "ALLOWED_SET param '" + in.name() + "' has a blank value");
+                    }
+                    if (reservedAppName && !Pattern.matches(ParamBinder.APP_NAME_PATTERN, raw)) {
+                        throw new BadRequestException(
+                                "app-name value '" + raw + "' is not a valid app identifier");
                     }
                     ParamAllowedValue value = new ParamAllowedValue();
                     value.setParamDef(def);
