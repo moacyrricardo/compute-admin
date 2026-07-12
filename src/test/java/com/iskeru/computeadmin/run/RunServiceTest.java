@@ -5,6 +5,7 @@ import com.iskeru.computeadmin.auth.model.AppUser;
 import com.iskeru.computeadmin.auth.repository.AppUserRepository;
 import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
+import com.iskeru.computeadmin.common.Via;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
@@ -46,13 +47,19 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 
 /**
  * The run gate (spec-005). Refuses a non-APPROVED action (409), refuses an action
@@ -131,6 +138,9 @@ class RunServiceTest {
     private RunRepository runs;
 
     @Autowired
+    private RunOutputHub hub;
+
+    @Autowired
     private AppUserRepository users;
 
     private record Seed(String machineId, String actionId) {
@@ -188,6 +198,65 @@ class RunServiceTest {
         assertThat(finished.getCallerUserId()).isEqualTo(user.getId());
     }
 
+    // NOT_SUPPORTED: commit the run so the after-commit dispatch fires and the run
+    // executes to terminal, populating (then evictable) the hub channel.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void subscribeAfterEviction_ReplaysPersistedOutput() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedAction(true));
+
+        Run queued = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("svc", "nginx")));
+        Run finished = awaitTerminal(queued.getId());
+        assertThat(finished.getStatus()).isEqualTo(RunStatus.DONE);
+
+        // Force the hub to drop the finished run's channel via the asOf seam.
+        hub.evict(Instant.now().plus(Duration.ofDays(1)));
+
+        Recorder recorder = new Recorder();
+        asUser(user, () -> {
+            runService.subscribeToOutput(queued.getId(), recorder);
+            return null;
+        });
+
+        // With the channel gone, the subscriber is served from the persisted run:
+        // stdout chunk, the terminal exit event, then onComplete.
+        await().atMost(2, TimeUnit.SECONDS).until(recorder::completed);
+        assertThat(recorder.stream(RunOutputHub.OutputEvent.STDOUT)).contains("ok");
+        assertThat(recorder.stream(RunOutputHub.OutputEvent.EXIT)).contains("0");
+    }
+
+    @Test
+    void subscribeToQueuedRun_AttachesLive() {
+        AppUser user = saveUser();
+        Recorder recorder = new Recorder();
+
+        asUser(user, () -> {
+            Seed seed = seedAction(true);
+            // A QUEUED run persisted directly (no async dispatch) stays live.
+            Action action = actions.findById(seed.actionId()).orElseThrow();
+            Run run = new Run();
+            run.setAction(action);
+            run.setMachine(action.getRecipe().getMachine());
+            run.setCallerUserId(user.getId());
+            run.setVia(Via.UI);
+            run.setResolvedArgvJson("[]");
+            run.setApprovedSnapshotHash(action.getApprovedSnapshotHash());
+            run.setStatus(RunStatus.QUEUED);
+            Run saved = runs.save(run);
+
+            // A live (QUEUED) run attaches to the hub, not the persisted fallback.
+            runService.subscribeToOutput(saved.getId(), recorder);
+            hub.publish(saved.getId(), new RunOutputHub.OutputEvent(RunOutputHub.OutputEvent.STDOUT, "live\n"));
+            hub.complete(saved.getId(), 0);
+            return null;
+        });
+
+        await().atMost(2, TimeUnit.SECONDS).until(recorder::completed);
+        assertThat(recorder.stream(RunOutputHub.OutputEvent.STDOUT)).contains("live");
+        assertThat(recorder.stream(RunOutputHub.OutputEvent.EXIT)).contains("0");
+    }
+
     /** Polls the run until it reaches a terminal state (or a short timeout). */
     private Run awaitTerminal(String runId) {
         long deadline = System.currentTimeMillis() + 5_000;
@@ -238,5 +307,37 @@ class RunServiceTest {
 
     private <R> R asUser(AppUser user, Supplier<R> body) {
         return CurrentUser.runWhere(AuthContext.ui(user.getId(), user.getEmail()), body::get);
+    }
+
+    /** Records the events, streams, and completion signalled to a subscriber. */
+    private static final class Recorder implements RunOutputHub.Subscriber {
+
+        private final List<RunOutputHub.OutputEvent> events = new CopyOnWriteArrayList<>();
+        private final AtomicBoolean completed = new AtomicBoolean();
+
+        @Override
+        public void onEvent(RunOutputHub.OutputEvent event) {
+            events.add(event);
+        }
+
+        @Override
+        public void onComplete() {
+            completed.set(true);
+        }
+
+        boolean completed() {
+            return completed.get();
+        }
+
+        /** The concatenated data of every event on {@code streamName}. */
+        String stream(String streamName) {
+            StringBuilder builder = new StringBuilder();
+            for (RunOutputHub.OutputEvent event : events) {
+                if (event.stream().equals(streamName)) {
+                    builder.append(event.data());
+                }
+            }
+            return builder.toString();
+        }
     }
 }
