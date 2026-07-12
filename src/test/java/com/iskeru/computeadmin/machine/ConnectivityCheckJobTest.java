@@ -17,7 +17,6 @@ import com.iskeru.computeadmin.ssh.SshTarget;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import org.hibernate.envers.AuditReaderFactory;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -29,7 +28,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,10 +43,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * trail.
  *
  * <p>Mirrors {@link MachineAuditTest}: Envers persists at commit, so this opts out
- * of the rollback wrapper ({@code NOT_SUPPORTED}) and drives each job run in its own
- * committing transaction, then reads revisions back via the Envers reader.
+ * of the rollback wrapper ({@code NOT_SUPPORTED}). The job now owns its per-machine
+ * transaction (spec-013), so the test no longer wraps {@code checkAll()} in an outer
+ * {@code tx.execute} — that would just make the job's own short transaction join it,
+ * defeating the "unchanged ⇒ no revision" check. It only binds
+ * {@link AuthContext#system()} so the committed write stamps {@code via = SYSTEM},
+ * then reads revisions back via the Envers reader.
  *
- * <p>spec-003.
+ * <p>spec-003; refactored for concurrency + per-machine transactions in spec-013.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -69,13 +74,6 @@ class ConnectivityCheckJobTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
-    private TransactionTemplate tx;
-
-    @BeforeEach
-    void setUp() {
-        tx = new TransactionTemplate(transactionManager);
-    }
-
     @Test
     void unchangedStatus_ProducesNoNewRevision() {
         AppUser alice = saveUser("connectivity@example.com");
@@ -96,13 +94,60 @@ class ConnectivityCheckJobTest {
         assertThat(revisionsOf(machine.getId())).hasSize(2);
     }
 
-    /** Runs one connectivity cycle in a committing, system-scoped transaction. */
+    @Test
+    void slowProbe_DoesNotBlockOthers() {
+        String ownerEmail = "slow-" + UUID.randomUUID() + "@example.com";
+        AppUser owner = saveUser(ownerEmail);
+        String slowHost = "slow-" + UUID.randomUUID();
+
+        // Four machines whose probes each sleep; with bounded concurrency > 1 they run
+        // in parallel, so total time stays near a single probe — not the serial sum.
+        List<String> ids = new ArrayList<>();
+        long delayMillis = 300;
+        CurrentUser.runWhere(AuthContext.ui(owner.getId(), owner.getEmail()), () -> {
+            for (int i = 0; i < 4; i++) {
+                ids.add(machineService.register(
+                        new RegisterMachineInput(slowHost + "-" + i, 22, "root")).getId());
+            }
+            return null;
+        });
+
+        try {
+            ConnectivityCheckJob job = new ConnectivityCheckJob(
+                    machines, new DelayingSshExecutor(slowHost, delayMillis), transactionManager, 8);
+            long startNanos = System.nanoTime();
+            CurrentUser.runWhere(AuthContext.system(), () -> {
+                job.checkAll();
+                return null;
+            });
+            long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+
+            // Serial would be >= 4 * delay; concurrent stays well under 3 * delay.
+            assertThat(elapsedMillis).isLessThan(3 * delayMillis);
+            for (String id : ids) {
+                assertThat(machines.findById(id).orElseThrow().getStatus()).isEqualTo(MachineStatus.ONLINE);
+            }
+        } finally {
+            deleteCommitted(owner, ids);
+        }
+    }
+
+    /** Runs one connectivity cycle system-scoped; the job owns its per-machine transactions. */
     private void runJob(SshExecutor ssh) {
-        ConnectivityCheckJob job = new ConnectivityCheckJob(machines, ssh);
-        CurrentUser.runWhere(AuthContext.system(), () -> tx.execute(status -> {
+        ConnectivityCheckJob job = new ConnectivityCheckJob(machines, ssh, transactionManager, 4);
+        CurrentUser.runWhere(AuthContext.system(), () -> {
             job.checkAll();
             return null;
-        }));
+        });
+    }
+
+    /** Deletes the machines + owner a committing test left in the shared in-memory DB. */
+    private void deleteCommitted(AppUser owner, List<String> machineIds) {
+        TransactionTemplate tx = new TransactionTemplate(transactionManager);
+        tx.executeWithoutResult(status -> {
+            machineIds.forEach(machines::deleteById);
+            users.deleteById(owner.getId());
+        });
     }
 
     private AppUser saveUser(String email) {
@@ -147,6 +192,41 @@ class ConnectivityCheckJobTest {
             return effective == MachineStatus.ONLINE
                     ? new ExecResult(0, "", "")
                     : new ExecResult(1, "", "");
+        }
+
+        @Override
+        public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink) {
+            throw new UnsupportedOperationException("not used by the connectivity job");
+        }
+    }
+
+    /**
+     * SSH stub whose probe sleeps {@code delayMillis} for hosts under the test's
+     * {@code slowHostPrefix} (and is instant for any leaked fleet machine), always
+     * reporting ONLINE. Used to show bounded concurrency probes the slow hosts in
+     * parallel rather than serially.
+     */
+    private static final class DelayingSshExecutor implements SshExecutor {
+
+        private final String slowHostPrefix;
+        private final long delayMillis;
+
+        private DelayingSshExecutor(String slowHostPrefix, long delayMillis) {
+            this.slowHostPrefix = slowHostPrefix;
+            this.delayMillis = delayMillis;
+        }
+
+        @Override
+        public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
+            if (target.host().startsWith(slowHostPrefix)) {
+                try {
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }
+            return new ExecResult(0, "", "");
         }
 
         @Override
