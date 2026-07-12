@@ -1142,27 +1142,34 @@
     root.classList.remove("hidden");
     clear(root);
 
-    var credField = h("textarea", { class: "mono", rows: "3", placeholder: "Paste Google ID token credential", "aria-label": "Google credential" });
-    var googleExtra = h("div", { class: "hidden mt-3" }, credField,
-      h("button", { class: "btn btn--primary mt-2", onclick: function () { login(credField.value.trim()); } }, "Continue with credential"));
-    var googleBtn = h("button", { class: "btn btn--primary btn-google", onclick: function () {
-      googleExtra.classList.toggle("hidden");
-    } }, "Sign in with Google");
+    var emailField = h("input", { type: "email", placeholder: "you@example.com", "aria-label": "Email", autocomplete: "username" });
+    var passwordField = h("input", { type: "password", placeholder: "Password", "aria-label": "Password", autocomplete: "current-password" });
+    var nameField = h("input", { type: "text", placeholder: "Display name (optional)", "aria-label": "Display name" });
+    var nameRow = h("div", { class: "hidden mt-2" }, h("label", { text: "Name" }), nameField);
 
-    var devEmail = h("input", { type: "email", placeholder: "you@example.com", "aria-label": "Dev bypass email" });
-    var devBtn = h("button", { class: "btn mt-2", onclick: function () {
-      if (devEmail.value.trim()) login(devEmail.value.trim());
-      else toast("Enter an email");
-    } }, "Continue (dev bypass)");
+    // Two actions on one form: Log in (default) and Register. The name field only
+    // matters for registration, so it stays hidden until the user reveals it.
+    var loginBtn = h("button", { class: "btn btn--primary", type: "submit" }, "Log in");
+    var registerBtn = h("button", { class: "btn mt-2", type: "button" }, "Register");
 
-    function login(credential) {
-      if (!credential) { toast("A credential is required"); return; }
-      fetch("/api/auth/google", {
+    function authenticate(path) {
+      var email = emailField.value.trim();
+      var password = passwordField.value;
+      if (!email || !password) { toast("Email and password are required"); return; }
+      fetch("/api/auth/" + path, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential: credential })
+        body: JSON.stringify({ email: email, password: password, name: nameField.value.trim() || null })
       }).then(function (res) {
-        if (!res.ok) throw new Error("sign-in failed (" + res.status + ")");
-        return res.json();
+        return res.text().then(function (t) {
+          if (!res.ok) {
+            var code = "";
+            try { code = JSON.parse(t).error || ""; } catch (e) { /* keep empty */ }
+            if (res.status === 409 || code === "email_taken") throw new Error("That email is already registered — log in instead.");
+            if (res.status === 401) throw new Error("Invalid email or password.");
+            throw new Error(code || ("sign-in failed (" + res.status + ")"));
+          }
+          return JSON.parse(t);
+        });
       }).then(function (session) {
         Session.set(session.token, session.user);
         if (!location.hash || location.hash === "#/") location.hash = "#/machines";
@@ -1170,17 +1177,32 @@
       }).catch(function (err) { toast(err.message); });
     }
 
+    var form = h("form", { class: "login-form", onsubmit: function (e) { e.preventDefault(); authenticate("login"); } },
+      h("label", { text: "Email" }),
+      emailField,
+      h("label", { class: "mt-2", text: "Password" }),
+      passwordField,
+      nameRow,
+      loginBtn,
+      registerBtn);
+
+    registerBtn.addEventListener("click", function () {
+      if (nameRow.classList.contains("hidden")) {
+        // First click reveals the optional name field so the intent is a fresh
+        // registration; a second click submits it.
+        nameRow.classList.remove("hidden");
+        registerBtn.textContent = "Create account";
+        return;
+      }
+      authenticate("register");
+    });
+
     root.appendChild(h("div", { class: "login-screen" },
       h("div", { class: "login-card" },
         h("div", { class: "row" }, h("span", { class: "dot", "aria-hidden": "true" }), h("h1", { text: "compute-admin" })),
         h("p", { class: "lede", text: "Sign in to review and approve operations on your machines. Approval is UI-only — this session is what authorises a run." }),
-        googleBtn,
-        googleExtra,
-        h("div", { class: "divider" }, "dev profile"),
-        h("label", { text: "Dev bypass" }),
-        devEmail,
-        devBtn,
-        h("p", { class: "xs faint mt-3", text: "The dev bypass signs you in by email without Google; it is rejected outside the dev profile." }))));
+        form,
+        h("p", { class: "xs faint mt-3", text: "New here? Register creates a local account (min 8-character password). No email verification — this is a single local instance." }))));
   }
 
   function showShell() {
