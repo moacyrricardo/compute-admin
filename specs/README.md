@@ -32,8 +32,14 @@ merges and renames it).
 | 017 | Transaction-boundary strategy | ⚪ todo | **concern** (exploratory, options open) — `TransactionTemplate` (A, as-built) vs bean-refactor (B) vs `@Async`+future (C) for "I/O outside tx, persist in a short tx" |
 | 018 | Machine tags: filtering & auto-tagging | ✅ done | filter machines by tag; auto-tag from login-user + OS/cloud probe |
 | 019 | Event-driven connectivity status | ✅ done | `MachineReached` event + async listener updates status (fixes stale UNREACHABLE pill); manual test-connection |
+| 020 | Machine monitoring | 🟢 graduated | **umbrella concern of record** — resolved into specs 021–026 (build order below); keeps the problem framing + the Q1/Q2 decisions |
+| 021 | Discovery idempotency | ⚪ todo | resolves **H2** — re-discovery reconciles by `(machine, type, name)` instead of duplicating; refresh DRAFT/PENDING proposals in place, surface a diff on APPROVED-differs; uniqueness guard. **Monitoring prerequisite (build first)** |
+| 022 | Monitoring foundations | ⚪ todo | the decisions spec — `RecipeType.MONITOR` (display-only, gate unchanged); `appName`(+`runtime`) label convention + double-detection link; `APP_PORT_LIST` param + **fan-out run mode** (S4-safe: fixed template per item, never a shell loop); run-row pruning (extends 013 eviction) |
+| 023 | `monitor machine` recipe | ⚪ todo | universal read-only host vitals — cpu (`top -bn1`), ram+swap (`free -m`), disk (`df -h`); auto-proposed on every reachable box; no app param (→ host panel) |
+| 024 | Monitor UI dashboard | ⚪ todo | enumerates `MONITOR` actions → host panel + per-app cards (framework badge, UP/DOWN pill, run-chip row) + detail drawer (Runtime block, related actions runnable inline, gate-safe); client-side poll single/5s/30s/1m/5m; theme-aware, textContent-only (012) |
+| 025 | App-monitor recipes | ⚪ todo | `springboot`(actuator + process supplement)/`fastapi`(process + optional `/openapi.json`·`/metrics`)/`generic`(process-only) — discovery-routed via `ss -ltnp`→PID→cmdline classifier, pre-filled `(app-name,port)`, container name recovered from `/proc/<pid>/cgroup`; login-user only (S5) |
+| 026 | App-ops recipes | ⚪ todo | `appName`+`opKind` label **facade** over existing runtime recipes (docker/systemd/custom) — NOT a new recipe class; optional `SystemdDiscoverer`; bounded `tail-logs` fits today, **follow mode (`-f`) blocked on a new run-cancellation engine addition** (spec'd here); redeploy stays `CUSTOM`/blueprint |
 | 027 | Signal-driven machine unreachability | ⚪ todo | **concern** — the going-**OFFLINE**/UNREACHABLE counterpart to 019's instant going-**ONLINE** event: flip faster than the 5-min cron **without flapping** (leaning: a connect-failure triggers an immediate authoritative confirmation probe, not a direct flip). Builds on 019 (PR #30) |
-| 020 | Machine monitoring | ⚪ todo | **concern** — monitor UI (client-side poll: single/5s/30s/1min/5min) that enumerates monitor-classified actions; `monitor machine` (cpu/ram+swap/disk) + app-monitor family: `springboot`(actuator)/`fastapi`(process+openapi)/`generic`(process) routed by discovery per app-name+port; approved once (no per-run approval) |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
@@ -49,6 +55,18 @@ The spine is a hard dependency chain. The fan-out specs depend only on 004/003/0
 (not each other), so they build in parallel. 008 needs 005/006/011. 012 renders the
 backend, so it builds after it.
 
+**Monitoring + app-ops (specs 021–026, graduating concern 020):**
+
+```
+021 idempotency → 022 foundations → 023 monitor-machine · 024 UI → 025 app-monitors → 026 app-ops
+```
+
+021 is the hard prerequisite (else monitoring shows duplicate app cards). 022 pins
+the shared model (classification, the `appName` label convention, the fan-out
+`APP_PORT_LIST` run mode, run-row pruning). 023 (host vitals) and 024 (dashboard,
+needs ≥1 monitor recipe) then go together; 025 (app-monitor family) and 026 (app-ops
+facade, mutating, adds run-cancellation for follow-mode logs) build on 022.
+
 ## Deferred hardening backlog
 
 Findings raised by spec-eval during the builds, deliberately deferred (not
@@ -59,7 +77,7 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 | # | Finding | From | Priority |
 |---|---------|------|----------|
 | H1 | `RunOutputHub` never evicts run channels (unbounded memory) and holds the per-channel lock during SSE network I/O (a slow client stalls the SSH thread) — add eviction/TTL + release the lock around I/O | 005 | high |
-| H2 | Re-running discovery isn't idempotent (duplicate recipes) — define dedup/replace/merge semantics | 006 | medium |
+| ~~H2~~ | ~~Re-running discovery isn't idempotent (duplicate recipes)~~ — **promoted to spec 021** (reconcile by `(machine, type, name)`; refresh unapproved proposals in place, diff APPROVED-differs, uniqueness guard) | 006 | medium |
 | H3 | `DiscoveryService.discover` runs SSH probes inside the DB transaction — probe outside the persistence tx | 006 | medium |
 | H4 | `DatabaseDiscoverer` backup filename is fixed per engine (overwrites across DBs / repeated runs) — template from the `db` param | 006 | low |
 | H5 | Custom-script **content-pinning**: hash the script at approval, verify before each run (path-not-contents trust; escalation risk with sudo) — **promoted to spec 015** | 007 | medium |
@@ -70,7 +88,8 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 their shared root cause (holding a resource across network I/O); ✅ **shipped on
 `main`**. **H5 → spec 015** (custom-script content-pinning, ⚪ todo) — a *security*
 spec beside the ARCH S-register (posture, not robustness); resolves H5 and hardens
-S5. **H2 / H4 / H7** remain backlog.
+S5. **H2 → spec 021** (discovery idempotency, ⚪ todo) — the monitoring
+prerequisite. **H4 / H7** remain backlog.
 
 **Post-v1 follow-ups (authored, awaiting build):** **015** (content-pinning, the
 one live TOCTOU hole) and **016** (graceful shutdown + orphaned-run reconciliation,
