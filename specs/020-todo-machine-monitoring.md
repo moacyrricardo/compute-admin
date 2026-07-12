@@ -30,14 +30,29 @@ the **browser**, not the server.
   - **CPU usage** — `top -bn1` / `/proc/stat` / `uptime` load,
   - **RAM + swap usage** — `free -m` (or parse `/proc/meminfo`; both mem and swap),
   - **disk usage** — `df -h`.
-- **App-monitoring recipes (a family; first one: `springboot monitor`).** For apps
-  running on the box. `springboot monitor` is parameterised by **(app-name, port) pairs**
-  — a machine can run **several** Spring Boot apps, so the recipe takes a repeatable
-  `(app-name, port)` so each app is labelled and probed. Each app's read uses Spring
-  Boot's **actuator endpoints** — `/actuator/health` plus others (`/info`, `/metrics`,
-  e.g. `jvm.memory.used`, `http.server.requests`) — to build the per-app monitor view.
-  Other app types (nginx status, a database ping, …) become sibling app-monitor recipes
-  later.
+- **App-monitoring recipes (a family).** Sibling recipes per app framework, all sharing
+  the fan-out `(app-name, port)` model (Q2) and the monitor UI, differing in **how they
+  probe**. Two strategies compose:
+  - **Endpoint probe** — HTTP GET a health/metrics path per app. Reliable where a framework
+    has a standard observability contract; the mainstay of **`springboot monitor`**
+    (actuator `/actuator/health`, `/beans`, `/metrics` — e.g. `jvm.memory.used`,
+    `http.server.requests`).
+  - **Process probe** — resolve the app's listening port → PID (`ss -ltnp`) → read OS-level
+    stats from `/proc/<pid>/` (RSS memory `VmRSS`, CPU from `stat`, thread/fd counts,
+    uptime). **Framework-agnostic** — works even when the app exposes nothing; the baseline
+    fallback (and useful for Spring Boot too).
+  - **`springboot monitor`** — endpoint-probe first (actuator), process-probe as a
+    supplement.
+  - **`fastapi monitor` (planned sibling).** FastAPI has **no Actuator equivalent** — no
+    built-in health or metrics endpoints. Its only guaranteed built-in is **`/openapi.json`**
+    (+ `/docs`): a good *liveness / "is this FastAPI"* signal, not health/metrics. Health is
+    an ad-hoc developer route; metrics exist only if the app added Prometheus
+    (`/metrics`). So `fastapi monitor` leans on the **process probe** for real resource
+    usage, plus **optional, configurable endpoint probes**: a health-path param
+    (default `/openapi.json`) and an optional `/metrics` scrape when present. *Note:*
+    gunicorn/uvicorn run several worker PIDs per app — the process probe aggregates across
+    workers.
+  - Other app types (nginx status, a DB ping, …) are further siblings later.
 - **Auto-discovered (reuses the spec-006 `RecipeDiscoverer` port).** Discovery proposes
   these like any other recipe (as `PENDING_APPROVAL`, never auto-run):
   - `monitor machine` — universal, proposed on **every** reachable box.
@@ -97,14 +112,14 @@ for zero benefit, since one approval already unlocks unlimited (including polled
    maybe secured) vs a plain port-open/process check. Configurable per action?
 4. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
    `springboot monitor` outputs are laid out (gauges? raw text? parsed values?).
-5. **JVM/port detection method & privileges (for the `springboot monitor` proposal).**
-   `ss -ltnp` shows the **PID/cmdline of a socket's owner only with sufficient privilege** —
-   an unprivileged login user sees its *own* listeners' PIDs but not other users' (S5). So
-   auto-detection may miss JVMs run by other users unless the probe can `sudo`. Decide:
-   probe as the login user only (miss cross-user apps, note the gap), or allow an optional
-   `sudo -n` read for detection. Also: which signal names the app — jar name vs
-   `-Dspring.application.name` vs the actuator `/info` — and how confident must we be it's
-   Spring Boot before proposing?
+5. **App/port detection & process-probe privileges.** `ss -ltnp` shows the **PID/cmdline of
+   a socket's owner only with sufficient privilege** — an unprivileged login user sees its
+   *own* listeners' PIDs but not other users' (S5) — and the **process probe** reading
+   `/proc/<pid>/` of another user's process hits the **same limit**. So both auto-detection
+   and process-metric reads may miss apps run by other users unless the probe can `sudo`.
+   Decide: probe as the login user only (miss cross-user apps, note the gap) vs an optional
+   `sudo -n` read. Also: which signal names a Spring Boot app (jar name vs
+   `-Dspring.application.name` vs actuator `/info`) and how confident before proposing?
 
 ## Leaning (to confirm)
 
