@@ -19,12 +19,13 @@ merges and renames it).
 | 011 | User accounts, authentication & ownership | ✅ done | on `main` |
 | 003 | Machine registry, tagging, app keypair & SSH adapter | ✅ done | on `main` |
 | 004 | Recipe & Action model, approval gate & audit | ✅ done | on `main` — the security core |
-| 005 | Execution engine (async jobs + live streaming) | 🔵 in review | PR #10 |
-| 006 | Recipe auto-discovery | 🔵 in review | PR #12 |
-| 007 | Custom-command recipes | 🔵 in review | PR #11 |
-| 010 | Recipe blueprints (author once, instantiate per-machine) | 🔵 in review | PR #13 |
-| 008 | MCP write & run tools | ⚪ todo | converges the fan-out; **must** solve MCP actor-propagation (see below) |
-| 012 | Web UI shell, design system & the approval screen | ⚪ todo | spec in review PR #9; builds after the backend it renders |
+| 005 | Execution engine (async jobs + live streaming) | ✅ done | on `main` |
+| 006 | Recipe auto-discovery | ✅ done | on `main` |
+| 007 | Custom-command recipes | ✅ done | on `main` — groups multiple custom actions per recipe |
+| 010 | Recipe blueprints (author once, instantiate per-machine) | ✅ done | on `main` |
+| 008 | MCP write & run tools | ✅ done | on `main` — MCP actor-propagation resolved |
+| 012 | Web UI shell, design system & the approval screen | ✅ done | on `main` — live-integrated |
+| 013 | Runtime resource hygiene (H1/H3/H6) | ⚪ todo | streaming eviction, tx scoping, SSH pooling |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
@@ -57,8 +58,13 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 | H6 | `ConnectivityCheckJob` probes the whole fleet inside one `@Transactional`; `MinaSshExecutor` builds a fresh SSH client per `exec()` — move to bounded concurrency + a pooled client | 003 | medium |
 | H7 | `ActionSnapshot` canonical serialization uses unescaped delimiters (theoretical hash-collision surface; currently moot) | 004 | low |
 
-**Not a backlog spec — a must-do inside 008:** MCP actor-propagation. `ScopedValue`
-is thread-confined and the MCP SDK dispatches tool handlers off the request thread,
-so `CurrentUser.require()` inside a tool will throw unless 008 captures the context
-on the request thread and re-binds it around the handler (with a test asserting the
-user is bound inside a `run_action` call).
+**Promoted:** **H1 + H3 + H6 → spec 013** (runtime resource hygiene) — grouped by
+their shared root cause (holding a resource across network I/O). **H5** →
+a future *security* spec beside the ARCH S-register (it's posture, not robustness).
+**H2 / H4 / H7** remain backlog.
+
+**Resolved (shipped in 008):** MCP actor-propagation. `ScopedValue` is
+thread-confined and the MCP SDK dispatches tool handlers off the request thread, so
+`CurrentUser.require()` inside a tool would throw — 008 fixed it with
+`immediateExecution(true)` (tools run on the token-bound request thread) plus a test
+asserting the user resolves inside a tool call.
