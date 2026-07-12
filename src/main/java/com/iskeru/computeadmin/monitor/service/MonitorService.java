@@ -6,8 +6,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
+import com.iskeru.computeadmin.recipe.model.ApprovalState;
 import com.iskeru.computeadmin.recipe.model.Recipe;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
+import com.iskeru.computeadmin.recipe.service.ParamBinder;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import org.springframework.stereotype.Service;
 
@@ -37,8 +39,18 @@ import java.util.List;
 @Service
 public class MonitorService {
 
-    /** One machine and the {@code MONITOR} recipes (with their actions) it carries. */
-    public record MachineMonitors(Machine machine, List<MonitorRecipe> recipes) {
+    /**
+     * One machine and the {@code MONITOR} recipes (with their actions) it carries, plus
+     * its <strong>app-ops actions</strong> ({@code appOps}, spec-026): the APPROVED
+     * actions of <em>any</em> recipe type that declare the reserved scalar {@code app-name}
+     * param. The dashboard correlates each to an app card by the app-name the action
+     * targets, so ops (restart/tail-logs/redeploy) and monitors share one key.
+     */
+    public record MachineMonitors(Machine machine, List<MonitorRecipe> recipes, List<OpsAction> appOps) {
+    }
+
+    /** One app-ops action paired with its recipe (spec-026). */
+    public record OpsAction(Recipe recipe, Action action) {
     }
 
     /**
@@ -73,14 +85,24 @@ public class MonitorService {
         List<MachineMonitors> out = new ArrayList<>();
         for (Machine machine : machineService.list(null)) {
             List<MonitorRecipe> recipes = new ArrayList<>();
+            List<OpsAction> appOps = new ArrayList<>();
             for (Recipe recipe : recipeService.listForMachine(machine.getId())) {
-                if (recipe.getType() != RecipeType.MONITOR) {
-                    continue;
+                List<Action> actions = recipeService.listActions(recipe.getId());
+                if (recipe.getType() == RecipeType.MONITOR) {
+                    recipes.add(new MonitorRecipe(recipe, actions,
+                            parseAppPortList(recipe.getAppPortList())));
                 }
-                recipes.add(new MonitorRecipe(recipe, recipeService.listActions(recipe.getId()),
-                        parseAppPortList(recipe.getAppPortList())));
+                // App-ops correlation (spec-026): any APPROVED action carrying the reserved
+                // scalar `app-name` param is an ops action, regardless of recipe type. Only
+                // approved ops surface — the facade never shows a runnable it would refuse.
+                for (Action action : actions) {
+                    if (action.getApprovalState() == ApprovalState.APPROVED
+                            && ParamBinder.hasReservedAppNameParam(action)) {
+                        appOps.add(new OpsAction(recipe, action));
+                    }
+                }
             }
-            out.add(new MachineMonitors(machine, recipes));
+            out.add(new MachineMonitors(machine, recipes, appOps));
         }
         return out;
     }
