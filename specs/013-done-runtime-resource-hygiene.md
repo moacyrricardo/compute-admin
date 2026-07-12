@@ -1,5 +1,28 @@
 # 013 — Runtime resource hygiene (streaming eviction, transaction scoping, SSH pooling)
 
+> **Status: done.** Branch `moacyrricardo/spec-013-runtime-resource-hygiene`
+> (Linear blocked for this repo, so no issue id). Implemented as specified across
+> `run` / `discovery` / `machine` / `ssh`. Deltas from the spec:
+> - **H1 delivery executor** is a cached daemon thread pool (threads exist only
+>   while a subscriber is actively draining, so there is no parked thread per SSE
+>   connection) with a `@PreDestroy` shutdown; backpressure is enforced per drain
+>   pass, so a burst that outruns delivery drops even a willing subscriber — the
+>   bounded-buffer-then-disconnect policy the spec chose.
+> - **H6 `MinaSshExecutor`** starts its single shared `SshClient` **lazily on first
+>   use** (still once, verifier set once before `start()`), not eagerly in the
+>   constructor — so a deployment (or test) that never issues an SSH command starts
+>   no MINA IO threads. An `@Autowired` marks the production constructor since a
+>   second package-private client-factory seam constructor now exists.
+> - The **`SshClient`-reused-once** assertion lives in `MinaSshExecutorTest` (its
+>   natural home, a pure Mockito unit test) rather than `ConnectivityCheckJobTest`,
+>   which drives the job through a fake `SshExecutor`; `ConnectivityCheckJobTest`
+>   carries `slowProbe_DoesNotBlockOthers`.
+> - Test-isolation: the `NOT_SUPPORTED` probe test in `DiscoveryServiceTest` commits
+>   into the shared in-memory DB (including the `@BeforeEach` `alice`), so it
+>   registers under a unique owner and deletes every committed row (owner, machine,
+>   recipes, actions, and `alice`) in a `finally`; `ConnectivityCheckJobTest`'s slow
+>   test likewise cleans up its committed machines + owner.
+
 ## Context
 
 During the 003/005/006 builds, spec-eval flagged three related runtime-robustness
