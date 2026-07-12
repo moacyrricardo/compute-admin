@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
+import com.iskeru.computeadmin.machine.event.MachineReachedEvent;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
@@ -20,6 +21,7 @@ import com.iskeru.computeadmin.ssh.OutputSink;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import com.iskeru.computeadmin.ssh.SshTarget;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -72,10 +74,12 @@ public class RunService {
     private final RunOutputHub hub;
     private final TaskExecutor runExecutor;
     private final ObjectMapper json;
+    private final ApplicationEventPublisher events;
 
     public RunService(RunRepository runs, MachineService machineService, ActionService actionService,
                       ParamBinder paramBinder, SshExecutor ssh, RunOutputHub hub,
-                      @Qualifier("runExecutor") TaskExecutor runExecutor, ObjectMapper json) {
+                      @Qualifier("runExecutor") TaskExecutor runExecutor, ObjectMapper json,
+                      ApplicationEventPublisher events) {
         this.runs = runs;
         this.machineService = machineService;
         this.actionService = actionService;
@@ -84,6 +88,7 @@ public class RunService {
         this.hub = hub;
         this.runExecutor = runExecutor;
         this.json = json;
+        this.events = events;
     }
 
     /**
@@ -133,7 +138,8 @@ public class RunService {
         Run saved = runs.save(run);
 
         String runId = saved.getId();
-        submitAfterCommit(() -> execute(runId, target, argv));
+        String reachedMachineId = machine.getId();
+        submitAfterCommit(() -> execute(runId, reachedMachineId, target, argv));
         return saved;
     }
 
@@ -204,7 +210,7 @@ public class RunService {
 
     // --- async execution (runs on the runExecutor pool, no bound CurrentUser) ------
 
-    private void execute(String runId, SshTarget target, List<String> argv) {
+    private void execute(String runId, String machineId, SshTarget target, List<String> argv) {
         markRunning(runId);
         StringBuilder out = new StringBuilder();
         StringBuilder err = new StringBuilder();
@@ -230,6 +236,11 @@ public class RunService {
         try {
             // sudo is already baked into argv by the binder, so pass sudo=false here.
             ssh.execStreaming(target, argv, false, sink);
+            // The SSH channel executed (whatever the command's exit code): the box is
+            // reachable, so announce it. A listener refreshes the machine to ONLINE
+            // asynchronously (via = SYSTEM); a connection failure throws below and
+            // publishes nothing. spec-019.
+            events.publishEvent(new MachineReachedEvent(machineId, Instant.now()));
         } catch (RuntimeException e) {
             String captured = err.length() == 0 ? String.valueOf(e.getMessage()) : err.toString();
             finish(runId, out.toString(), captured, -1);

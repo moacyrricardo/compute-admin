@@ -114,7 +114,8 @@ class ConnectivityCheckJobTest {
 
         try {
             ConnectivityCheckJob job = new ConnectivityCheckJob(
-                    machines, new DelayingSshExecutor(slowHost, delayMillis), transactionManager, 8);
+                    machines, new DelayingSshExecutor(slowHost, delayMillis), transactionManager,
+                    event -> { }, 8);
             long startNanos = System.nanoTime();
             CurrentUser.runWhere(AuthContext.system(), () -> {
                 job.checkAll();
@@ -134,7 +135,7 @@ class ConnectivityCheckJobTest {
 
     /** Runs one connectivity cycle system-scoped; the job owns its per-machine transactions. */
     private void runJob(SshExecutor ssh) {
-        ConnectivityCheckJob job = new ConnectivityCheckJob(machines, ssh, transactionManager, 4);
+        ConnectivityCheckJob job = new ConnectivityCheckJob(machines, ssh, transactionManager, event -> { }, 4);
         CurrentUser.runWhere(AuthContext.system(), () -> {
             job.checkAll();
             return null;

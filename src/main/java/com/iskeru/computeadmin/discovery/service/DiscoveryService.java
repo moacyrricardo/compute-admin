@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery.service;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.machine.event.MachineReachedEvent;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
@@ -13,10 +14,12 @@ import com.iskeru.computeadmin.recipe.service.ApprovalService;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
 import com.iskeru.computeadmin.ssh.SshExecutor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,11 +54,13 @@ public class DiscoveryService {
     private final SshExecutor ssh;
     private final List<RecipeDiscoverer> discoverers;
     private final TransactionTemplate tx;
+    private final ApplicationEventPublisher events;
 
     public DiscoveryService(MachineService machineService, RecipeService recipeService,
                             ActionService actionService, ApprovalService approvalService,
                             SshExecutor ssh, List<RecipeDiscoverer> discoverers,
-                            PlatformTransactionManager transactionManager) {
+                            PlatformTransactionManager transactionManager,
+                            ApplicationEventPublisher events) {
         this.machineService = machineService;
         this.recipeService = recipeService;
         this.actionService = actionService;
@@ -63,6 +68,7 @@ public class DiscoveryService {
         this.ssh = ssh;
         this.discoverers = discoverers;
         this.tx = new TransactionTemplate(transactionManager);
+        this.events = events;
     }
 
     /**
@@ -91,6 +97,10 @@ public class DiscoveryService {
         for (RecipeDiscoverer discoverer : discoverers) {
             proposals.addAll(discoverer.discover(machine, ssh));
         }
+        // The probe phase connected over SSH — the box is reachable, so announce it;
+        // a listener refreshes the machine to ONLINE asynchronously (via = SYSTEM).
+        // spec-019.
+        events.publishEvent(new MachineReachedEvent(machineId, Instant.now()));
         // Persist phase — one short transaction.
         return tx.execute(status -> persist(machineId, proposals));
     }
