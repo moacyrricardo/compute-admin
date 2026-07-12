@@ -1,5 +1,9 @@
 # 019 — Event-driven machine connectivity status
 
+> **Status: done.** Branch `moacyrricardo/spec-019-event-driven-connectivity-status`.
+> Linear is blocked for this repo, so there is no issue identifier. See
+> "Implementation outcome" at the end for how the build differed from this spec.
+
 ## Context
 
 `Machine.status` is written in exactly **one** place today —
@@ -84,3 +88,45 @@ event + async listener** — the first domain event in the codebase (only Spring
 Independent to build; **spec 018** composes on top (its facts-probe/auto-tagger subscribes
 to `MachineReachedEvent`). Touches `machine` / `run` / `discovery`. A good early win — it
 directly removes the "reachable machine shows UNREACHABLE" confusion seen in live testing.
+
+## Implementation outcome
+
+Shipped as specified; the notable choices/deviations:
+
+- **Event + listener.** `machine/event/MachineReachedEvent(String machineId, Instant at)`
+  is the first domain event. `machine/event/MachineStatusUpdater` is an
+  `@Async("machineEventExecutor") @TransactionalEventListener(phase = AFTER_COMMIT,
+  fallbackExecution = true)`. `fallbackExecution = true` is load-bearing: the publish
+  sites all run with **no active transaction** (the run pool thread, the discovery
+  probe phase, the manual-test read), so the listener must still fire. `@Async` puts
+  the write on a pool thread where the `CurrentUser` `ScopedValue` is unbound → the
+  Envers revision stamps `via = SYSTEM`. The write is on its own `TransactionTemplate`
+  short transaction and **write-on-change only** (already-`ONLINE` ⇒ no revision).
+- **Dedicated single-thread pool.** Added `config/MachineEventConfig` exposing a bounded
+  (core = max = 1, `CallerRunsPolicy`, daemon) `machineEventExecutor` rather than
+  reusing the run pool — status refreshes are tiny and idempotent, and a single serial
+  worker keeps them off the run/request threads and makes the tests deterministic.
+- **`MachineUnreachableEvent` was not added.** The periodic `ConnectivityCheckJob`
+  keeps sole authority for the going-away (`ONLINE → OFFLINE/UNREACHABLE`) transition;
+  the event carries only the positive "reached" case, as the spec's fallback option
+  allowed. The job also publishes `MachineReachedEvent` on an `ONLINE` probe (for other
+  subscribers, e.g. spec 018); because it already wrote the status directly, the
+  listener's reload is a write-on-change no-op — the two never double-write.
+- **Manual test-connection lives in a dedicated `machine/service/ConnectionTestService`**
+  (not folded into `MachineService`) so `MachineService`'s constructor — and its many
+  `@DataJpaTest` slices — stay untouched. `MachineRS` gains `POST /machines/{id}/test`;
+  it is owner-scoped through `MachineService.requireMachine` (404 cross-user). The
+  endpoint returns the **freshly observed** status transiently for immediate operator
+  feedback; the durable `ONLINE` write + audit revision is the listener's job, keeping
+  a liveness signal out of the UI-attributed edit trail.
+- **UI.** `static/app.js` gets a "Test connection" button on the machine-detail screen
+  (swaps the status pill in place) and fires the probe automatically right after
+  registration, honouring the Register screen's long-promised "test the connection".
+  Text-node-safe per the spec-012 XSS discipline.
+- **Tests.** `MachineReachedEventTest` (`@SpringBootTest`) covers the stale-`UNREACHABLE`
+  → `ONLINE` flip, `via = SYSTEM` on the event-driven revision, the already-`ONLINE`
+  idempotence (no new revision), and the owner-scoped `/test` endpoint (404 cross-user +
+  status refresh); it drains the single-thread event pool with a barrier task for
+  determinism and cleans up its committed rows (`@AfterEach`). `MachineEventArchTest`
+  asserts the `machine/event` package references neither `RunService` nor
+  `ApprovalService` — the listener can never run or approve an action.
