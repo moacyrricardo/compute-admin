@@ -146,12 +146,46 @@ public class RunService {
     }
 
     /**
-     * Subscribes to a run's live output after confirming the current user owns it
-     * (a not-owned or absent id is a 404 before any streaming starts).
+     * Subscribes to a run's output after confirming the current user owns it (a
+     * not-owned or absent id is a 404 before any streaming starts).
+     *
+     * <p>A live run ({@code QUEUED}/{@code RUNNING}) attaches to the hub for the
+     * buffered prefix then the live tail. A terminal run ({@code DONE}/{@code FAILED})
+     * attaches only <em>if its channel is still retained</em>
+     * ({@link RunOutputHub#attachIfPresent}); once the channel has been evicted the
+     * subscriber is served from the persisted, append-only {@code Run} instead — which
+     * is exactly what a live replay would have produced. This avoids resurrecting an
+     * evicted channel (which would create an empty one and hang forever). spec-013.
      */
     public void subscribeToOutput(String id, RunOutputHub.Subscriber subscriber) {
-        requireRun(id);
-        hub.subscribe(id, subscriber);
+        Run run = requireRun(id);
+        if (run.getStatus() == RunStatus.DONE || run.getStatus() == RunStatus.FAILED) {
+            if (!hub.attachIfPresent(id, subscriber)) {
+                replayPersisted(run, subscriber);
+            }
+        } else {
+            hub.subscribe(id, subscriber);
+        }
+    }
+
+    /**
+     * Synthesizes a subscriber's stream from the persisted run: the recorded stdout
+     * then stderr as single chunks, the terminal {@code exit} event, and
+     * {@code onComplete}. The fallback for a terminal run whose hub channel has been
+     * evicted.
+     */
+    private void replayPersisted(Run run, RunOutputHub.Subscriber subscriber) {
+        String stdout = run.getStdout();
+        if (stdout != null && !stdout.isEmpty()) {
+            subscriber.onEvent(new RunOutputHub.OutputEvent(RunOutputHub.OutputEvent.STDOUT, stdout));
+        }
+        String stderr = run.getStderr();
+        if (stderr != null && !stderr.isEmpty()) {
+            subscriber.onEvent(new RunOutputHub.OutputEvent(RunOutputHub.OutputEvent.STDERR, stderr));
+        }
+        int exitCode = run.getExitCode() == null ? -1 : run.getExitCode();
+        subscriber.onEvent(new RunOutputHub.OutputEvent(RunOutputHub.OutputEvent.EXIT, String.valueOf(exitCode)));
+        subscriber.onComplete();
     }
 
     // --- async execution (runs on the runExecutor pool, no bound CurrentUser) ------
