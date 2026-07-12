@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.machine.api;
 
 import com.iskeru.computeadmin.auth.api.Secured;
+import com.iskeru.computeadmin.machine.service.ConnectionTestService;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
 import jakarta.ws.rs.BadRequestException;
@@ -35,9 +36,11 @@ public class MachineRS {
     private static final int DEFAULT_PORT = 22;
 
     private final MachineService machineService;
+    private final ConnectionTestService connectionTestService;
 
-    public MachineRS(MachineService machineService) {
+    public MachineRS(MachineService machineService, ConnectionTestService connectionTestService) {
         this.machineService = machineService;
+        this.connectionTestService = connectionTestService;
     }
 
     @POST
@@ -75,5 +78,17 @@ public class MachineRS {
     @Path("/{id}/tags/{name}")
     public MachineDtos.MachineView untag(@PathParam("id") String id, @PathParam("name") String name) {
         return MachineDtos.MachineView.of(machineService.untag(id, name));
+    }
+
+    /**
+     * Manual "test connection": probes one of the caller's machines over SSH now and
+     * returns it with the freshly observed status. On a reachable box it publishes a
+     * {@code MachineReachedEvent} so the durable status refreshes to {@code ONLINE}
+     * asynchronously. A not-owned or absent id is 404 (spec-019).
+     */
+    @POST
+    @Path("/{id}/test")
+    public MachineDtos.MachineView test(@PathParam("id") String id) {
+        return MachineDtos.MachineView.of(connectionTestService.test(id));
     }
 }
