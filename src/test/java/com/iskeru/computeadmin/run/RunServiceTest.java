@@ -227,6 +227,40 @@ class RunServiceTest {
     }
 
     @Test
+    void subscribeToInterruptedRun_ReplaysPersistedOutput_DoesNotHang() {
+        AppUser user = saveUser();
+        Recorder recorder = new Recorder();
+
+        asUser(user, () -> {
+            Seed seed = seedAction(true);
+            Action action = actions.findById(seed.actionId()).orElseThrow();
+            // A run the boot reconciler left INTERRUPTED: terminal, exitCode -1, with
+            // captured output but NO live hub channel (the owning process died).
+            Run run = new Run();
+            run.setAction(action);
+            run.setMachine(action.getRecipe().getMachine());
+            run.setCallerUserId(user.getId());
+            run.setVia(Via.UI);
+            run.setResolvedArgvJson("[]");
+            run.setApprovedSnapshotHash(action.getApprovedSnapshotHash());
+            run.setStatus(RunStatus.INTERRUPTED);
+            run.setExitCode(-1);
+            run.setStdout("partial\n");
+            run.setStderr("Run abandoned by a server shutdown; the remote command's actual outcome is unknown.");
+            Run saved = runs.save(run);
+
+            // INTERRUPTED is terminal, so this must replay the persisted row and
+            // complete — never create a fresh live channel that would hang forever.
+            runService.subscribeToOutput(saved.getId(), recorder);
+            return null;
+        });
+
+        await().atMost(2, TimeUnit.SECONDS).until(recorder::completed);
+        assertThat(recorder.stream(RunOutputHub.OutputEvent.STDOUT)).contains("partial");
+        assertThat(recorder.stream(RunOutputHub.OutputEvent.EXIT)).contains("-1");
+    }
+
+    @Test
     void subscribeToQueuedRun_AttachesLive() {
         AppUser user = saveUser();
         Recorder recorder = new Recorder();
