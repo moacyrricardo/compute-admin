@@ -66,20 +66,30 @@ for zero benefit, since one approval already unlocks unlimited (including polled
 
 ## Open Questions
 
-1. **Poll persistence / audit noise (the real question polling raises).** Each `run`
-   today persists a `Run` row and is audited (who/what/when/exit). Polling `monitor
-   machine` every 5s ≈ **12 Run rows/min per action** — DB growth + audit-trail noise.
-   Options: (a) accept it and lean on **run retention** (extend spec-013's output eviction
-   to also prune old `Run` rows); (b) add a lightweight **"read-now" path** for read-only
-   monitor actions that executes + returns output **without persisting a `Run`** (telemetry
-   reads then aren't audited — a deliberate trade). This — not approval — is the decision to
-   settle before build.
-2. **Repeatable composite `(app-name, port)` parameter (biggest modelling stretch).**
-   The current `ParamDef` binds a single scalar per param; `springboot monitor` wants a
-   *list of `(app-name, port)` pairs* in one action (label + probe each app). Options:
-   extend the param model to a repeatable composite; model each app as its own
-   action/instance; or run once per pair and aggregate in the UI. Touches
-   `ParamDef`/`ParamBinder` and possibly the action shape.
+1. **Poll persistence / audit noise — DECIDED for v1 (accept, with forward work).**
+   Each `run` persists an audited `Run` row; polling every 5s ≈ **12 rows/min per action**.
+   *v1 accepts this* (option a) — it's tolerable to get moving — **but it is not the end
+   state**: unbounded `Run` rows must not accumulate, so v1 at minimum extends spec-013's
+   eviction to **prune old `Run` rows** (retention). The better long-term answer is a
+   lightweight **non-persisted "read-now" path** for read-only polled reads (option b) —
+   flagged as **forward work** to design next, not built in v1.
+2. **How several apps are represented — DECISION PENDING (your pick).** `springboot monitor`
+   covers multiple `(app-name, port)` apps on one box. Note the model **already** supports
+   *multiple params per action* and *multiple actions per recipe* — the only unsupported
+   thing is a variable-length list *inside a single action*. Options:
+   - **(A) Repeatable composite param** — one action holding a list of `(name, port)`.
+     Requires templating-with-repetition + reworking `ParamBinder` and the argv / content-hash
+     / injection guarantees — the biggest change to the spec-004 gate core. Most invasive.
+   - **(B) One action per app (recommended)** — the recipe holds one action per app;
+     discovery bakes each detected `app-name`+`port` as its own action (literal tokens, or two
+     single-value params `name`+`port` — both already supported). **Zero gate-model change**,
+     clean per-app approval + audit, adding an app = a new (pre-proposed) action.
+   - **(C) Single-port action, UI fans out** — the action takes one `port` param; the
+     dashboard config holds the `(name, port)` list and invokes the action once per app,
+     labelling client-side. Minimal model change, but `app-name` lives in the UI (not the
+     action/audit) and it's more runs per poll.
+   Lean **(B)** — fits the existing model with no change to the security-critical param/gate
+   machinery. Confirm before this graduates to a spec.
 3. **Spring Boot health source:** actuator `/actuator/health` (assumes actuator exposed,
    maybe secured) vs a plain port-open/process check. Configurable per action?
 4. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
@@ -99,13 +109,15 @@ Two **read-only** recipes — **`monitor machine`** (CPU, RAM+swap, disk) and an
 family starting with **`springboot monitor`** (per `(app-name, port)`, via actuator) —
 **auto-discovered and approved once like any recipe**, surfaced on a recipe-driven UI with
 a **client-side poll setting (default single; 5s/30s/1min/5min)**, **no server-side
-time-series in v1**. The one thing worth settling before build is **Q1 (persist every poll
-vs a non-persisted read path)** — it shapes storage/audit. Everything else (composite param,
-actuator-vs-port-check, layout, detection privileges) is implementation detail. **No
+time-series in v1**. **Q1 is decided for v1** — accept per-poll `Run` rows + add run-row
+pruning; a non-persisted "read-now" path is forward work. The remaining pre-build decision
+is **Q2 — how to represent multiple apps** (lean **B**, one action per app). Everything else
+(actuator-vs-port-check, layout, detection privileges) is implementation detail. **No
 approval-invariant tension** — one approval unlocks polled runs.
 
 ## Sequencing
 
 Independent of 018/019 (benefits from tags to filter which machines to monitor). Reuses
-the spec-006 discovery port and the spec-013 run/eviction machinery. Graduates to a spec
-once **Q1 (poll persistence)** and **Q2 (composite `(app-name, port)` param)** are decided.
+the spec-006 discovery port and the spec-013 run/eviction machinery. **Q1 decided for v1**
+(accept + prune, read-now path deferred); graduates to a spec once **Q2 (how to represent
+multiple apps — lean B)** is confirmed.
