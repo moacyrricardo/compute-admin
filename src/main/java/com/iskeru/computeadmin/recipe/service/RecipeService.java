@@ -103,6 +103,21 @@ public class RecipeService {
     }
 
     /**
+     * Refreshes the discovery-pre-filled {@code (app-name, port)} list on one of the
+     * current user's app-monitor recipes (spec-025). The list is a <strong>runtime
+     * value</strong>, not part of any action's content hash (spec-022), so re-writing
+     * it never touches an approval — re-discovery reconciles the apps in place, and no
+     * probe action needs re-approving because a new app appeared. Owner-scoped through
+     * {@link #requireRecipe(String)} (a not-owned recipe is 404).
+     */
+    @Transactional
+    public Recipe refreshDiscoveredAppPortList(String recipeId, String appPortListJson) {
+        Recipe recipe = requireRecipe(recipeId);
+        recipe.setAppPortList(appPortListJson);
+        return recipes.save(recipe);
+    }
+
+    /**
      * The current user's recipe by id.
      *
      * @throws RecipeNotFoundException 404 if absent or owned by another user.
