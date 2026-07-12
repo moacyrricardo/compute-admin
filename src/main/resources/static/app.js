@@ -799,6 +799,12 @@
           });
         });
 
+        // Set the initial button state once: refresh() only runs on param input, so a
+        // no-param action (params.every(...) === true, vacuously) would otherwise stay
+        // disabled forever. A parameterised action still starts disabled (empty values
+        // fail validateParam) until the user fills it.
+        runBtn.disabled = !params.every(function (def) { return validateParam(def, values[def.name]); });
+
         return h("div", null,
           crumbs(link("#/machines", "Machines"), link("#/machines/" + p.mid, machine.host),
             link("#/machines/" + p.mid + "/recipes/" + p.rid + "/actions/" + p.aid, action.name),
@@ -813,7 +819,7 @@
             ? h("div", { class: "card" }, h("h2", { text: "Parameters" }), fields)
             : h("div", { class: "card" }, h("p", { class: "small dim", text: "This action takes no parameters." })),
           h("div", { class: "row mt-4" }, runBtn,
-            h("span", { class: "small dim", text: "Disabled until every parameter is valid." })));
+            h("span", { class: "small dim", text: params.length ? "Disabled until every parameter is valid." : "No parameters — ready to run." })));
       });
     });
   }
