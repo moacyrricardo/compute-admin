@@ -1,8 +1,10 @@
 # 016 — Graceful shutdown & run reconciliation
 
-> **Status: todo.** Linear is blocked for this repo, so this spec carries no issue
-> id; it will be built and committed under `spec-016` subjects. Touches `config`,
-> `run`, `ssh`, and app configuration — all merged on `main`.
+> **Status: done.** Branch
+> `moacyrricardo/spec-016-graceful-shutdown-and-run-reconciliation`. Linear is
+> blocked for this repo, so this spec carries no issue id; built and committed under
+> `spec-016` subjects. Touches `config`, `run`, `ssh`, and app configuration — all
+> merged on `main`.
 
 ## Context
 
@@ -302,6 +304,47 @@ the `run` module and naturally later than the SSH client, but verify at build ti
   window, or `INTERRUPTED` after boot) — the end-to-end proof that no row stays
   non-terminal.
 
+## Implementation notes
+
+Option A shipped as specified, across three commits.
+
+- **Graceful HTTP shutdown** (`application.yml`): `server.shutdown: graceful` +
+  `spring.lifecycle.timeout-per-shutdown-phase: 25s`. The `test` profile already
+  tightened the phase to 1s; it also now sets `ca.run.shutdown-await-seconds: 1` so a
+  cached context never waits the 20s production default on a stray in-flight run.
+- **Run pool drain** (`config/AsyncConfig.java`): `setWaitForTasksToCompleteOnShutdown(true)`
+  + `setAwaitTerminationSeconds(ca.run.shutdown-await-seconds, default 20)`, threads
+  kept daemon. **Delta from the spec's single-`@DependsOn` sketch:** the SSH port bean
+  name differs by profile (`minaSshExecutor` vs `localDevSshExecutor`) and
+  `@DependsOn` is static, so the pool is declared as two mutually-exclusive
+  `@Profile` `@Bean` methods (same `runExecutor` name), each `@DependsOn` the bean
+  actually present in its profile. This is the spec's "make the dependency
+  profile-aware" guard, realised concretely.
+- **Boot reconciler** (`run/service/RunReconciler.java`): `@EventListener(ApplicationReadyEvent)`
+  sweeps `findByStatusIn([QUEUED, RUNNING])` and marks each `INTERRUPTED`,
+  `finishedAt = now`, `exitCode = -1`, sentinel appended to stderr; logs the count;
+  runs under `AuthContext.system()`. **Delta:** to avoid a `@Transactional`
+  self-invocation bypass, the transactional boundary is on the event-listener method
+  (`onApplicationReady`, called through the proxy by the event multicaster) and on a
+  separate `reconcile()` entry point used by tests; both delegate to a private
+  `reconcileInternal()`.
+- **`RunStatus.INTERRUPTED`**: added with no migration (confirmed
+  `@Enumerated(STRING)` → `VARCHAR(20)`, no CHECK in `V5__run.sql`).
+- **Terminal predicate** (`run/service/RunService.java`): `subscribeToOutput` now
+  routes `DONE`/`FAILED`/`INTERRUPTED` through the persisted-replay path via a shared
+  `isTerminal(...)` helper.
+- **Delivery pool bound** (`run/service/RunOutputHub.java`): fixed pool sized by
+  `ca.run.output-delivery-threads` (default 8), daemon factory + `@PreDestroy`
+  retained.
+- **UI** (`app.js`, `tokens.css`): `INTERRUPTED → bad` chip.
+- **Tests**: `RunReconcilerTest` (QUEUED+RUNNING → INTERRUPTED, DONE/FAILED
+  untouched, no-orphans → 0), `RunServiceTest.subscribeToInterruptedRun_...` (replays
+  + completes, no hang), `AsyncConfigTest` (drain flags wired from the `ca.run.*`
+  key). Clean verify: 152 run, 0 failures, 0 errors; `GateArchTest` green (approval
+  stays UI-only). The best-effort drain **integration** check from the spec's test
+  list was **not** added — it is inherently timing-dependent/flaky, and the reconciler
+  is the load-bearing guarantee already proven directly; deferred to Known gaps.
+
 ## Known gaps
 
 - **S7 (run rate-limiting / per-machine concurrency cap / global quota)** stays
@@ -320,3 +363,7 @@ the `run` module and naturally later than the SSH client, but verify at build ti
 - The bounded drain is **best-effort**: a run exceeding `ca.run.shutdown-await-seconds`
   is still abandoned and left to the reconciler — by design, so shutdown never
   hangs.
+- The **best-effort drain integration check** ("submit a slow run, close the context,
+  assert it reached a terminal state") was **not** implemented: it is timing-dependent
+  and flaky, and the correctness guarantee it targets (no permanently non-terminal
+  row) is already proven directly by `RunReconcilerTest`. Left as a deferred item.
