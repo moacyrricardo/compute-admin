@@ -38,4 +38,15 @@ public final class Proposals {
     public static ParamDefInput intRange(String name, int min, int max) {
         return new ParamDefInput(name, ParamKind.INT_RANGE, null, min, max, null);
     }
+
+    /**
+     * The repeatable {@code (app-name, port)} composite an app-monitor probe action
+     * fans out over (spec-022/025). No per-instance config: the app-name charset and
+     * port range are fixed constants on {@code ParamBinder}, so the kind alone carries
+     * the meaning. A probe template references it by its {@code app-name}/{@code port}
+     * components, never by this name.
+     */
+    public static ParamDefInput appPortList(String name) {
+        return new ParamDefInput(name, ParamKind.APP_PORT_LIST, null, null, null, null);
+    }
 }
