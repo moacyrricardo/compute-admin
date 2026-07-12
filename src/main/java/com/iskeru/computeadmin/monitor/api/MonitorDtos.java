@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.monitor.api;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.model.MachineStatus;
 import com.iskeru.computeadmin.machine.model.Tag;
+import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ArgTokenView;
@@ -77,7 +78,8 @@ public final class MonitorDtos {
             List<MonitorActionView> app = new ArrayList<>();
             for (MonitorRecipe r : m.recipes()) {
                 for (Action action : r.actions()) {
-                    MonitorActionView view = MonitorActionView.of(action, r.recipe(), machine.getId());
+                    MonitorActionView view = MonitorActionView.of(
+                            action, r.recipe(), machine.getId(), r.appPortList());
                     (view.hasAppParam() ? app : host).add(view);
                 }
             }
@@ -98,8 +100,10 @@ public final class MonitorDtos {
                                     RecipeType recipeType, String name, String description, boolean sudo,
                                     ApprovalState approvalState, boolean changedSinceApproval,
                                     boolean hasAppParam, String appName,
-                                    List<ArgTokenView> argTokens, List<ParamDefView> paramDefs) {
-        public static MonitorActionView of(Action action, Recipe recipe, String machineId) {
+                                    List<ArgTokenView> argTokens, List<ParamDefView> paramDefs,
+                                    List<AppPortView> appPortList) {
+        public static MonitorActionView of(Action action, Recipe recipe, String machineId,
+                                           List<AppPort> appPortList) {
             boolean hasAppParam = false;
             List<ParamDefView> defs = new ArrayList<>();
             for (ParamDef def : action.getParamDefs()) {
@@ -114,9 +118,29 @@ public final class MonitorDtos {
             }
             boolean changedSinceApproval = action.getApprovalState() == ApprovalState.APPROVED
                     && !ActionSnapshot.hash(action).equals(action.getApprovedSnapshotHash());
+            // A fan-out probe action carries the recipe's pre-filled apps (spec-025) so
+            // the dashboard groups per-app cards and knows which ports to poll; a host
+            // action (no APP_PORT_LIST) gets an empty list.
+            List<AppPortView> apps = new ArrayList<>();
+            if (hasAppParam) {
+                for (AppPort item : appPortList) {
+                    apps.add(AppPortView.of(item));
+                }
+            }
             return new MonitorActionView(action.getId(), machineId, recipe.getId(), recipe.getName(),
                     recipe.getType(), action.getName(), action.getDescription(), action.isSudo(),
-                    action.getApprovalState(), changedSinceApproval, hasAppParam, null, tokens, defs);
+                    action.getApprovalState(), changedSinceApproval, hasAppParam, null, tokens, defs, apps);
+        }
+    }
+
+    /**
+     * One discovery-pre-filled {@code (app-name, port)} item a fan-out probe action
+     * runs over (spec-025), with the optional {@code runtime} label (spec-022) the UI
+     * uses for the docker/systemd/process affordance and the double-detection link.
+     */
+    public record AppPortView(String appName, int port, String runtime) {
+        public static AppPortView of(AppPort item) {
+            return new AppPortView(item.appName(), item.port(), item.runtime());
         }
     }
 }

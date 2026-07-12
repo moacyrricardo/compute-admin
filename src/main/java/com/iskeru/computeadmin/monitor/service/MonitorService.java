@@ -1,5 +1,8 @@
 package com.iskeru.computeadmin.monitor.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
@@ -38,16 +41,27 @@ public class MonitorService {
     public record MachineMonitors(Machine machine, List<MonitorRecipe> recipes) {
     }
 
-    /** A {@code MONITOR}-typed recipe paired with its (already-loaded) actions. */
-    public record MonitorRecipe(Recipe recipe, List<Action> actions) {
+    /**
+     * A {@code MONITOR}-typed recipe paired with its (already-loaded) actions and its
+     * discovery-pre-filled {@code (app-name, port)} list (spec-025) — the apps every
+     * probe action in the recipe fans out over. Empty for host-vitals (spec-023) and
+     * any recipe whose {@code appPortList} is unset.
+     */
+    public record MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList) {
+    }
+
+    /** One pre-filled app the dashboard shows/edits and the poller probes (spec-022/025). */
+    public record AppPort(String appName, int port, String runtime) {
     }
 
     private final MachineService machineService;
     private final RecipeService recipeService;
+    private final ObjectMapper json;
 
-    public MonitorService(MachineService machineService, RecipeService recipeService) {
+    public MonitorService(MachineService machineService, RecipeService recipeService, ObjectMapper json) {
         this.machineService = machineService;
         this.recipeService = recipeService;
+        this.json = json;
     }
 
     /**
@@ -63,10 +77,41 @@ public class MonitorService {
                 if (recipe.getType() != RecipeType.MONITOR) {
                     continue;
                 }
-                recipes.add(new MonitorRecipe(recipe, recipeService.listActions(recipe.getId())));
+                recipes.add(new MonitorRecipe(recipe, recipeService.listActions(recipe.getId()),
+                        parseAppPortList(recipe.getAppPortList())));
             }
             out.add(new MachineMonitors(machine, recipes));
         }
         return out;
+    }
+
+    /**
+     * Parses a recipe's stored {@code appPortList} JSON ({@code [{"appName","port",
+     * "runtime"}]}, spec-025) into structured items for the dashboard. Tolerant: a
+     * null/blank/malformed value yields an empty list (the recipe simply has no
+     * pre-filled apps yet) rather than failing the whole read.
+     */
+    private List<AppPort> parseAppPortList(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return List.of();
+        }
+        List<AppPort> items = new ArrayList<>();
+        try {
+            JsonNode root = json.readTree(rawJson);
+            if (root.isArray()) {
+                for (JsonNode node : root) {
+                    JsonNode appName = node.get("appName");
+                    JsonNode port = node.get("port");
+                    JsonNode runtime = node.get("runtime");
+                    if (appName != null && port != null) {
+                        items.add(new AppPort(appName.asText(), port.asInt(),
+                                runtime == null || runtime.isNull() ? null : runtime.asText()));
+                    }
+                }
+            }
+        } catch (JsonProcessingException e) {
+            return List.of();
+        }
+        return items;
     }
 }
