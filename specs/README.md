@@ -30,6 +30,9 @@ merges and renames it).
 | 015 | Custom-script content-pinning | ⚪ todo | security: hash-at-approval + re-hash-at-run; resolves **H5**, hardens S5 |
 | 016 | Graceful shutdown & run reconciliation | ✅ done | drain in-flight runs + boot reconciler for orphaned QUEUED/RUNNING rows; neighbor to S7 (out of scope) |
 | 017 | Transaction-boundary strategy | ⚪ todo | **concern** (exploratory, options open) — `TransactionTemplate` (A, as-built) vs bean-refactor (B) vs `@Async`+future (C) for "I/O outside tx, persist in a short tx" |
+| 018 | Machine tags: filtering & auto-tagging | ⚪ todo | filter machines by tag; auto-tag from login-user + OS/cloud probe |
+| 019 | Event-driven connectivity status | ⚪ todo | `MachineReached` event + async listener updates status (fixes stale UNREACHABLE pill); manual test-connection |
+| 020 | Machine monitoring | ⚪ todo | **concern** — on-demand read-only monitor recipe (memory/CPU/disk) vs continuous polling+alerts; read-only-gate question |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
