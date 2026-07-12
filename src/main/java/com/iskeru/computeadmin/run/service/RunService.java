@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.run.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
@@ -9,17 +10,21 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
+import com.iskeru.computeadmin.recipe.model.ParamDef;
+import com.iskeru.computeadmin.recipe.model.ParamKind;
 import com.iskeru.computeadmin.recipe.service.ActionNotApprovedException;
 import com.iskeru.computeadmin.recipe.service.ActionNotFoundException;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionSnapshot;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
+import com.iskeru.computeadmin.recipe.service.ParamValidationException;
 import com.iskeru.computeadmin.run.model.Run;
 import com.iskeru.computeadmin.run.model.RunStatus;
 import com.iskeru.computeadmin.run.repository.RunRepository;
 import com.iskeru.computeadmin.ssh.OutputSink;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import com.iskeru.computeadmin.ssh.SshTarget;
+import jakarta.ws.rs.BadRequestException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.task.TaskExecutor;
@@ -29,6 +34,8 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,7 +68,22 @@ import java.util.Map;
  * to <em>after commit</em> so the worker can never observe a run that has not yet
  * been persisted.
  *
- * <p>spec-005.
+ * <p><strong>Fan-out (spec-022).</strong> When the action declares an
+ * {@code APP_PORT_LIST} param (a monitor probe over a repeatable {@code (app-name,
+ * port)} list), {@link #run} enters fan-out mode: it runs the <em>fixed single-app
+ * template</em> <strong>once per item</strong>, binding each item's {@code app-name}/
+ * {@code port} through the <em>unchanged</em> {@link ParamBinder#bind} — discrete,
+ * validated argv, POSIX-quoted by the adapter exactly as today. It <strong>never
+ * builds a looping or variable shell command</strong>, so the S4 guarantee holds per
+ * item. All items are bound <em>before</em> anything executes (one invalid item fails
+ * the whole run with nothing dispatched). The poll persists one parent {@link Run}
+ * plus one child per item; each child streams under its own id and is labelled by its
+ * item's {@code appName}; the parent aggregates child status ({@code DONE} iff all
+ * children {@code DONE}, else {@code FAILED}). The gate is checked once, for the
+ * action — the item list is a runtime value, never part of the content hash. A scalar
+ * action (no {@code APP_PORT_LIST}) is exactly the pre-022 path, a fan-out of size 1.
+ *
+ * <p>spec-005; fan-out added in spec-022.
  */
 @Service
 public class RunService {
@@ -115,32 +137,168 @@ public class RunService {
             throw new ActionNotApprovedException(actionId);
         }
         // Re-verify the approved binding at run time: a drifted definition never runs,
-        // even though a structural edit already resets approval (spec-004).
+        // even though a structural edit already resets approval (spec-004). The gate is
+        // checked once, for the action — the fixed template is what was approved; the
+        // fan-out item list is a runtime value, not part of the content hash (spec-022).
         if (!ActionSnapshot.hash(action).equals(action.getApprovedSnapshotHash())) {
             throw new ActionModifiedException(actionId);
         }
 
+        SshTarget target = new SshTarget(machine.getHost(), machine.getPort(), machine.getLoginUser());
+        AuthContext caller = CurrentUser.require();
+
+        String appPortListName = appPortListParamName(action);
+        if (appPortListName != null) {
+            return runFanOut(action, machine, target, caller, params, appPortListName);
+        }
+        return runScalar(action, machine, target, caller, params);
+    }
+
+    /**
+     * The pre-022 scalar path: one bind, one {@link Run}, one dispatch (also the N=1
+     * degenerate case of fan-out). Behaviourally unchanged from spec-005.
+     */
+    private Run runScalar(Action action, Machine machine, SshTarget target, AuthContext caller,
+                          Map<String, String> params) {
         // Binds and validates; the returned argv is sudo-prefixed by the binder when
         // the action requires it, so the SSH adapter is called with sudo=false.
         List<String> argv = paramBinder.bind(action, params);
-        SshTarget target = new SshTarget(machine.getHost(), machine.getPort(), machine.getLoginUser());
 
-        AuthContext caller = CurrentUser.require();
-        Run run = new Run();
-        run.setAction(action);
-        run.setMachine(machine);
-        run.setCallerUserId(caller.userId());
-        run.setVia(caller.via());
+        Run run = newRun(action, machine, caller, action.getApprovedSnapshotHash());
         run.setParamsJson(toJson(params == null ? Map.of() : params));
         run.setResolvedArgvJson(toJson(argv));
-        run.setApprovedSnapshotHash(action.getApprovedSnapshotHash());
-        run.setStatus(RunStatus.QUEUED);
         Run saved = runs.save(run);
 
         String runId = saved.getId();
         String reachedMachineId = machine.getId();
         submitAfterCommit(() -> execute(runId, reachedMachineId, target, argv));
         return saved;
+    }
+
+    /**
+     * Fan-out over an {@code APP_PORT_LIST} param (spec-022). Runs the fixed
+     * single-app template once per {@code (app-name, port)} item. Every item is bound
+     * through the unchanged {@link ParamBinder#bind} <em>before</em> any persistence
+     * or dispatch, so a single invalid item fails the whole run with nothing
+     * dispatched. Returns the parent {@link Run} handle; each child executes and
+     * streams under its own id.
+     */
+    private Run runFanOut(Action action, Machine machine, SshTarget target, AuthContext caller,
+                          Map<String, String> params, String appPortListName) {
+        Map<String, String> supplied = params == null ? Map.of() : params;
+        List<AppPortItem> items = parseItems(supplied.get(appPortListName));
+        if (items.isEmpty()) {
+            throw new BadRequestException(
+                    "APP_PORT_LIST param '" + appPortListName + "' requires at least one item");
+        }
+
+        // Scalar params other than the composite are passed through to every item's bind.
+        Map<String, String> baseParams = new LinkedHashMap<>(supplied);
+        baseParams.remove(appPortListName);
+
+        // Bind EVERY item first: each bind is the SAME fixed template with one item's
+        // validated scalar values — discrete argv, never a shell loop (S4, per item).
+        List<BoundItem> bound = new ArrayList<>();
+        for (AppPortItem item : items) {
+            Map<String, String> itemParams = new LinkedHashMap<>(baseParams);
+            itemParams.put(ParamBinder.APP_NAME_COMPONENT, item.appName());
+            itemParams.put(ParamBinder.PORT_COMPONENT, item.port());
+            List<String> argv = paramBinder.bind(action, itemParams);
+            bound.add(new BoundItem(item.appName(), itemParams, argv));
+        }
+
+        // Parent handle for the poll; children each a faithful spec-005 record.
+        Run parent = newRun(action, machine, caller, action.getApprovedSnapshotHash());
+        parent.setParamsJson(toJson(supplied));
+        List<List<String>> childArgvs = new ArrayList<>();
+        for (BoundItem b : bound) {
+            childArgvs.add(b.argv());
+        }
+        parent.setResolvedArgvJson(toJson(childArgvs));
+        Run savedParent = runs.save(parent);
+
+        List<Dispatch> dispatches = new ArrayList<>();
+        for (BoundItem b : bound) {
+            Run child = newRun(action, machine, caller, action.getApprovedSnapshotHash());
+            child.setParamsJson(toJson(b.params()));
+            child.setResolvedArgvJson(toJson(b.argv()));
+            child.setParentRunId(savedParent.getId());
+            child.setAppLabel(b.appName());
+            Run savedChild = runs.save(child);
+            dispatches.add(new Dispatch(savedChild.getId(), b.argv()));
+        }
+
+        String reachedMachineId = machine.getId();
+        for (Dispatch d : dispatches) {
+            List<String> argv = d.argv();
+            String childId = d.runId();
+            submitAfterCommit(() -> execute(childId, reachedMachineId, target, argv));
+        }
+        return savedParent;
+    }
+
+    /** A fresh {@code QUEUED} run stamped with the caller and the approved hash. */
+    private static Run newRun(Action action, Machine machine, AuthContext caller, String approvedHash) {
+        Run run = new Run();
+        run.setAction(action);
+        run.setMachine(machine);
+        run.setCallerUserId(caller.userId());
+        run.setVia(caller.via());
+        run.setApprovedSnapshotHash(approvedHash);
+        run.setStatus(RunStatus.QUEUED);
+        return run;
+    }
+
+    /** The name of the action's single {@code APP_PORT_LIST} param, or null if scalar. */
+    private static String appPortListParamName(Action action) {
+        for (ParamDef def : action.getParamDefs()) {
+            if (def.getKind() == ParamKind.APP_PORT_LIST) {
+                return def.getName();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Parses the runtime {@code APP_PORT_LIST} value — a JSON array of
+     * {@code {"appName": ..., "port": ...}} objects — into raw string components. The
+     * values are left <em>unvalidated</em> here; {@link ParamBinder#bind} validates
+     * each item's {@code app-name}/{@code port} against the fixed item schema (S4).
+     */
+    private List<AppPortItem> parseItems(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return List.of();
+        }
+        JsonNode root;
+        try {
+            root = json.readTree(rawJson);
+        } catch (JsonProcessingException e) {
+            throw new ParamValidationException("APP_PORT_LIST value is not valid JSON");
+        }
+        if (!root.isArray()) {
+            throw new ParamValidationException("APP_PORT_LIST value must be a JSON array");
+        }
+        List<AppPortItem> items = new ArrayList<>();
+        for (JsonNode node : root) {
+            JsonNode appNode = node.get("appName");
+            JsonNode portNode = node.get("port");
+            String appName = appNode == null || appNode.isNull() ? null : appNode.asText();
+            String port = portNode == null || portNode.isNull() ? null : portNode.asText();
+            items.add(new AppPortItem(appName, port));
+        }
+        return items;
+    }
+
+    /** One raw {@code (appName, port)} item as supplied at runtime (unvalidated). */
+    private record AppPortItem(String appName, String port) {
+    }
+
+    /** One item bound to the fixed template: its label, its scalar params, its argv. */
+    private record BoundItem(String appName, Map<String, String> params, List<String> argv) {
+    }
+
+    /** A child run pending after-commit dispatch. */
+    private record Dispatch(String runId, List<String> argv) {
     }
 
     /**
@@ -264,6 +422,37 @@ public class RunService {
             run.setStatus(exitCode == 0 ? RunStatus.DONE : RunStatus.FAILED);
             run.setFinishedAt(Instant.now());
             runs.save(run);
+            // A fan-out child completing may complete its parent (spec-022).
+            if (run.getParentRunId() != null) {
+                maybeCompleteParent(run.getParentRunId());
+            }
+        });
+    }
+
+    /**
+     * Aggregates a fan-out parent's status once every child is terminal: {@code DONE}
+     * iff all children are {@code DONE}, else {@code FAILED} (spec-022). Convergent —
+     * recomputed from the children each time a child finishes, so a late/concurrent
+     * child still lands the parent correctly. Never touches a still-running fan-out.
+     */
+    private void maybeCompleteParent(String parentId) {
+        runs.findById(parentId).ifPresent(parent -> {
+            if (isTerminal(parent.getStatus())) {
+                return;
+            }
+            List<Run> children = runs.findByParentRunId(parentId);
+            boolean allDone = true;
+            for (Run child : children) {
+                if (!isTerminal(child.getStatus())) {
+                    return; // a child is still in flight — leave the parent pending.
+                }
+                if (child.getStatus() != RunStatus.DONE) {
+                    allDone = false;
+                }
+            }
+            parent.setStatus(allDone ? RunStatus.DONE : RunStatus.FAILED);
+            parent.setFinishedAt(Instant.now());
+            runs.save(parent);
         });
     }
 
