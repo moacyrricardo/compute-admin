@@ -372,11 +372,45 @@
   function screenMachines() {
     mountAsync(function () {
       return api("GET", "/machines").then(function (machines) {
-        var body;
+        var head = pageHead("Machines", "SSH-reachable hosts you own.",
+          link("#/machines/register", "Register machine", "btn btn--primary"));
         if (!machines.length) {
-          body = empty("No machines yet. Register one to install the app SSH key and probe connectivity.");
-        } else {
-          body = h("ul", { class: "list" }, machines.map(function (m) {
+          return h("div", null, head,
+            empty("No machines yet. Register one to install the app SSH key and probe connectivity."));
+        }
+
+        // Filter chips derived from the loaded set; selection narrows the list
+        // entirely client-side (single-user scale), OR semantics across chips.
+        var allTags = [];
+        var seen = {};
+        machines.forEach(function (m) {
+          (m.tags || []).forEach(function (t) {
+            if (!seen[t]) { seen[t] = true; allTags.push(t); }
+          });
+        });
+        allTags.sort();
+        var selected = {};
+
+        var chipsWrap = allTags.length ? h("div", { class: "filter-chips" }) : null;
+        var listWrap = h("div", null);
+
+        function selectedTags() {
+          return allTags.filter(function (t) { return selected[t]; });
+        }
+        function matches(m) {
+          var sel = selectedTags();
+          if (!sel.length) return true;
+          var mine = m.tags || [];
+          return sel.some(function (t) { return mine.indexOf(t) !== -1; });
+        }
+        function renderList() {
+          clear(listWrap);
+          var visible = machines.filter(matches);
+          if (!visible.length) {
+            listWrap.appendChild(empty("No machines match the selected tags."));
+            return;
+          }
+          listWrap.appendChild(h("ul", { class: "list" }, visible.map(function (m) {
             return h("li", null, h("div", { class: "row-between" },
               h("div", { class: "grow" },
                 link("#/machines/" + m.id, m.loginUser + "@" + m.host + ":" + m.port, "mono"),
@@ -384,12 +418,30 @@
                   return h("span", { class: "tag", text: t });
                 }))),
               chip(m.status)));
-          }));
+          })));
         }
-        return h("div", null,
-          pageHead("Machines", "SSH-reachable hosts you own.",
-            link("#/machines/register", "Register machine", "btn btn--primary")),
-          body);
+        function renderChips() {
+          if (!chipsWrap) return;
+          clear(chipsWrap);
+          allTags.forEach(function (t) {
+            var on = !!selected[t];
+            chipsWrap.appendChild(h("button", {
+              type: "button",
+              class: "tag tag--filter" + (on ? " tag--on" : ""),
+              "aria-pressed": on ? "true" : "false",
+              text: t,
+              onclick: function () {
+                selected[t] = !selected[t];
+                renderChips();
+                renderList();
+              }
+            }));
+          });
+        }
+
+        renderChips();
+        renderList();
+        return h("div", null, head, chipsWrap, listWrap);
       });
     });
   }
