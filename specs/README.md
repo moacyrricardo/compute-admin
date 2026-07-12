@@ -27,6 +27,7 @@ merges and renames it).
 | 012 | Web UI shell, design system & the approval screen | ✅ done | on `main` — live-integrated |
 | 013 | Runtime resource hygiene (H1/H3/H6) | ⚪ todo | streaming eviction, tx scoping, SSH pooling |
 | 014 | Email + password authentication | ✅ done | replaces Google sign-in; supersedes 011's auth mechanism |
+| 015 | Custom-script content-pinning | ⚪ todo | security: hash-at-approval + re-hash-at-run; resolves **H5**, hardens S5 |
 | 016 | Graceful shutdown & run reconciliation | ⚪ todo | drain in-flight runs + boot reconciler for orphaned QUEUED/RUNNING rows; neighbor to S7 (out of scope) |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
@@ -56,14 +57,15 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 | H2 | Re-running discovery isn't idempotent (duplicate recipes) — define dedup/replace/merge semantics | 006 | medium |
 | H3 | `DiscoveryService.discover` runs SSH probes inside the DB transaction — probe outside the persistence tx | 006 | medium |
 | H4 | `DatabaseDiscoverer` backup filename is fixed per engine (overwrites across DBs / repeated runs) — template from the `db` param | 006 | low |
-| H5 | Custom-script **content-pinning**: hash the script at approval, verify before each run (path-not-contents trust; escalation risk with sudo) | 007 | medium |
+| H5 | Custom-script **content-pinning**: hash the script at approval, verify before each run (path-not-contents trust; escalation risk with sudo) — **promoted to spec 015** | 007 | medium |
 | H6 | `ConnectivityCheckJob` probes the whole fleet inside one `@Transactional`; `MinaSshExecutor` builds a fresh SSH client per `exec()` — move to bounded concurrency + a pooled client | 003 | medium |
 | H7 | `ActionSnapshot` canonical serialization uses unescaped delimiters (theoretical hash-collision surface; currently moot) | 004 | low |
 
 **Promoted:** **H1 + H3 + H6 → spec 013** (runtime resource hygiene) — grouped by
-their shared root cause (holding a resource across network I/O). **H5** →
-a future *security* spec beside the ARCH S-register (it's posture, not robustness).
-**H2 / H4 / H7** remain backlog.
+their shared root cause (holding a resource across network I/O). **H5 → spec 015**
+(custom-script content-pinning) — a *security* spec beside the ARCH S-register
+(posture, not robustness); resolves H5 and hardens S5. **H2 / H4 / H7** remain
+backlog.
 
 **Resolved (shipped in 008):** MCP actor-propagation. `ScopedValue` is
 thread-confined and the MCP SDK dispatches tool handlers off the request thread, so
