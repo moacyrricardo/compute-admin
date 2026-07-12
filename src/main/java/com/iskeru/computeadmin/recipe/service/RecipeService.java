@@ -80,6 +80,29 @@ public class RecipeService {
     }
 
     /**
+     * Get-or-create the recipe a discoverer owns on machine {@code machineId},
+     * identified by the triple {@code (machine, type, name)}: reuse an existing
+     * owner-scoped recipe matched by that triple, else create one. This is what makes
+     * re-running discovery idempotent — a second probe reuses the same recipe instead
+     * of minting a duplicate. Mirrors {@link #getOrCreateCustom} but generalises the
+     * match beyond {@code CUSTOM} to any discovered {@link RecipeType}. Owner scoping
+     * is preserved because the finder joins {@code machine.owner.id} to the current
+     * user; a not-owned machine 404s inside {@link #create}.
+     *
+     * <p>spec-021.
+     */
+    @Transactional
+    public Recipe getOrCreateDiscovered(String machineId, RecipeType type, String name, String description) {
+        if (name == null || name.isBlank()) {
+            throw new BadRequestException("name is required");
+        }
+        String trimmed = name.trim();
+        return recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
+                        machineId, CurrentUser.require().userId(), type, trimmed)
+                .orElseGet(() -> create(new CreateRecipeInput(machineId, trimmed, description, type)));
+    }
+
+    /**
      * The current user's recipe by id.
      *
      * @throws RecipeNotFoundException 404 if absent or owned by another user.

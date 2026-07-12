@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -204,6 +205,36 @@ public class ActionService {
     public Action requireAction(String id) {
         return actions.findByIdAndRecipe_Machine_Owner_Id(id, CurrentUser.require().userId())
                 .orElseThrow(() -> new ActionNotFoundException(id));
+    }
+
+    /**
+     * The current user's action named {@code name} within one of their recipes, if any
+     * (spec-021). The recipe is owner-scoped through {@link RecipeService#requireRecipe}
+     * — a not-owned/absent recipe 404s — so discovery reconciliation can look up "the
+     * action this proposal owns" without touching a repository itself.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Action> findOnRecipe(String recipeId, String name) {
+        Recipe recipe = recipeService.requireRecipe(recipeId);
+        return actions.findByRecipe_IdAndName(recipe.getId(), name);
+    }
+
+    /**
+     * The content hash a proposed structure would have, computed on a transient
+     * {@link Action} without persisting anything (spec-021). Discovery uses it to
+     * decide whether a re-discovered proposal differs from what a human already
+     * approved: build a transient action from the proposal, hash it via
+     * {@link ActionSnapshot#hash(Action)}, and compare against the stored
+     * {@code approvedSnapshotHash}. Equal ⇒ the approval still matches the proposal;
+     * different ⇒ discovery re-proposed a changed definition. The structure is
+     * validated by the same {@link #applyStructure} the write path uses, so a
+     * malformed proposal fails fast rather than yielding a meaningless hash.
+     */
+    public String snapshotHashOf(boolean sudo, List<ArgTokenInput> argTokens, List<ParamDefInput> paramDefs) {
+        Action probe = new Action();
+        probe.setSudo(sudo);
+        applyStructure(probe, argTokens, paramDefs);
+        return ActionSnapshot.hash(probe);
     }
 
     /** Rebuilds the argv tokens and param defs, validating the resulting schema. */
