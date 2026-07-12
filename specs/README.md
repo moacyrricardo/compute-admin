@@ -27,6 +27,7 @@ merges and renames it).
 | 012 | Web UI shell, design system & the approval screen | ✅ done | on `main` — live-integrated |
 | 013 | Runtime resource hygiene (H1/H3/H6) | ⚪ todo | streaming eviction, tx scoping, SSH pooling |
 | 014 | Email + password authentication | ✅ done | replaces Google sign-in; supersedes 011's auth mechanism |
+| 016 | Graceful shutdown & run reconciliation | ⚪ todo | drain in-flight runs + boot reconciler for orphaned QUEUED/RUNNING rows; neighbor to S7 (out of scope) |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
