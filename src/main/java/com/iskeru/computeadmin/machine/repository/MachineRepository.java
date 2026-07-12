@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.machine.repository;
 import com.iskeru.computeadmin.machine.model.Machine;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,7 +18,12 @@ public interface MachineRepository extends JpaRepository<Machine, String> {
 
     List<Machine> findByOwnerId(String ownerId);
 
-    List<Machine> findByOwnerIdAndTags_Name(String ownerId, String tag);
+    /**
+     * Owner-scoped tag filter with OR semantics: the current user's machines that
+     * carry <em>any</em> of {@code names}. The {@code machine_tag} join can yield the
+     * same machine once per matching tag, so the caller de-duplicates by id (spec-018).
+     */
+    List<Machine> findByOwner_IdAndTags_NameIn(String ownerId, Collection<String> names);
 
     Optional<Machine> findByIdAndOwnerId(String id, String ownerId);
 

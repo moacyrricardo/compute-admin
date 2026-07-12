@@ -85,6 +85,17 @@ public class Machine {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt = Instant.now();
 
+    /**
+     * When the read-only OS/cloud facts probe last ran for this machine (spec-018).
+     * Set once on the first successful reach; its presence is the guard that keeps
+     * auto-tagging add-only and one-shot, so a user-removed auto-tag is never
+     * re-added. {@link NotAudited} operational marker (a liveness-derived enrichment,
+     * not a config edit) — no {@code machine_aud} column.
+     */
+    @Column(name = "facts_probed_at")
+    @NotAudited
+    private Instant factsProbedAt;
+
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(name = "machine_tag",
             joinColumns = @JoinColumn(name = "machine_id",

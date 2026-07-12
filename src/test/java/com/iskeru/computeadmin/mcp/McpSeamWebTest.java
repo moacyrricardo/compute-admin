@@ -60,7 +60,7 @@ class McpSeamWebTest {
         MachineService stubMachineService() {
             return new MachineService(null, null, null) {
                 @Override
-                public List<Machine> list(String tag) {
+                public List<Machine> list(List<String> tags) {
                     return List.of();
                 }
             };
