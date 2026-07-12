@@ -15,6 +15,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.envers.Audited;
+import org.hibernate.envers.NotAudited;
 import org.hibernate.envers.RelationTargetAuditMode;
 
 import java.time.Instant;
@@ -71,6 +72,19 @@ public class Recipe {
     /** Version of the source blueprint at instantiation (spec 010); null if authored directly. */
     @Column(name = "source_blueprint_version")
     private Integer sourceBlueprintVersion;
+
+    /**
+     * The discovery-pre-filled {@code (app-name, port)} list an app-monitor recipe
+     * fans its probe actions over (spec-025), as the JSON array RunService binds per
+     * item: {@code [{"appName","port","runtime"}]}. A <strong>runtime value</strong>,
+     * not part of any action's content hash — discovery pre-fills it and the UI edits
+     * it, and adding/removing apps needs no re-approval (spec-022). {@code null} for
+     * host-vitals (spec-023) and every non-app-monitor recipe. {@link NotAudited}: it
+     * is mutable runtime state, not part of the approval/audit trail. spec-025.
+     */
+    @Column(name = "app_port_list", length = 4000)
+    @NotAudited
+    private String appPortList;
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt = Instant.now();
