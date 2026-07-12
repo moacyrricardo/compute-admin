@@ -30,6 +30,8 @@
         <jjwt.version>0.12.6</jjwt.version>
         <!-- Apache MINA SSHD client behind the SshExecutor port (spec-003). -->
         <sshd.version>2.14.0</sshd.version>
+        <!-- EdDSA provider MINA SSHD uses to sign/verify ed25519 (fix: ed25519 auth). -->
+        <eddsa.version>0.3.0</eddsa.version>
     </properties>
 
     <dependencies>
@@ -100,6 +102,20 @@
             <groupId>org.apache.sshd</groupId>
             <artifactId>sshd-core</artifactId>
             <version>${sshd.version}</version>
+        </dependency>
+
+        <!-- EdDSA provider for MINA SSHD. Without an ed25519 signer on the
+             classpath, MINA cannot sign the public-key auth challenge with the
+             app's ed25519 key, so every target rejects auth and shows UNREACHABLE.
+             MINA's SecurityUtils detects this i2p provider and routes ed25519
+             through it; KeyService generates/loads the keypair through the same
+             SecurityUtils factories so the key objects are the type MINA signs
+             with (JDK-native EdECKey objects do not interoperate with this
+             provider). -->
+        <dependency>
+            <groupId>net.i2p.crypto</groupId>
+            <artifactId>eddsa</artifactId>
+            <version>${eddsa.version}</version>
         </dependency>
 
         <dependency>

@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.ssh;
 
 import jakarta.annotation.PostConstruct;
+import org.apache.sshd.common.util.security.SecurityUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -14,7 +15,6 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.GeneralSecurityException;
 import java.security.KeyFactory;
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
@@ -34,12 +34,19 @@ import java.util.Set;
  * <p>The private key is stored unencrypted; filesystem permissions are the only
  * boundary for now (S2).
  *
+ * <p>The keypair is generated and loaded through MINA's
+ * {@link SecurityUtils#getKeyPairGenerator(String) SecurityUtils} EdDSA factories
+ * (not the JDK's native {@code Ed25519} provider): MINA signs the public-key auth
+ * challenge with its own EdDSA provider, and JDK-native {@code EdECKey} objects do
+ * not interoperate with it — so a JDK-generated key makes every target reject auth
+ * and show UNREACHABLE. The on-disk format is unchanged (base64 PKCS#8 private key
+ * plus the {@code .pub} OpenSSH line), so keys round-trip across boots either way.
+ *
  * <p>spec-003.
  */
 @Service
 public class KeyService {
 
-    private static final String ED25519 = "Ed25519";
     private static final String OPENSSH_TYPE = "ssh-ed25519";
     /** Raw ed25519 public key length; also the SPKI suffix we slice off. */
     private static final int RAW_PUBLIC_KEY_LENGTH = 32;
@@ -81,7 +88,7 @@ public class KeyService {
 
     private KeyPair generateAndStore() {
         try {
-            KeyPair generated = KeyPairGenerator.getInstance(ED25519).generateKeyPair();
+            KeyPair generated = SecurityUtils.getKeyPairGenerator(SecurityUtils.EDDSA).generateKeyPair();
             Path parent = privateKeyPath.toAbsolutePath().getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
@@ -98,7 +105,7 @@ public class KeyService {
     private KeyPair load() {
         try {
             byte[] pkcs8 = Base64.getDecoder().decode(Files.readAllBytes(privateKeyPath));
-            KeyFactory factory = KeyFactory.getInstance(ED25519);
+            KeyFactory factory = SecurityUtils.getKeyFactory(SecurityUtils.EDDSA);
             PrivateKey privateKey = factory.generatePrivate(new PKCS8EncodedKeySpec(pkcs8));
             PublicKey publicKey = derivePublicKey(factory);
             return new KeyPair(publicKey, privateKey);
