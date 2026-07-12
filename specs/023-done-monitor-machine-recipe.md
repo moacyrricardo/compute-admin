@@ -1,10 +1,35 @@
 # 023 — `monitor machine` recipe (host vitals)
 
-> **Status:** todo. Linear BLOCKED — commits use `spec-023`. Graduated from concern
+> **Status:** done. Branch `moacyrricardo/monitoring-021-025`. Linear BLOCKED —
+> commits use `spec-023`. Graduated from concern
 > [020](./020-todo-machine-monitoring.md). **Depends on
-> [022](./022-todo-monitoring-foundations.md)** (`RecipeType.MONITOR`,
-> classification convention) and transitively **[021](./021-todo-discovery-idempotency.md)**
+> [022](./022-done-monitoring-foundations.md)** (`RecipeType.MONITOR`,
+> classification convention) and transitively **[021](./021-done-discovery-idempotency.md)**
 > (so re-discovery reconciles the universal host monitor instead of duplicating it).
+
+## Implementation notes
+
+Implemented as specified, with no schema change (the recipe reuses the existing
+recipe/action tables, so no Flyway migration was added).
+
+- **`discovery/service/MonitorMachineDiscoverer.java`** — a `@Component`
+  `RecipeDiscoverer`, auto-wired into the `List<RecipeDiscoverer>` `DiscoveryService`
+  already fans over (no wiring change). Unlike the service-gated discoverers it runs
+  **no probe at all** and always returns the single `ProposedRecipe(MONITOR,
+  "monitor machine", …)` with the three fixed, param-free, `sudo=false` actions
+  **cpu** (`top -bn1`), **memory** (`free -m`), **disk** (`df -h`). Universality is
+  cleaner than the spec's `command -v`-skipping phrasing implied: it never touches
+  SSH, so proposal is unconditional and side-effect-free.
+- Actions land `PENDING_APPROVAL` through the unchanged `DiscoveryService` persist
+  path; re-discovery reconciles the one `(machine, MONITOR, "monitor machine")`
+  recipe in place (021). No read-only carve-out — a MONITOR action runs iff APPROVED,
+  like any action; `GateArchTest` still passes.
+- **Tests:** `MonitorMachineDiscovererTest` (proposes the three read-only actions;
+  proposes regardless of probe output; issues no probe). `DiscoveryServiceTest`
+  extended (+2): the host monitor persists PENDING_APPROVAL and a second discovery
+  does not duplicate the host panel. `RunServiceTest` extended (+2): an approved
+  `cpu` action runs through the normal gate and returns the executor's raw stdout as
+  a plain scalar N=1 run (no parent/label); an unapproved one is refused.
 
 ## Context
 
