@@ -16,7 +16,7 @@ merges and renames it).
 |---|------|--------|-------|
 | 001 | Project skeleton | ✅ done | on `main` |
 | 002 | MCP transport seam | ✅ done | on `main` |
-| 011 | User accounts, authentication & ownership | ✅ done | on `main` |
+| 011 | User accounts, authentication & ownership | ✅ done | on `main` — auth **mechanism** superseded by 014 (email+password); JWT/tokens/pairing/ownership still authoritative |
 | 003 | Machine registry, tagging, app keypair & SSH adapter | ✅ done | on `main` |
 | 004 | Recipe & Action model, approval gate & audit | ✅ done | on `main` — the security core |
 | 005 | Execution engine (async jobs + live streaming) | ✅ done | on `main` |
@@ -26,6 +26,7 @@ merges and renames it).
 | 008 | MCP write & run tools | ✅ done | on `main` — MCP actor-propagation resolved |
 | 012 | Web UI shell, design system & the approval screen | ✅ done | on `main` — live-integrated |
 | 013 | Runtime resource hygiene (H1/H3/H6) | ⚪ todo | streaming eviction, tx scoping, SSH pooling |
+| 014 | Email + password authentication | ⚪ todo | replaces Google sign-in; supersedes 011's auth mechanism |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
