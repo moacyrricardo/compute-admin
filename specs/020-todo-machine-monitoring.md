@@ -73,23 +73,26 @@ for zero benefit, since one approval already unlocks unlimited (including polled
    eviction to **prune old `Run` rows** (retention). The better long-term answer is a
    lightweight **non-persisted "read-now" path** for read-only polled reads (option b) —
    flagged as **forward work** to design next, not built in v1.
-2. **How several apps are represented — DECISION PENDING (your pick).** `springboot monitor`
-   covers multiple `(app-name, port)` apps on one box. Note the model **already** supports
-   *multiple params per action* and *multiple actions per recipe* — the only unsupported
-   thing is a variable-length list *inside a single action*. Options:
-   - **(A) Repeatable composite param** — one action holding a list of `(name, port)`.
-     Requires templating-with-repetition + reworking `ParamBinder` and the argv / content-hash
-     / injection guarantees — the biggest change to the spec-004 gate core. Most invasive.
-   - **(B) One action per app (recommended)** — the recipe holds one action per app;
-     discovery bakes each detected `app-name`+`port` as its own action (literal tokens, or two
-     single-value params `name`+`port` — both already supported). **Zero gate-model change**,
-     clean per-app approval + audit, adding an app = a new (pre-proposed) action.
-   - **(C) Single-port action, UI fans out** — the action takes one `port` param; the
-     dashboard config holds the `(name, port)` list and invokes the action once per app,
-     labelling client-side. Minimal model change, but `app-name` lives in the UI (not the
-     action/audit) and it's more runs per poll.
-   Lean **(B)** — fits the existing model with no change to the security-critical param/gate
-   machinery. Confirm before this graduates to a spec.
+2. **How several apps are represented — DECIDED (repeatable composite param, executed by
+   fan-out).** The `springboot monitor` recipe has **one action per actuator endpoint** —
+   e.g. `health`, `beans` (later `metrics`/`info`). Each action is parameterised by a
+   **repeatable `(app-name, port)` list** (the apps on the box), supplied as a **runtime
+   value** validated against the action's schema (each item: `app-name` pattern + `port`
+   INT_RANGE). The **monitor UI orchestrates** the per-endpoint outputs into meaningful
+   per-app data — an `orders` card showing its health + beans, a `billing` card, etc.
+   - **Critical implementation rule (keeps the spec-004 gate / S4 injection guarantee
+     intact):** an action with a repeatable param **fans out at the execution layer** — the
+     engine runs the **fixed single-app template once per `(app-name, port)` item**
+     (`curl -s localhost:<port>/actuator/<endpoint>`) and **aggregates the labelled
+     outputs**. It does **not** build a looping/variable shell command. Every invocation is
+     still the fixed template with discrete, validated tokens, so injection-safety holds
+     exactly as today.
+   - The app list is a **runtime value**, not part of the content-hash (which covers
+     template + schema), so **changing which apps are probed needs no re-approval**;
+     discovery pre-fills the list and the UI can edit it. Approval stays **once per action**.
+   - **Model changes required (bounded; do not touch the injection core):** a
+     **repeatable-composite `ParamKind`** (`(name, port)` items) and a **fan-out run mode**
+     (run the fixed template per item, aggregate labelled output) in `ParamBinder`/`RunService`.
 3. **Spring Boot health source:** actuator `/actuator/health` (assumes actuator exposed,
    maybe secured) vs a plain port-open/process check. Configurable per action?
 4. **View:** per-machine monitor panel vs a fleet overview; how the `monitor machine` and
@@ -109,15 +112,18 @@ Two **read-only** recipes — **`monitor machine`** (CPU, RAM+swap, disk) and an
 family starting with **`springboot monitor`** (per `(app-name, port)`, via actuator) —
 **auto-discovered and approved once like any recipe**, surfaced on a recipe-driven UI with
 a **client-side poll setting (default single; 5s/30s/1min/5min)**, **no server-side
-time-series in v1**. **Q1 is decided for v1** — accept per-poll `Run` rows + add run-row
-pruning; a non-persisted "read-now" path is forward work. The remaining pre-build decision
-is **Q2 — how to represent multiple apps** (lean **B**, one action per app). Everything else
-(actuator-vs-port-check, layout, detection privileges) is implementation detail. **No
-approval-invariant tension** — one approval unlocks polled runs.
+time-series in v1**. **Q1 and Q2 are now decided** — Q1: accept per-poll `Run` rows + add
+run-row pruning (non-persisted "read-now" path is forward work); Q2: one action per actuator
+endpoint, each taking a repeatable `(app-name, port)` list executed by **fan-out** (fixed
+template per item), the UI pivoting into per-app cards. Everything else (endpoint set,
+actuator-vs-port-check, layout, detection privileges) is implementation detail. **No
+approval-invariant tension** — one approval unlocks polled runs. **This concern is ready to
+graduate into a full spec.**
 
 ## Sequencing
 
 Independent of 018/019 (benefits from tags to filter which machines to monitor). Reuses
-the spec-006 discovery port and the spec-013 run/eviction machinery. **Q1 decided for v1**
-(accept + prune, read-now path deferred); graduates to a spec once **Q2 (how to represent
-multiple apps — lean B)** is confirmed.
+the spec-006 discovery port and the spec-013 run/eviction machinery. **Q1 and Q2 are
+decided** — ready to graduate from concern into a full spec (Context / Decision /
+Implementation / Known Gaps) on request, at which point it takes a `doing` status and a
+build branch.
