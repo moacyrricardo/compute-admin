@@ -406,6 +406,44 @@ class RunServiceTest {
         assertThat(ssh.argvCalls).isEmpty();
     }
 
+    // --- host-vitals monitor (spec-023) -------------------------------------
+
+    // NOT_SUPPORTED so the service's own transaction commits and the after-commit
+    // dispatch fires inline. An approved host-vitals action (no params) runs through
+    // the normal gate; the dashboard (spec-024) parses the raw stdout returned here.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_ApprovedHostVitals_RunsThroughGate_ReturnsRawStdout() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedVitalsAction(true));
+
+        Run queued = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of()));
+
+        Run finished = awaitTerminal(queued.getId());
+        assertThat(finished.getStatus()).isEqualTo(RunStatus.DONE);
+        assertThat(finished.getExitCode()).isZero();
+        // The fixed cpu template resolved verbatim (no params → the plain scalar N=1 run).
+        assertThat(finished.getResolvedArgvJson()).contains("top", "-bn1");
+        assertThat(finished.getStdout()).contains("ok");
+        // A scalar host-vitals action is not a fan-out: no parent, no app label.
+        assertThat(finished.getParentRunId()).isNull();
+        assertThat(finished.getAppLabel()).isNull();
+        assertThat(ssh.argvCalls).hasSize(1);
+        assertThat(ssh.argvCalls.get(0)).containsExactly("top", "-bn1");
+    }
+
+    @Test
+    void run_HostVitalsNotApproved_IsRefused() {
+        AppUser user = saveUser();
+        // MONITOR is display-only: an unapproved host-vitals action is refused like any.
+        Seed seed = asUser(user, () -> seedVitalsAction(false));
+
+        assertThatThrownBy(() -> asUser(user,
+                () -> runService.run(seed.machineId(), seed.actionId(), Map.of())))
+                .isInstanceOf(ActionNotApprovedException.class);
+        assertThat(ssh.argvCalls).isEmpty();
+    }
+
     /** Polls the run until it reaches a terminal state (or a short timeout). */
     private Run awaitTerminal(String runId) {
         long deadline = System.currentTimeMillis() + 5_000;
@@ -460,6 +498,27 @@ class RunServiceTest {
                         new ArgTokenInput(TokenKind.PARAM, "app-name"),
                         new ArgTokenInput(TokenKind.PARAM, "port")),
                 List.of(new ParamDefInput("apps", ParamKind.APP_PORT_LIST, null, null, null, null))));
+        if (approve) {
+            approvalService.submitForApproval(action.getId());
+            approvalService.approve(action.getId());
+        }
+        return new Seed(machine.getId(), action.getId());
+    }
+
+    /**
+     * The universal host-vitals monitor (spec-023): a MONITOR recipe {@code monitor
+     * machine} with the fixed, param-free {@code cpu} action ({@code top -bn1}).
+     * Approved when {@code approve}.
+     */
+    private Seed seedVitalsAction(boolean approve) {
+        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Recipe recipe = recipeService.create(new CreateRecipeInput(
+                machine.getId(), "monitor machine", "host vitals", RecipeType.MONITOR));
+        Action action = actionService.addAction(new AddActionInput(
+                recipe.getId(), "cpu", "cpu snapshot", false,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, "top"),
+                        new ArgTokenInput(TokenKind.LITERAL, "-bn1")),
+                List.of()));
         if (approve) {
             approvalService.submitForApproval(action.getId());
             approvalService.approve(action.getId());

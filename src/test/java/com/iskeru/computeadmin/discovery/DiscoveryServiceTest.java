@@ -11,6 +11,7 @@ import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveredReci
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconcileOutcome;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconciledAction;
 import com.iskeru.computeadmin.discovery.service.DockerDiscoverer;
+import com.iskeru.computeadmin.discovery.service.MonitorMachineDiscoverer;
 import com.iskeru.computeadmin.discovery.service.NginxDiscoverer;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
@@ -64,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @Import({DiscoveryService.class, RecipeService.class, ActionService.class, ApprovalService.class,
         MachineService.class, NginxDiscoverer.class, DockerDiscoverer.class, DatabaseDiscoverer.class,
-        CronDiscoverer.class, DiscoveryServiceTest.FakeSshConfig.class})
+        CronDiscoverer.class, MonitorMachineDiscoverer.class, DiscoveryServiceTest.FakeSshConfig.class})
 class DiscoveryServiceTest {
 
     /** Verbs that would mean an action template — not a probe — was executed. */
@@ -199,6 +200,51 @@ class DiscoveryServiceTest {
             assertThat(actions.findByRecipe_IdOrderByName(recipe.getId()))
                     .extracting(Action::getName).doesNotHaveDuplicates();
         }
+    }
+
+    @Test
+    void discover_ProposesUniversalMonitorMachine_PendingApprovalNotAutoApproved() {
+        asUser(alice, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            discoveryService.discover(machine.getId());
+
+            // The universal host monitor is proposed on every reachable box (spec-023):
+            // exactly one (machine, MONITOR, "monitor machine") recipe...
+            Recipe monitor = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
+                    machine.getId(), alice.getId(), RecipeType.MONITOR, "monitor machine").orElseThrow();
+            List<Action> vitals = actions.findByRecipe_IdOrderByName(monitor.getId());
+
+            // ...with the three read-only, param-free host-vitals actions, all
+            // PENDING_APPROVAL — MONITOR grants no auto-approval or read-only carve-out.
+            assertThat(vitals).extracting(Action::getName)
+                    .containsExactlyInAnyOrder("cpu", "memory", "disk");
+            assertThat(vitals).allSatisfy(action -> {
+                assertThat(action.getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
+                assertThat(action.getApprovedByUserId()).isNull();
+                assertThat(action.isSudo()).isFalse();
+                assertThat(action.getParamDefs()).isEmpty();
+            });
+            return null;
+        });
+    }
+
+    @Test
+    void reDiscover_MonitorMachine_DoesNotDuplicateHostPanel() {
+        String machineId = asUser(alice, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            discoveryService.discover(machine.getId());
+            discoveryService.discover(machine.getId());
+            return machine.getId();
+        });
+
+        // Re-discovery reconciles in place (spec-021): still one host-monitor recipe and
+        // one action per name — the direct "no duplicate host panel" guard.
+        List<Recipe> monitors = recipes.findByMachine_IdAndMachine_Owner_Id(machineId, alice.getId()).stream()
+                .filter(r -> r.getType() == RecipeType.MONITOR && r.getName().equals("monitor machine"))
+                .toList();
+        assertThat(monitors).hasSize(1);
+        assertThat(actions.findByRecipe_IdOrderByName(monitors.get(0).getId()))
+                .extracting(Action::getName).containsExactlyInAnyOrder("cpu", "memory", "disk");
     }
 
     @Test
