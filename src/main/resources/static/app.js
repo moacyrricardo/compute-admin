@@ -1179,6 +1179,420 @@
     });
   }
 
+  // =========================================================== MONITOR ======
+  //
+  // spec-024 — the monitor dashboard. Enumerates the user's MONITOR-classified
+  // actions (GET /api/monitor, grouped host vs per-app by the 022 convention),
+  // then POLLS them client-side: the browser re-runs the already-APPROVED monitor
+  // actions on a chosen cadence through the ordinary run path (POST /runs +
+  // streamRunOutput) and renders the CURRENT reading — no server sampler, no
+  // stored time-series. Approval stays UI-only; a not-approved action is never run
+  // (rendered disabled with a link to the approval screen). All remote stdout
+  // reaches the DOM only via textContent / the h() helper (spec-012 XSS).
+
+  var MONITOR_CADENCES = [
+    { key: "single", label: "Single", ms: 0 },
+    { key: "5s", label: "5s", ms: 5000 },
+    { key: "30s", label: "30s", ms: 30000 },
+    { key: "1m", label: "1m", ms: 60000 },
+    { key: "5m", label: "5m", ms: 300000 }
+  ];
+
+  /** Threshold band for a 0..100 metre: red ≥ 90, amber ≥ 75, else ok (spec-024). */
+  function meterBand(pct) {
+    if (pct == null || isNaN(pct)) return "none";
+    if (pct >= 90) return "red";
+    if (pct >= 75) return "amber";
+    return "ok";
+  }
+
+  /** A labelled horizontal bar. `pct` is a number 0..100 (or null → “no data”). */
+  function meter(label, pct, sub) {
+    var known = pct != null && !isNaN(pct);
+    var clamped = known ? Math.max(0, Math.min(100, pct)) : 0;
+    var fill = h("div", { class: "meter-fill meter-fill--" + meterBand(pct) });
+    fill.style.width = clamped + "%";
+    return h("div", { class: "meter" },
+      h("div", { class: "meter-head" },
+        h("span", { class: "meter-label", text: label }),
+        h("span", { class: "meter-val mono", text: known ? (Math.round(clamped) + "%") : "—" })),
+      h("div", { class: "meter-track", role: "img",
+        "aria-label": label + " " + (known ? Math.round(clamped) + " percent" : "no data") }, fill),
+      sub ? h("div", { class: "meter-sub mono", text: sub }) : null);
+  }
+
+  // ---- client-side parsers (spec-023 raw stdout → bars; degrade to raw text) ----
+
+  function parseCpu(text) {
+    // top -bn1: "%Cpu(s):  3.4 us,  1.2 sy,  0.0 ni, 95.0 id, ..." → used = 100 − idle.
+    var m = text.match(/Cpu\(s\)[^\n]*?([\d.]+)\s*(?:%\s*)?id/i);
+    if (!m) m = text.match(/([\d.]+)\s*(?:%\s*)?id\b/i);
+    if (!m) return null;
+    var idle = parseFloat(m[1]);
+    if (isNaN(idle)) return null;
+    return Math.max(0, Math.min(100, 100 - idle));
+  }
+
+  function parseMem(text) {
+    // free -m: "Mem:  <total> <used> ..." / "Swap: <total> <used> ..." (MiB).
+    var out = {};
+    text.split(/\r?\n/).forEach(function (ln) {
+      var mem = ln.match(/^\s*Mem:\s+(\d+)\s+(\d+)/i);
+      if (mem) {
+        var t = parseInt(mem[1], 10), u = parseInt(mem[2], 10);
+        out.mem = { total: t, used: u, pct: t ? (u / t) * 100 : 0 };
+      }
+      var sw = ln.match(/^\s*Swap:\s+(\d+)\s+(\d+)/i);
+      if (sw) {
+        var t2 = parseInt(sw[1], 10), u2 = parseInt(sw[2], 10);
+        out.swap = { total: t2, used: u2, pct: t2 ? (u2 / t2) * 100 : 0 };
+      }
+    });
+    return out.mem ? out : null;
+  }
+
+  function parseDisk(text) {
+    // df -h: rows ending "... <use>% <mountpoint>". Prefer "/", else the busiest.
+    var rows = [];
+    text.split(/\r?\n/).forEach(function (ln) {
+      var m = ln.match(/(\d+)%\s+(\/\S*)\s*$/);
+      if (m) rows.push({ pct: parseInt(m[1], 10), mount: m[2] });
+    });
+    if (!rows.length) return null;
+    var root = rows.filter(function (r) { return r.mount === "/"; })[0];
+    var busiest = rows.slice().sort(function (a, b) { return b.pct - a.pct; })[0];
+    return { primary: root || busiest, all: rows };
+  }
+
+  function mibText(mib) {
+    if (mib == null) return "";
+    if (mib >= 1024) return (mib / 1024).toFixed(1) + " GiB";
+    return mib + " MiB";
+  }
+
+  /** Classify a MONITOR action's framework from its recipe/action name (025 badges). */
+  function frameworkOf(action) {
+    var s = ((action.recipeName || "") + " " + (action.name || "")).toLowerCase();
+    if (s.indexOf("springboot") >= 0 || s.indexOf("spring boot") >= 0 || s.indexOf("actuator") >= 0) return "springboot";
+    if (s.indexOf("fastapi") >= 0 || s.indexOf("uvicorn") >= 0 || s.indexOf("gunicorn") >= 0) return "fastapi";
+    return "generic";
+  }
+
+  function metricKind(action) {
+    var n = (action.name || "").toLowerCase();
+    if (n.indexOf("cpu") >= 0 || n.indexOf("load") >= 0) return "cpu";
+    if (n.indexOf("mem") >= 0 || n.indexOf("ram") >= 0) return "memory";
+    if (n.indexOf("disk") >= 0 || n.indexOf("df") >= 0 || n.indexOf("filesystem") >= 0) return "disk";
+    return "other";
+  }
+
+  /**
+   * Run one APPROVED action through the ordinary run path and collect its stdout.
+   * Gate-safe: the server re-checks approval + live-hash + params (this only POSTs
+   * the run and reads the stream). Resolves with the accumulated stdout string.
+   */
+  function runAndCollect(machineId, actionId, params) {
+    return api("POST", "/runs", { machineId: machineId, actionId: actionId, params: params || {} })
+      .then(function (run) {
+        return new Promise(function (resolve) {
+          var out = "";
+          streamRunOutput(run.id, {
+            onChunk: function (stream, data) {
+              if (stream === "stdout" || stream === "stderr") out += data + "\n";
+            },
+            onDone: function () { resolve({ runId: run.id, stdout: out }); }
+          });
+        });
+      });
+  }
+
+  function actionApprovalHref(a) {
+    return "#/machines/" + a.machineId + "/recipes/" + a.recipeId + "/actions/" + a.id;
+  }
+  function actionRunHref(a) {
+    return actionApprovalHref(a) + "/run";
+  }
+
+  /**
+   * A gate-safe run chip for one related action. APPROVED + param-free → runs inline
+   * (toast feedback); APPROVED + parameterised → links to the run form (params are
+   * entered there); not APPROVED → a disabled chip linking to the approval screen.
+   */
+  function runChip(action) {
+    var approved = action.approvalState === "APPROVED" && !action.changedSinceApproval;
+    var parameterised = (action.paramDefs || []).length > 0;
+    if (!approved) {
+      return h("a", { class: "run-chip run-chip--disabled", href: actionApprovalHref(action),
+        title: "Not approved — review and approve before it can run" },
+        action.name, h("span", { class: "run-chip-state", text: humanize(action.approvalState) }));
+    }
+    if (parameterised) {
+      return h("a", { class: "run-chip", href: actionRunHref(action),
+        title: "Enter parameters and run" }, action.name, h("span", { class: "run-chip-go", text: "run…" }));
+    }
+    var chip = h("button", { type: "button", class: "run-chip", title: "Run now (approved)" },
+      action.name, h("span", { class: "run-chip-go", text: "run" }));
+    chip.addEventListener("click", function () {
+      chip.disabled = true;
+      runAndCollect(action.machineId, action.id, {}).then(function (r) {
+        toast(action.name + " ran");
+      }).catch(function (err) { toast(err.message); }).then(function () { chip.disabled = false; });
+    });
+    return chip;
+  }
+
+  function screenMonitor() {
+    mountAsync(function () {
+      return api("GET", "/monitor").then(function (dash) {
+        var machines = (dash && dash.machines) || [];
+
+        // ---- poll state --------------------------------------------------
+        var cadence = "single";
+        var pollTimer = null;
+        var heartbeatTimer = null;
+        var lastUpdated = null;
+        var cycleInFlight = false;
+
+        var updatedLabel = h("span", { class: "small dim", text: "not yet updated" });
+        var runNowBtn = h("button", { class: "btn btn--sm btn--primary" }, "Run now");
+        var cadenceSel = h("select", { class: "mono", "aria-label": "Poll cadence" },
+          MONITOR_CADENCES.map(function (c) { return h("option", { value: c.key, text: c.label }); }));
+
+        function stopTimers() {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+          if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+        }
+        // Registered with the router so navigating away kills every timer (no leak).
+        currentViewCleanup = stopTimers;
+
+        function tickHeartbeat() {
+          if (!lastUpdated) { updatedLabel.textContent = "not yet updated"; return; }
+          var secs = Math.round((Date.now() - lastUpdated) / 1000);
+          updatedLabel.textContent = "updated " + secs + "s ago";
+        }
+
+        function applyCadence() {
+          stopTimers();
+          heartbeatTimer = setInterval(tickHeartbeat, 1000);
+          var chosen = MONITOR_CADENCES.filter(function (c) { return c.key === cadence; })[0];
+          if (chosen && chosen.ms > 0) {
+            pollTimer = setInterval(cycle, chosen.ms);
+          }
+        }
+
+        cadenceSel.addEventListener("change", function (e) {
+          cadence = e.target.value;
+          applyCadence();
+        });
+        runNowBtn.addEventListener("click", function () { cycle(); });
+
+        // ---- per-machine host panels + app cards -------------------------
+        var panels = machines.map(function (mch) { return buildMachineBlock(mch); });
+
+        function cycle() {
+          if (cycleInFlight) return;
+          cycleInFlight = true;
+          runNowBtn.disabled = true;
+          var jobs = panels.map(function (p) { return p.refresh(); });
+          Promise.all(jobs).then(function () {
+            lastUpdated = Date.now();
+            tickHeartbeat();
+          }).catch(function () { /* per-panel errors are shown in-panel */ })
+            .then(function () { cycleInFlight = false; runNowBtn.disabled = false; });
+        }
+
+        var head = h("div", { class: "page-head" },
+          h("div", null,
+            h("h1", { text: "Monitor" }),
+            h("p", { class: "sub", text: "Live host vitals and per-app health, polled from your browser. Approval stays UI-only — polling re-runs already-approved actions." })),
+          h("div", { class: "row monitor-controls" },
+            h("label", { class: "small dim", text: "Cadence" }),
+            cadenceSel,
+            runNowBtn,
+            updatedLabel));
+
+        var body = machines.length
+          ? h("div", { class: "monitor-machines" }, panels.map(function (p) { return p.node; }))
+          : empty("No machines yet. Register one and run discovery to propose the monitor recipes.");
+
+        // First reading + heartbeat (default cadence = single → one cycle, no interval).
+        applyCadence();
+        cycle();
+
+        return h("div", null, head, body);
+      });
+    });
+  }
+
+  /**
+   * Build one machine's block: a host panel (bars filled from the host monitor
+   * actions each cycle) and the per-app cards. Returns { node, refresh } where
+   * refresh() re-runs this machine's approved monitor actions and updates the DOM.
+   */
+  function buildMachineBlock(mch) {
+    var hostActions = mch.hostActions || [];
+    var appActions = mch.appActions || [];
+
+    var hostPanel = h("div", { class: "host-panel" });
+    var rawWrap = h("div", { class: "host-raw" });
+
+    function renderHost(readings) {
+      clear(hostPanel);
+      clear(rawWrap);
+      if (!hostActions.length) {
+        hostPanel.appendChild(h("p", { class: "small dim" },
+          "No host monitor yet. ",
+          link("#/machines/" + mch.machineId, "Discover recipes", null),
+          " to add the ", h("span", { class: "mono", text: "monitor machine" }), " recipe."));
+        return;
+      }
+      var anyBar = false;
+      var rawBlocks = [];
+      hostActions.forEach(function (a) {
+        var reading = readings[a.id];
+        var approved = a.approvalState === "APPROVED" && !a.changedSinceApproval;
+        if (!approved) {
+          hostPanel.appendChild(h("div", { class: "meter" },
+            h("div", { class: "meter-head" },
+              h("span", { class: "meter-label", text: a.name }),
+              h("a", { class: "small", href: actionApprovalHref(a), text: "approve to poll" }))));
+          return;
+        }
+        var text = reading && reading.stdout ? reading.stdout : "";
+        var kind = metricKind(a);
+        if (kind === "cpu") {
+          var cpu = parseCpu(text);
+          if (cpu != null) { hostPanel.appendChild(meter("CPU", cpu)); anyBar = true; return; }
+        } else if (kind === "memory") {
+          var mem = parseMem(text);
+          if (mem) {
+            hostPanel.appendChild(meter("Memory", mem.mem.pct,
+              mibText(mem.mem.used) + " / " + mibText(mem.mem.total)));
+            if (mem.swap && mem.swap.total > 0) {
+              hostPanel.appendChild(meter("Swap", mem.swap.pct,
+                mibText(mem.swap.used) + " / " + mibText(mem.swap.total)));
+            }
+            anyBar = true; return;
+          }
+        } else if (kind === "disk") {
+          var disk = parseDisk(text);
+          if (disk) {
+            hostPanel.appendChild(meter("Disk " + disk.primary.mount, disk.primary.pct));
+            anyBar = true; return;
+          }
+        }
+        // Unknown metric or parse failure → degrade to raw text (spec-024 known gap).
+        if (text) {
+          rawBlocks.push(h("details", { class: "host-raw-item" },
+            h("summary", { text: a.name + " (raw output)" }),
+            h("pre", { class: "mono", text: text })));
+        } else {
+          hostPanel.appendChild(h("div", { class: "meter" },
+            h("div", { class: "meter-head" },
+              h("span", { class: "meter-label", text: a.name }),
+              h("span", { class: "meter-val mono", text: "…" }))));
+        }
+      });
+      rawBlocks.forEach(function (b) { rawWrap.appendChild(b); });
+      if (!anyBar && !rawBlocks.length && hostActions.length) {
+        hostPanel.appendChild(h("p", { class: "small dim", text: "Polling…" }));
+      }
+    }
+
+    // App cards: grouped by app-probe action (per-app instances arrive once the
+    // app-monitor recipes + fan-out labelling land, 025). Each card is gate-safe.
+    var appGrid = appActions.length
+      ? h("div", { class: "app-cards" }, appActions.map(function (a) { return appCard(a); }))
+      : null;
+
+    renderHost({});
+
+    var statusChip = chip(mch.status);
+    var node = h("section", { class: "section monitor-machine" },
+      h("div", { class: "row-between" },
+        h("div", { class: "grow" },
+          h("h2", { text: mch.host }),
+          h("p", { class: "small dim mono", text: mch.loginUser + "@" + mch.host + ":" + mch.port })),
+        statusChip),
+      hostPanel,
+      rawWrap,
+      appGrid ? h("h3", { class: "mt-4", text: "Apps" }) : null,
+      appGrid);
+
+    function refresh() {
+      // Only APPROVED, param-free host actions are poll-runnable (app probes need a
+      // runtime app list; they light up via 025). Collect each reading, then render.
+      var runnable = hostActions.filter(function (a) {
+        return a.approvalState === "APPROVED" && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+      });
+      if (!runnable.length) { renderHost({}); return Promise.resolve(); }
+      var readings = {};
+      return Promise.all(runnable.map(function (a) {
+        return runAndCollect(mch.machineId, a.id, {}).then(function (r) {
+          readings[a.id] = r;
+        }).catch(function () { readings[a.id] = { stdout: "" }; });
+      })).then(function () { renderHost(readings); });
+    }
+
+    return { node: node, refresh: refresh };
+  }
+
+  /** One per-app card: framework badge, UP/DOWN pill, KPIs, run-chip row, drawer. */
+  function appCard(action) {
+    var framework = frameworkOf(action);
+    var pill = h("span", { class: "pill pill--unknown", text: "no data" });
+    var badge = h("span", { class: "fw-badge fw-badge--" + framework, text: framework });
+
+    var card = h("div", { class: "app-card" },
+      h("div", { class: "row-between" },
+        h("div", { class: "grow" },
+          h("strong", { text: action.name }),
+          h("div", { class: "row mt-2" }, badge, pill)),
+        chip(action.approvalState)),
+      h("div", { class: "app-kpis small dim mt-2", text: "Probe " + (action.recipeName || "") }),
+      h("div", { class: "run-chip-row mt-3" }, runChip(action)));
+    card.addEventListener("click", function (e) {
+      if (e.target.closest(".run-chip")) return; // let chips act on their own
+      openAppDrawer(action);
+    });
+    return card;
+  }
+
+  /** The per-app detail drawer: runtime (placeholder), probed template, related run. */
+  function openAppDrawer(action) {
+    var framework = frameworkOf(action);
+    var tokens = (action.argTokens || []).slice().sort(function (a, b) { return a.position - b.position; });
+    var cmd = h("code", { class: "command command--scroll" },
+      tokens.map(function (t, i) {
+        var sep = i > 0 ? " " : "";
+        return t.kind === "PARAM"
+          ? [sep, h("span", { class: "tok-param", text: "{" + t.value + "}" })]
+          : sep + t.value;
+      }));
+
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": action.name },
+      h("div", { class: "row-between" },
+        h("h2", { text: action.name }),
+        h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
+      h("div", { class: "row mt-2" },
+        h("span", { class: "fw-badge fw-badge--" + framework, text: framework }),
+        chip(action.approvalState)),
+      h("h3", { class: "mt-4", text: "Runtime" }),
+      h("p", { class: "small dim", text: "Runtime facts (version, server, base image) populate from the app monitor probes once they run (spec-025)." }),
+      h("h3", { class: "mt-4", text: "Probed command" }),
+      h("div", { class: "mt-2" }, cmd),
+      h("h3", { class: "mt-4", text: "Related actions" }),
+      h("div", { class: "run-chip-row mt-2" }, runChip(action)));
+
+    var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
+      if (e.target === backdrop) closeDrawer();
+    } }, drawer);
+    var root = byId("modal-root");
+    clear(root);
+    root.appendChild(backdrop);
+  }
+  function closeDrawer() { clear(byId("modal-root")); }
+
   // =========================================================== ROUTER =======
 
   var ROUTES = [
@@ -1186,6 +1600,7 @@
     { re: /^\/machines$/, fn: screenMachines, nav: "machines" },
     { re: /^\/machines\/register$/, fn: screenRegisterMachine, nav: "machines" },
     { re: /^\/machines\/([^/]+)$/, fn: function (m) { screenMachineDetail({ mid: m[1] }); }, nav: "machines" },
+    { re: /^\/monitor$/, fn: screenMonitor, nav: "monitor" },
     { re: /^\/machines\/([^/]+)\/recipes\/([^/]+)\/actions\/([^/]+)\/run$/,
       fn: function (m) { screenRunForm({ mid: m[1], rid: m[2], aid: m[3] }); }, nav: "machines" },
     { re: /^\/machines\/([^/]+)\/recipes\/([^/]+)\/actions\/([^/]+)$/,
@@ -1222,7 +1637,19 @@
     }
   }
 
+  // A view may register a teardown (e.g. the Monitor screen's poll timers). The
+  // router runs it before dispatching the next route so no interval leaks across
+  // navigations (spec-024: intervals cleared on route-away).
+  var currentViewCleanup = null;
+  function runViewCleanup() {
+    if (currentViewCleanup) {
+      try { currentViewCleanup(); } catch (e) { /* never let teardown break routing */ }
+      currentViewCleanup = null;
+    }
+  }
+
   function route() {
+    runViewCleanup();
     if (!Session.token()) { showLogin(); return; }
     showShell();
     var parsed = parseHash();
