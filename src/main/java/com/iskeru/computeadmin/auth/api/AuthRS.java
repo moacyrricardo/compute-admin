@@ -10,11 +10,12 @@ import jakarta.ws.rs.core.MediaType;
 import org.springframework.stereotype.Component;
 
 /**
- * Public sign-in resource. {@code POST /api/auth/google} exchanges a Google
- * credential for an app JWT and the user view. Deliberately <strong>not</strong>
+ * Public sign-in resource. {@code POST /api/auth/register} self-registers an
+ * email+password user and {@code POST /api/auth/login} authenticates one; both
+ * return the app JWT plus the user view. Deliberately <strong>not</strong>
  * {@code @Secured} — this is the entry point that mints the session.
  *
- * <p>spec-011.
+ * <p>spec-011; email+password since spec-014.
  */
 @Component
 @Path("/auth")
@@ -29,12 +30,22 @@ public class AuthRS {
     }
 
     @POST
-    @Path("/google")
-    public AuthDtos.Session google(AuthDtos.GoogleLogin body) {
-        if (body == null || body.credential() == null || body.credential().isBlank()) {
-            throw new BadRequestException("credential is required");
+    @Path("/register")
+    public AuthDtos.Session register(AuthDtos.RegisterRequest body) {
+        if (body == null) {
+            throw new BadRequestException("request body is required");
         }
-        AuthService.AuthResult result = authService.loginWithGoogle(body.credential());
+        AuthService.AuthResult result = authService.register(body.email(), body.password(), body.name());
+        return AuthDtos.Session.of(result.token(), result.user());
+    }
+
+    @POST
+    @Path("/login")
+    public AuthDtos.Session login(AuthDtos.LoginRequest body) {
+        if (body == null) {
+            throw new BadRequestException("request body is required");
+        }
+        AuthService.AuthResult result = authService.login(body.email(), body.password());
         return AuthDtos.Session.of(result.token(), result.user());
     }
 }

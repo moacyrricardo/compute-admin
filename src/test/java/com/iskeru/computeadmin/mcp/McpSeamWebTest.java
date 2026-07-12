@@ -97,10 +97,10 @@ class McpSeamWebTest {
         }
     }
 
-    /** Logs in via the dev Google bypass and mints a personal token for MCP. */
+    /** Registers an email+password user and mints a personal token for MCP. */
     private String provisionPersonalToken(String email) {
         AuthDtos.Session session = rest.postForObject(
-                "/api/auth/google", new AuthDtos.GoogleLogin(email), AuthDtos.Session.class);
+                "/api/auth/register", new AuthDtos.RegisterRequest(email, "password-123", null), AuthDtos.Session.class);
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(session.token());
         AuthDtos.CreatedTokenView created = rest.postForObject(

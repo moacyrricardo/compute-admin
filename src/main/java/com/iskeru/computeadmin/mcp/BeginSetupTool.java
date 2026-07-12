@@ -17,7 +17,8 @@ import java.util.Map;
  * {@link PairingService#begin} to start an RFC 8628-style device-authorization
  * pairing and returns the {@code deviceCode} the agent then polls with
  * {@code complete_setup}, plus the {@code verificationUrl} a human opens to approve
- * it (Google sign-in) in the UI. It exposes no user data and cannot approve.
+ * it in the UI (where he is signed in with email+password). It exposes no user data
+ * and cannot approve.
  *
  * <p>{@link #requiresAuth()} is {@code false}: this is the pre-authentication
  * self-setup handshake.

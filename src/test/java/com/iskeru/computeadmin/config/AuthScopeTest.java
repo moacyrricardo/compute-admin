@@ -142,7 +142,6 @@ class AuthScopeTest {
         AppUser user = new AppUser();
         user.setId(id);
         user.setEmail(email);
-        user.setGoogleSub("dev|" + email);
         return user;
     }
 

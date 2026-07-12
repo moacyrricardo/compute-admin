@@ -231,7 +231,7 @@ class RunServiceTest {
         String email = "user-" + UUID.randomUUID() + "@example.com";
         AppUser user = new AppUser();
         user.setEmail(email);
-        user.setGoogleSub("dev|" + email);
+        user.setPasswordHash("$2a$10$fixturehashfixturehashfixturehashfixturehashfixT");
         user.setName("user");
         return users.save(user);
     }

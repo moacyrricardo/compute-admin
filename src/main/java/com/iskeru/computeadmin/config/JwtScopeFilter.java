@@ -15,8 +15,9 @@ import java.io.IOException;
 /**
  * Binds a UI {@link AuthContext} on {@code /api/*} when a valid app JWT is
  * present. A missing or invalid token leaves the scope <strong>unbound</strong>
- * and the request proceeds — public resources ({@code POST /api/auth/google},
- * {@code GET /api/health}) still work, while {@code @Secured} resources are
+ * and the request proceeds — public resources ({@code POST /api/auth/register},
+ * {@code POST /api/auth/login}, {@code GET /api/health}) still work, while
+ * {@code @Secured} resources are
  * refused 401 by {@code AuthFilter} on the same thread. This is the one place the
  * app JWT is validated.
  *

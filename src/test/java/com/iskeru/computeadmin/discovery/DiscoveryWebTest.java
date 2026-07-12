@@ -122,7 +122,17 @@ class DiscoveryWebTest {
     }
 
     private AuthDtos.Session login(String email) {
-        return rest.postForObject("/api/auth/google", new AuthDtos.GoogleLogin(email), AuthDtos.Session.class);
+// Register on first use, fall back to login if the email already exists in
+        // the shared in-memory DB (register is not idempotent, unlike the old
+        // Google find-or-create). Either way the caller gets a live session.
+        org.springframework.http.ResponseEntity<AuthDtos.Session> reg = rest.postForEntity(
+                "/api/auth/register",
+                new AuthDtos.RegisterRequest(email, "password-123", null), AuthDtos.Session.class);
+        if (reg.getStatusCode().is2xxSuccessful() && reg.getBody() != null && reg.getBody().token() != null) {
+            return reg.getBody();
+        }
+        return rest.postForObject("/api/auth/login",
+                new AuthDtos.LoginRequest(email, "password-123"), AuthDtos.Session.class);
     }
 
     private static HttpHeaders bearer(String jwt) {
