@@ -1,5 +1,27 @@
 # 018 — Machine tags: filtering & auto-tagging
 
+> **Status: done.** Branch `moacyrricardo/spec-018-machine-tags-filtering-and-auto-tagging`
+> (stacked on spec-019). Linear is blocked for this repo, so there is no issue id.
+>
+> **How the implementation differed from / refined the spec:**
+> - `MachineRepository.findByOwner_IdAndTags_NameIn` is named exactly as specified;
+>   the ManyToMany join can repeat a machine once per matching tag, so `MachineService.list`
+>   de-dupes by id (preserving order) rather than relying on a `Distinct` finder.
+> - `MachineService.list` now takes `List<String>` (OR semantics); `MachineRS.list` binds
+>   a repeatable `?tag` param to that list and `list_machines` takes a `tags[]` argument.
+> - The once-per-machine guard is a `@NotAudited Instant factsProbedAt` column on `Machine`
+>   (migration V8, base table only — no `machine_aud` column). Because it is non-audited,
+>   the auto-tag write opens no Envers revision, so the spec-019 revision-count invariants
+>   are untouched (verified by `MachineReachedEventTest`). Its presence is what keeps
+>   auto-tagging one-shot and prevents re-adding a user-removed auto-tag.
+> - The facts probe (`MachineFactsProbe`) hangs off spec-019's `MachineReachedEvent` via
+>   `machine/event/MachineFactsTagger` (`@Async` on `machineEventExecutor`), reading the box
+>   with `cat` only (no sudo); the RHEL family normalises to `rhel`, unknown IDs / absent
+>   DMI signals yield no tag.
+> - Tests: `MachineServiceTest` (login-user guess, OR filter + owner scoping, add-only
+>   refine + once-guard), `MachineFactsProbeTest` (os-release / DMI parsing),
+>   `MachineFactsTaggerTest` (event → probe → add-only tags, once-per-machine).
+
 ## Context
 
 Machines already carry free-form, owner-scoped **tags** today: the `Tag` entity
