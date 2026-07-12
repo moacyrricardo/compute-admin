@@ -113,11 +113,16 @@ public class RunOutputHub {
     public RunOutputHub(
             @Value("${ca.run.output-subscriber-backlog:1024}") int subscriberBacklog,
             @Value("${ca.run.output-retention:10m}") Duration retention,
-            @Value("${ca.run.output-max-channels:256}") int maxChannels) {
+            @Value("${ca.run.output-max-channels:256}") int maxChannels,
+            @Value("${ca.run.output-delivery-threads:8}") int deliveryThreads) {
         this.subscriberBacklog = subscriberBacklog;
         this.retention = retention;
         this.maxChannels = maxChannels;
-        this.deliveryExecutor = Executors.newCachedThreadPool(deliveryThreadFactory());
+        // Bounded delivery pool (spec-016): a burst of subscribers can no longer spawn
+        // unbounded threads. Per-subscriber memory is already bounded by the backlog
+        // cap above; this bounds the thread dimension. Threads stay daemon.
+        this.deliveryExecutor = Executors.newFixedThreadPool(
+                Math.max(1, deliveryThreads), deliveryThreadFactory());
     }
 
     private static ThreadFactory deliveryThreadFactory() {

@@ -54,7 +54,7 @@ class RunOutputHubTest {
 
     @Test
     void evict_RemovesCompleteChannelPastTtl_NeverTheLiveRun() {
-        RunOutputHub hub = new RunOutputHub(1024, Duration.ofMinutes(10), 256);
+        RunOutputHub hub = new RunOutputHub(1024, Duration.ofMinutes(10), 256, 8);
 
         hub.publish("live", stdout("running"));       // never completed
         hub.publish("done", stdout("finished"));
@@ -73,7 +73,7 @@ class RunOutputHubTest {
 
     @Test
     void evict_EnforcesLruCapOnCompleteChannels() throws InterruptedException {
-        RunOutputHub hub = new RunOutputHub(1024, Duration.ofMinutes(10), 2);
+        RunOutputHub hub = new RunOutputHub(1024, Duration.ofMinutes(10), 2, 8);
 
         // Three complete channels with strictly increasing completedAt.
         completeChannel(hub, "c1");
@@ -95,7 +95,7 @@ class RunOutputHubTest {
     void slowSubscriber_NeitherStallsProducerNorOthers_AndIsDroppedPastBacklog() throws InterruptedException {
         int backlog = 5;
         int total = 40;
-        RunOutputHub hub = new RunOutputHub(backlog, Duration.ofMinutes(10), 256);
+        RunOutputHub hub = new RunOutputHub(backlog, Duration.ofMinutes(10), 256, 8);
 
         CountDownLatch slowEntered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
