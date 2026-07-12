@@ -319,12 +319,32 @@
   }
 
   function copy(text) {
+    // navigator.clipboard exists only in a secure context (HTTPS or localhost). Over
+    // plain HTTP on a LAN IP it is undefined, so fall back to a temporary textarea +
+    // execCommand("copy"), which works in non-secure contexts.
+    function fallback() {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        toast(ok ? "Copied to clipboard" : "Copy failed — select manually");
+      } catch (e) {
+        toast("Copy failed — select manually");
+      }
+    }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(
         function () { toast("Copied to clipboard"); },
-        function () { toast("Copy failed — select manually"); });
+        fallback);
     } else {
-      toast("Copy not available — select manually");
+      fallback();
     }
   }
 
@@ -410,11 +430,11 @@
             h("p", { class: "small dim mt-2", text: "One app-owned keypair serves the whole fleet; the private key never leaves this box. Add the public key to the target's authorized_keys:" }),
             h("div", { class: "field mt-3" },
               h("label", { text: "App public key" }),
-              h("code", { class: "command", text: key.publicKey }),
+              h("code", { class: "command command--scroll", text: key.publicKey }),
               h("div", { class: "hint mono", text: "fingerprint " + key.fingerprint })),
             h("div", { class: "field" },
               h("label", { text: "Install snippet" }),
-              h("code", { class: "command", text: snippet }),
+              h("code", { class: "command command--scroll", text: snippet }),
               h("button", { class: "btn btn--sm mt-2", onclick: function () { copy(snippet); } }, "Copy snippet"))),
           h("div", { class: "card" },
             h("h2", { text: "2 · Register & test connection" }),
@@ -1065,12 +1085,12 @@
           pageHead("App SSH key", "One app-owned keypair serves the whole fleet. The private key never leaves this box (spec risk S2)."),
           h("div", { class: "card" },
             h("div", { class: "field" }, h("label", { text: "Public key" }),
-              h("code", { class: "command", text: key.publicKey }),
+              h("code", { class: "command command--scroll", text: key.publicKey }),
               h("button", { class: "btn btn--sm mt-2", onclick: function () { copy(key.publicKey); } }, "Copy key")),
             h("div", { class: "field" }, h("label", { text: "Fingerprint" }),
-              h("code", { class: "command", text: key.fingerprint })),
+              h("code", { class: "command command--scroll", text: key.fingerprint })),
             h("div", { class: "field" }, h("label", { text: "Install on a target" }),
-              h("code", { class: "command", text: snippet }),
+              h("code", { class: "command command--scroll", text: snippet }),
               h("button", { class: "btn btn--sm mt-2", onclick: function () { copy(snippet); } }, "Copy snippet"))));
       });
     });
@@ -1156,9 +1176,13 @@
       var email = emailField.value.trim();
       var password = passwordField.value;
       if (!email || !password) { toast("Email and password are required"); return; }
+      // Only registration carries a display name; /auth/login accepts email+password
+      // only, so never send `name` on the login path.
+      var payload = { email: email, password: password };
+      if (path === "register") { payload.name = nameField.value.trim() || null; }
       fetch("/api/auth/" + path, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email, password: password, name: nameField.value.trim() || null })
+        body: JSON.stringify(payload)
       }).then(function (res) {
         return res.text().then(function (t) {
           if (!res.ok) {

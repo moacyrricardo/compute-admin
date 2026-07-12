@@ -9,6 +9,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -66,6 +67,25 @@ class AuthWebTest {
                 "/api/auth/login",
                 new AuthDtos.LoginRequest("web-login@example.com", "password-123"),
                 AuthDtos.Session.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody().token()).isNotBlank();
+    }
+
+    @Test
+    void login_IgnoresUnknownField_StillSignsIn() {
+        // Regression (found in live testing): the UI login form sent a `name` field to
+        // /auth/login; a stray/unknown property must never fail sign-in — it 400'd before.
+        rest.postForEntity("/api/auth/register",
+                new AuthDtos.RegisterRequest("web-extra@example.com", "password-123", null),
+                AuthDtos.Session.class);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        String bodyWithExtraField =
+                "{\"email\":\"web-extra@example.com\",\"password\":\"password-123\",\"name\":\"ignored\"}";
+        ResponseEntity<AuthDtos.Session> response = rest.postForEntity(
+                "/api/auth/login", new HttpEntity<>(bodyWithExtraField, headers), AuthDtos.Session.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().token()).isNotBlank();

@@ -67,7 +67,9 @@ public class KeyService {
     void init() {
         this.keyPair = Files.exists(privateKeyPath) ? load() : generateAndStore();
         byte[] blob = openSshBlob(keyPair.getPublic());
-        this.publicKeyOpenSsh = OPENSSH_TYPE + " " + Base64.getEncoder().encodeToString(blob);
+        // Trailing comment is the optional third authorized_keys field: it labels the
+        // key on the target (identifies it as this app's) and is ignored by SSH auth.
+        this.publicKeyOpenSsh = OPENSSH_TYPE + " " + Base64.getEncoder().encodeToString(blob) + " compute-admin";
         this.fingerprint = "SHA256:" + Base64.getEncoder().withoutPadding().encodeToString(sha256(blob));
     }
 
