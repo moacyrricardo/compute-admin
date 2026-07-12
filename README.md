@@ -73,9 +73,9 @@ register** of everything currently left insecure on purpose.
 - **H2 file** database, **Flyway** migrations, **JPA + Hibernate Envers**
   (validity strategy) for audit, **Lombok**.
 - **SSH** via **Apache MINA SSHD**; a single app-owned **ed25519** keypair.
-- **User-based:** Google sign-in for the UI, a per-user personal token for MCP;
-  each user owns his own machines/recipes, nothing shared. Still a single **local**
-  instance (transport hardening deferred). See ARCH.md spec 011.
+- **User-based:** Email+password sign-in for the UI, a per-user personal token for
+  MCP; each user owns his own machines/recipes, nothing shared. Still a single
+  **local** instance (transport hardening deferred). See ARCH.md specs 011 & 014.
 
 ## Status
 

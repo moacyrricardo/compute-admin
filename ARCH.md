@@ -20,11 +20,11 @@ Every architectural choice below serves that invariant. There is deliberately
 MCP tool layer never calls.
 
 **Users & ownership.** compute-admin is **multi-user with per-user isolation**: a
-user signs in (Google), registers **his own** machines, and adds **his own**
+user signs in (email + password), registers **his own** machines, and adds **his own**
 recipes; nothing is shared between users. `Machine` and `RecipeBlueprint` carry an
 `owner`; `Recipe`/`Action`/`Run` derive ownership through their machine. Every
 service scopes to the current user, and a not-owned or absent row reads as **404**
-(existence is never leaked). The UI authenticates with a Google-minted JWT; an
+(existence is never leaked). The UI authenticates with an email+password-minted JWT; an
 agent authenticates to MCP with a **per-user personal token**. This makes the
 invariant enforceable: approval requires a UI-authenticated session (`via = UI`),
 and the MCP token (`via = MCP`) has no path to it. See spec **011**.
@@ -48,8 +48,9 @@ and the MCP token (`via = MCP`) has no path to it. See spec **011**.
   Envers** with the **validity audit strategy** (`REV` + `REVEND` columns on the
   audited config tables). Lombok, constructor injection throughout.
 - **SSH:** **Apache MINA SSHD** client, behind a port (see below).
-- **Authentication:** Google sign-in → app JWT for the UI; per-user **personal
-  token** for MCP (spec 011). Per-user ownership on all data. Still a single
+- **Authentication:** Email+password sign-in → app JWT for the UI; per-user
+  **personal token** for MCP (spec 011; auth mechanism now email+password per spec
+  014). Per-user ownership on all data. Still a single
   **local** instance — transport hardening beyond auth stays deferred (S1').
 
 ## Feature modules
@@ -68,7 +69,7 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
 | `run` | Execution engine: async **jobs** (queued/running/done/failed), captured stdout/stderr + exit code, **live streaming** to UI (SSE) and MCP (progress). |
 | `ssh` | SSH adapter (MINA SSHD) behind the `SshExecutor` port; owns the **app keypair** lifecycle (generate on first boot, expose public key). |
 | `mcp` | MCP tool/resource definitions. A **thin** adapter that maps tools onto the feature services — it holds **no business rules**, so the approval gate can't be bypassed by talking to MCP. |
-| `auth` | Users, Google sign-in, app JWT, per-user MCP **personal tokens**, the `AuthContext`/`CurrentUser` scope, `@Secured` filter. Owns the ownership rule everything else scopes by (spec 011). |
+| `auth` | Users, email+password sign-in, app JWT, per-user MCP **personal tokens**, the `AuthContext`/`CurrentUser` scope, `@Secured` filter. Owns the ownership rule everything else scopes by (spec 011; email+password sign-in per spec 014). |
 | `audit` | Cross-cutting Envers infra: custom `AuditRevision` entity + `CurrentUserRevisionListener`. Not a feature module (no `*RS`/service/repository slices). |
 | `common` | Cross-cutting: exception mappers, `HtmlEscaper`, `HealthRS`, JSON helpers. |
 | `config` | Framework wiring: `JaxRsApplication` (`@ApplicationPath("/api")`), the MCP transport servlet registration, scheduling, the current-actor scope filter. |
@@ -263,14 +264,14 @@ not deleted.
 
 | # | Decision (insecure for now) | Why it's OK today | Revisit trigger / hardening |
 |---|-----------------------------|-------------------|-----------------------------|
-| **S1** | ~~No authentication / authorization.~~ **RESOLVED by spec 011** — Google sign-in → app JWT (UI), per-user personal token (MCP), per-user ownership on all data, not-owned → 404. The product is user-based, so this became a core feature, not a deferred risk. | — | — |
+| **S1** | ~~No authentication / authorization.~~ **RESOLVED by specs 011 & 014** — self-service email+password sign-in → app JWT (UI; Google sign-in in the original 011, replaced by email+password in 014), per-user personal token (MCP), per-user ownership on all data, not-owned → 404. The product is user-based, so this became a core feature, not a deferred risk. | — | — |
 | **S1'** | **Transport still unhardened** — single local instance, default (non-loopback) bind, no TLS, no CSRF/Origin check on the JWT-authenticated UI. | Still one **local** instance; auth (S1) now enforces per-user isolation. | Before any non-local/shared/deployed use: bind `127.0.0.1`, add TLS, add Origin/CSRF checks on `/api`. |
 | **S2** | **One app-owned private key, unencrypted on disk** (`./data/id_ed25519`, `chmod 600`), shared across **all** users' machines. Per-user isolation is logical (DB ownership), not cryptographic — the single key can reach any registered machine, so an ownership-scoping bug crosses the tenant boundary. | One local box; filesystem perms are the boundary; ownership checks are covered by tests (011). | Backups leaving the box or any deployment → encrypt at rest (passphrase/KMS envelope) and/or move to an agent. If per-tenant key isolation is ever needed, give each user their own keypair. |
 | **S3** | **No SSH host-key verification** — the app accepts any target host key. | Speeds up onboarding; targets are ones you control on a LAN. | Any untrusted network path to a target → enable TOFU pinning (capture at registration, verify after; UI re-approve on change). The `machine` model should leave room for a pinned host-key column. |
 | **S4** | **Typed params are bound into command templates.** Every param is an injection surface if validation is weak. | Params are enum/regex/allowed-set validated and kept as discrete argv; the SSH adapter, which has no argv protocol, POSIX single-quotes each element into the one shell line `exec` runs, so the guarantee is the escaping, not the absence of a shell. | Any free-form param, or a template whose structure (not just values) is caller-controlled, needs a stricter allowlist + a security review. Never add a "free-form command" param. |
 | **S5** | **Per-action `sudo` assumes passwordless sudo** on the target for service ops. | You grant the login user scoped passwordless sudo out of band. | Prefer a narrow sudoers allowlist per command over blanket NOPASSWD; document what each machine's login user is allowed to escalate. |
 | **S6** | **Cloud credentials** for discovery (AWS/GCP/Magalu) read from ambient env/instance profile. | Local dev uses your own already-present credentials. | Before multi-tenant or deployed use: scope to read-only `Describe*`/list permissions, store per-provider config as secrets, never in the DB in plaintext. |
-| **S7** | **No rate limiting / concurrency cap** on runs. A misbehaving agent could fan out many commands. | Local instance, low volume; each user only drives his own machines. | Add a per-machine concurrency cap + a per-user/global run quota before shared or higher-volume use. |
+| **S7** | **No rate limiting / concurrency cap** on runs, and (since spec 014) **no throttle / lockout on login attempts** — email+password sign-in accepts unlimited tries. A misbehaving agent could fan out many commands; an attacker could brute-force passwords. | Local instance, low volume; each user only drives his own machines. | Add a per-machine concurrency cap + a per-user/global run quota, and a login attempt throttle/lockout, before shared or higher-volume use. |
 | **S8** | ~~MCP transport unauthenticated.~~ **RESOLVED by spec 011** — `/mcp` requires a per-user personal token; unauthenticated requests are rejected and every tool scopes to the token's user. | — | — |
 
 When any trigger fires, open a spec to harden it and update this table (don't just
