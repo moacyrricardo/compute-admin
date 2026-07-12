@@ -10,8 +10,8 @@ action into something MCP is allowed to run.
 
 ## Demo
 
-> Captured from the **design mock** (spec 012) — the app is being built one spec at
-> a time, so this shows the intended UX, not a shipped build.
+> Captured from the **design mock** (spec 012). The UI shell it previews is now
+> built and wired to the live backend on `main`; these clips show the intended UX.
 
 **Login, then authorize an agent over MCP** — you sign in; an MCP client requests
 pairing; you approve it and a per-user token is issued. The agent never
@@ -79,16 +79,20 @@ register** of everything currently left insecure on purpose.
 
 ## Status
 
-Greenfield. Architecture is specified in [ARCH.md](./ARCH.md); features are built
-one **spec** at a time (`specs/NNN-status-slug.md`, created with `/new-spec` and
-implemented with the spec skills). Nothing is built yet.
+The **v1 core is built and on `main`**: the MCP transport, user accounts &
+ownership, machine registry & SSH adapter, the recipe/action approval gate,
+the execution engine, auto-discovery, custom & blueprint recipes, the MCP
+tool surface, and the web UI shell (specs 001–012). Runtime hardening
+(spec 013) and cloud import (spec 009) are the tracked follow-ups. Architecture
+is specified in [ARCH.md](./ARCH.md); each feature lands as a numbered spec —
+see the [spec catalog](./specs/README.md) for status.
 
-## Running (once the skeleton spec lands)
+## Running
 
 ```bash
 mvn spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
 Dev uses the H2 file DB; the app prints its public SSH key on first boot for you
-to install on target machines. Concrete run/verify recipes will live in
-`CLAUDE.md` once the first spec is done.
+to install on target machines. See [CLAUDE.md](./CLAUDE.md) for the full run,
+health-check, and SSH-verify recipes.
