@@ -417,8 +417,16 @@
             port: parseInt(port.value, 10) || 22,
             loginUser: user.value.trim()
           }).then(function (m) {
-            toast("Registered — probing connectivity");
-            location.hash = "#/machines/" + m.id;
+            // Fire the promised "test connection" probe right after registering, then
+            // land on the machine (whose status pill refreshes to ONLINE once the
+            // reachability event is processed). A failed probe still lands there.
+            return api("POST", "/machines/" + m.id + "/test").then(function (fresh) {
+              toast("Registered — connection " + humanize(fresh.status));
+              location.hash = "#/machines/" + m.id;
+            }, function () {
+              toast("Registered — probing connectivity");
+              location.hash = "#/machines/" + m.id;
+            });
           }).catch(function (err) { mount(errorCard(err)); });
         }
 
@@ -466,6 +474,23 @@
         });
       }).then(function (data) {
         var machine = data.machine;
+        var statusChip = chip(machine.status);
+        var testBtn = h("button", { class: "btn" }, "Test connection");
+        testBtn.addEventListener("click", function () {
+          testBtn.disabled = true;
+          testBtn.textContent = "Testing…";
+          api("POST", "/machines/" + mid + "/test").then(function (fresh) {
+            var freshChip = chip(fresh.status);
+            if (statusChip.parentNode) statusChip.parentNode.replaceChild(freshChip, statusChip);
+            statusChip = freshChip;
+            toast("Connection " + humanize(fresh.status));
+          }).catch(function (err) {
+            toast(err.message);
+          }).then(function () {
+            testBtn.disabled = false;
+            testBtn.textContent = "Test connection";
+          });
+        });
         var discoverBtn = h("button", { class: "btn" }, "Discover recipes");
         discoverBtn.addEventListener("click", function () {
           discoverBtn.disabled = true;
@@ -493,7 +518,7 @@
           crumbs(link("#/machines", "Machines"),
             h("span", { class: "mono", text: machine.loginUser + "@" + machine.host })),
           pageHead(machine.host, machine.loginUser + "@" + machine.host + ":" + machine.port,
-            [chip(machine.status), discoverBtn]),
+            [statusChip, testBtn, discoverBtn]),
           h("div", { class: "row" }, (machine.tags || []).map(function (t) {
             return h("span", { class: "tag", text: t });
           })),
