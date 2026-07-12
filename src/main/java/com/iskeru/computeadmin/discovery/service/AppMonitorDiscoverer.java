@@ -258,7 +258,11 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     /** The local port from an ss data line's "Local Address:Port" column. */
     private Integer localPort(String line) {
         for (String token : line.trim().split("\\s+")) {
-            if (token.contains(":") && !token.contains("*") && !token.startsWith("users:")) {
+            // Skip only the process column (users:((...))). Do NOT skip a "*:PORT"
+            // token: an all-interfaces bind — the default for a JVM (Tomcat/Netty) —
+            // renders the LOCAL address as "*:8080" in ss. The peer column "*:*" is
+            // harmless here because portAfterColon returns null for a non-numeric tail.
+            if (token.contains(":") && !token.startsWith("users:")) {
                 Integer port = portAfterColon(token);
                 if (port != null) {
                     return port;
