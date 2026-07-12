@@ -35,6 +35,7 @@ import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.OutputSink;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import com.iskeru.computeadmin.ssh.SshTarget;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -100,19 +101,31 @@ class RunServiceTest {
         }
 
         @Bean
-        SshExecutor sshExecutor() {
-            return new SshExecutor() {
-                @Override
-                public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
-                    return new ExecResult(0, "ok\n", "");
-                }
+        RecordingSshExecutor sshExecutor() {
+            return new RecordingSshExecutor();
+        }
+    }
 
-                @Override
-                public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink) {
-                    sink.onStdout("ok\n");
-                    sink.onComplete(0);
-                }
-            };
+    /**
+     * A fake transport that records every argv it is handed, so a fan-out test can
+     * assert it dispatched the fixed template once per item as DISCRETE argv lists —
+     * never a single looping/{@code &&}/{@code ;} shell line (the S4 regression).
+     */
+    static final class RecordingSshExecutor implements SshExecutor {
+
+        final List<List<String>> argvCalls = new CopyOnWriteArrayList<>();
+
+        @Override
+        public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
+            argvCalls.add(List.copyOf(argv));
+            return new ExecResult(0, "ok\n", "");
+        }
+
+        @Override
+        public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink) {
+            argvCalls.add(List.copyOf(argv));
+            sink.onStdout("ok\n");
+            sink.onComplete(0);
         }
     }
 
@@ -143,7 +156,17 @@ class RunServiceTest {
     @Autowired
     private AppUserRepository users;
 
+    @Autowired
+    private RecordingSshExecutor ssh;
+
     private record Seed(String machineId, String actionId) {
+    }
+
+    // The recording SSH fake is a shared singleton; reset its capture before each test
+    // so one test's dispatches never bleed into another's argv assertions.
+    @BeforeEach
+    void resetRecordedArgv() {
+        ssh.argvCalls.clear();
     }
 
     @Test
@@ -291,6 +314,98 @@ class RunServiceTest {
         assertThat(recorder.stream(RunOutputHub.OutputEvent.EXIT)).contains("0");
     }
 
+    // --- fan-out (spec-022) -------------------------------------------------
+
+    // NOT_SUPPORTED: commit so the after-commit dispatch fires and every child runs.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_FanOutAction_RunsFixedTemplatePerItem_NeverAShellLoop() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedFanOutAction(true));
+        String items = "[{\"appName\":\"orders\",\"port\":8080},"
+                + "{\"appName\":\"billing\",\"port\":9090},"
+                + "{\"appName\":\"web\",\"port\":8000}]";
+
+        Run parent = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("apps", items)));
+
+        // The parent aggregates its children: DONE once all three children are DONE.
+        Run finishedParent = awaitTerminal(parent.getId());
+        assertThat(finishedParent.getStatus()).isEqualTo(RunStatus.DONE);
+        assertThat(finishedParent.getParentRunId()).isNull();
+
+        List<Run> children = runs.findByParentRunId(parent.getId());
+        assertThat(children).hasSize(3);
+        assertThat(children).allSatisfy(c -> assertThat(c.getStatus()).isEqualTo(RunStatus.DONE));
+        assertThat(children).extracting(Run::getAppLabel)
+                .containsExactlyInAnyOrder("orders", "billing", "web");
+
+        // The direct S4 regression: THREE fixed-template argv lists, each a discrete
+        // argv — never one looping/&&/;/| shell line.
+        assertThat(ssh.argvCalls).hasSize(3);
+        assertThat(ssh.argvCalls).allSatisfy(argv -> {
+            assertThat(argv).hasSize(3);
+            assertThat(argv.get(0)).isEqualTo("probe");
+            assertThat(argv).noneMatch(a -> a.contains("&&") || a.contains(";")
+                    || a.contains("|") || a.contains(" "));
+        });
+        // The port bound per item is exactly the item's validated scalar.
+        assertThat(ssh.argvCalls).extracting(argv -> argv.get(2))
+                .containsExactlyInAnyOrder("8080", "9090", "8000");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_FanOutWithOneInvalidItem_FailsWholeRun_NothingDispatched() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedFanOutAction(true));
+        // The second item's app-name carries a space — outside the fixed charset.
+        String items = "[{\"appName\":\"orders\",\"port\":8080},"
+                + "{\"appName\":\"bad name\",\"port\":9090}]";
+
+        long before = runs.count();
+        assertThatThrownBy(() -> asUser(user,
+                () -> runService.run(seed.machineId(), seed.actionId(), Map.of("apps", items))))
+                .isInstanceOf(ParamValidationException.class);
+
+        // Nothing dispatched and nothing persisted: one bad item fails the whole run
+        // before any child (or the parent) is saved.
+        assertThat(ssh.argvCalls).isEmpty();
+        assertThat(runs.count()).isEqualTo(before);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_ScalarAction_HasNoParentOrLabel_UnchangedByFanOut() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedAction(true));
+
+        Run queued = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("svc", "nginx")));
+        Run finished = awaitTerminal(queued.getId());
+
+        assertThat(finished.getStatus()).isEqualTo(RunStatus.DONE);
+        assertThat(finished.getParentRunId()).isNull();
+        assertThat(finished.getAppLabel()).isNull();
+        // A scalar action is a fan-out of size 1: one dispatch of the fixed argv.
+        assertThat(ssh.argvCalls).hasSize(1);
+        assertThat(ssh.argvCalls.get(0)).containsSubsequence("systemctl", "restart", "nginx");
+    }
+
+    // --- MONITOR classification grants nothing (the gate is unchanged) ------
+
+    @Test
+    void run_MonitorActionNotApproved_IsRefused() {
+        AppUser user = saveUser();
+        // A MONITOR recipe/action, NOT approved. MONITOR is display-only: it must not
+        // auto-approve or carve out a read-only path — an unapproved action is refused.
+        Seed seed = asUser(user, () -> seedFanOutAction(false));
+        String items = "[{\"appName\":\"orders\",\"port\":8080}]";
+
+        assertThatThrownBy(() -> asUser(user,
+                () -> runService.run(seed.machineId(), seed.actionId(), Map.of("apps", items))))
+                .isInstanceOf(ActionNotApprovedException.class);
+        assertThat(ssh.argvCalls).isEmpty();
+    }
+
     /** Polls the run until it reaches a terminal state (or a short timeout). */
     private Run awaitTerminal(String runId) {
         long deadline = System.currentTimeMillis() + 5_000;
@@ -323,6 +438,28 @@ class RunServiceTest {
                         new ArgTokenInput(TokenKind.PARAM, "svc")),
                 List.of(new ParamDefInput("svc", ParamKind.ALLOWED_SET, null, null, null,
                         List.of("nginx", "docker", "mysql")))));
+        if (approve) {
+            approvalService.submitForApproval(action.getId());
+            approvalService.approve(action.getId());
+        }
+        return new Seed(machine.getId(), action.getId());
+    }
+
+    /**
+     * A MONITOR recipe with a fan-out probe action: a fixed single-app template
+     * referencing the {@code app-name}/{@code port} components plus one
+     * {@code APP_PORT_LIST} composite param (spec-022). Approved when {@code approve}.
+     */
+    private Seed seedFanOutAction(boolean approve) {
+        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Recipe recipe = recipeService.create(new CreateRecipeInput(
+                machine.getId(), "monitor", "app monitors", RecipeType.MONITOR));
+        Action action = actionService.addAction(new AddActionInput(
+                recipe.getId(), "probe apps", "probe each app", false,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, "probe"),
+                        new ArgTokenInput(TokenKind.PARAM, "app-name"),
+                        new ArgTokenInput(TokenKind.PARAM, "port")),
+                List.of(new ParamDefInput("apps", ParamKind.APP_PORT_LIST, null, null, null, null))));
         if (approve) {
             approvalService.submitForApproval(action.getId());
             approvalService.approve(action.getId());

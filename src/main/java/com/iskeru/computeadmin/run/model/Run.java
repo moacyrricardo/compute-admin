@@ -83,6 +83,27 @@ public class Run {
     @Column(name = "approved_snapshot_hash", nullable = false, length = 64)
     private String approvedSnapshotHash;
 
+    /**
+     * The parent fan-out run this row is a child of, or null for a standalone run
+     * (the pre-022 scalar path — a fan-out of size 1 — and the parent row itself).
+     * A monitor poll over a repeatable {@code (app-name, port)} list persists one
+     * parent {@link Run} plus one child per item; the parent aggregates child status
+     * ({@code DONE} iff all children {@code DONE}, else {@code FAILED}). Modelled as a
+     * plain self-referencing id (with a DB FK) rather than an association, since a
+     * child needs no eager parent graph. spec-022.
+     */
+    @Column(name = "parent_run_id", length = 36)
+    private String parentRunId;
+
+    /**
+     * The {@code appName} label a fan-out child is tagged with (the item's app-name),
+     * so the dashboard can route this child's output to the right app card. Null for a
+     * parent or a non-fan-out run. Presentation metadata only — the raw stdout/stderr
+     * stays exactly what the fixed template produced. spec-022.
+     */
+    @Column(name = "app_label", length = 64)
+    private String appLabel;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private RunStatus status = RunStatus.QUEUED;
