@@ -8,6 +8,8 @@ import com.iskeru.computeadmin.discovery.service.CronDiscoverer;
 import com.iskeru.computeadmin.discovery.service.DatabaseDiscoverer;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveredRecipe;
+import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconcileOutcome;
+import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconciledAction;
 import com.iskeru.computeadmin.discovery.service.DockerDiscoverer;
 import com.iskeru.computeadmin.discovery.service.NginxDiscoverer;
 import com.iskeru.computeadmin.machine.model.Machine;
@@ -15,6 +17,8 @@ import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
+import com.iskeru.computeadmin.recipe.model.ParamAllowedValue;
+import com.iskeru.computeadmin.recipe.model.Recipe;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.repository.ActionRepository;
 import com.iskeru.computeadmin.recipe.repository.RecipeRepository;
@@ -67,6 +71,13 @@ class DiscoveryServiceTest {
     private static final List<String> MUTATING_TOKENS = List.of(
             "restart", "reload", "stop", "start", "rm", "ln", "mysqldump", "pg_dump", "status");
 
+    /**
+     * Mutable `docker ps` probe output so a re-discovery test can change the running
+     * container set between calls (the attacker-influenced ALLOWED_SET, S3). Reset in
+     * {@link #seedUser()} so each test starts from the single container {@code web}.
+     */
+    private static volatile String dockerPsOutput = "web\n";
+
     @TestConfiguration
     static class FakeSshConfig {
         @Bean
@@ -98,6 +109,9 @@ class DiscoveryServiceTest {
     private ActionRepository actions;
 
     @Autowired
+    private ApprovalService approvalService;
+
+    @Autowired
     private PlatformTransactionManager transactionManager;
 
     private AppUser alice;
@@ -105,6 +119,7 @@ class DiscoveryServiceTest {
     @BeforeEach
     void seedUser() {
         alice = saveUser("alice@example.com");
+        dockerPsOutput = "web\n";
         // The fake bean is a context-cached singleton reused across methods; reset its
         // recordings so each test asserts only its own probes.
         FakeSshExecutor fake = (FakeSshExecutor) ssh;
@@ -123,7 +138,8 @@ class DiscoveryServiceTest {
         assertThat(discovered).extracting(d -> d.recipe().getType())
                 .contains(RecipeType.NGINX, RecipeType.DOCKER, RecipeType.DATABASE, RecipeType.CRON);
 
-        List<Action> actions = discovered.stream().flatMap(d -> d.actions().stream()).toList();
+        List<Action> actions = discovered.stream()
+                .flatMap(d -> d.actions().stream()).map(ReconciledAction::action).toList();
         assertThat(actions).isNotEmpty();
         assertThat(actions).allSatisfy(action -> {
             assertThat(action.getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
@@ -164,6 +180,111 @@ class DiscoveryServiceTest {
                 .isInstanceOf(com.iskeru.computeadmin.machine.service.MachineNotFoundException.class);
     }
 
+    @Test
+    void reDiscover_IsIdempotent_NoDuplicateRecipesOrActions() {
+        String machineId = asUser(alice, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            discoveryService.discover(machine.getId());
+            discoveryService.discover(machine.getId());
+            return machine.getId();
+        });
+
+        // One recipe per (machine, type, name) triple — not a second copy per re-run.
+        List<Recipe> persisted = recipes.findByMachine_IdAndMachine_Owner_Id(machineId, alice.getId());
+        assertThat(persisted).isNotEmpty();
+        assertThat(persisted).extracting(r -> r.getType() + "/" + r.getName()).doesNotHaveDuplicates();
+
+        // And no duplicate action names within any reconciled recipe.
+        for (Recipe recipe : persisted) {
+            assertThat(actions.findByRecipe_IdOrderByName(recipe.getId()))
+                    .extracting(Action::getName).doesNotHaveDuplicates();
+        }
+    }
+
+    @Test
+    void reDiscover_ApprovedIdentical_SurvivesUnchanged() {
+        asUser(alice, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            discoveryService.discover(machine.getId());
+
+            Recipe docker = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
+                    machine.getId(), alice.getId(), RecipeType.DOCKER, "docker").orElseThrow();
+            Action ps = actions.findByRecipe_IdAndName(docker.getId(), "ps").orElseThrow();
+            approvalService.approve(ps.getId());
+
+            // Re-discover with identical probe output.
+            ReconciledAction reconciled = reconciledActionNamed(
+                    discoveryService.discover(machine.getId()), "ps");
+            assertThat(reconciled.outcome()).isEqualTo(ReconcileOutcome.UNCHANGED);
+            assertThat(reconciled.action().getApprovalState()).isEqualTo(ApprovalState.APPROVED);
+            assertThat(reconciled.proposed()).isNull();
+            return null;
+        });
+    }
+
+    @Test
+    void reDiscover_ApprovedDiffers_IsSurfacedNotDuplicated() {
+        asUser(alice, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            discoveryService.discover(machine.getId());
+
+            Recipe docker = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
+                    machine.getId(), alice.getId(), RecipeType.DOCKER, "docker").orElseThrow();
+            Action restart = actions.findByRecipe_IdAndName(docker.getId(), "restart container").orElseThrow();
+            approvalService.approve(restart.getId());
+
+            // A new container appears in the ALLOWED_SET before the human re-approves.
+            dockerPsOutput = "web\napi\n";
+            ReconciledAction reconciled = reconciledActionNamed(
+                    discoveryService.discover(machine.getId()), "restart container");
+
+            // The approval is left intact and the diff surfaced — never auto-adopted.
+            assertThat(reconciled.outcome()).isEqualTo(ReconcileOutcome.DIFFERS_AWAITING_REAPPROVAL);
+            assertThat(reconciled.action().getApprovalState()).isEqualTo(ApprovalState.APPROVED);
+            assertThat(reconciled.proposed()).isNotNull();
+            // The stored (approved) action still bounds only the originally-approved set.
+            assertThat(allowedContainers(reconciled.action())).containsExactly("web");
+
+            // No duplicate "restart container" action was minted (single-valued lookup).
+            assertThat(actions.findByRecipe_IdOrderByName(docker.getId()))
+                    .filteredOn(a -> a.getName().equals("restart container")).hasSize(1);
+            return null;
+        });
+    }
+
+    @Test
+    void reDiscover_NotYetApprovedDiffers_IsRefreshedInPlace() {
+        asUser(alice, () -> {
+            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            discoveryService.discover(machine.getId());
+
+            // Never approved; a new container appears before review.
+            dockerPsOutput = "web\napi\n";
+            ReconciledAction reconciled = reconciledActionNamed(
+                    discoveryService.discover(machine.getId()), "restart container");
+
+            assertThat(reconciled.outcome()).isEqualTo(ReconcileOutcome.REFRESHED);
+            assertThat(reconciled.action().getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
+            // The refreshed proposal picked up the new container in place.
+            assertThat(allowedContainers(reconciled.action())).containsExactlyInAnyOrder("web", "api");
+            return null;
+        });
+    }
+
+    private static ReconciledAction reconciledActionNamed(List<DiscoveredRecipe> discovered, String name) {
+        return discovered.stream().flatMap(d -> d.actions().stream())
+                .filter(ra -> ra.action().getName().equals(name))
+                .findFirst().orElseThrow();
+    }
+
+    private static List<String> allowedContainers(Action action) {
+        return action.getParamDefs().stream()
+                .filter(def -> def.getName().equals("container"))
+                .flatMap(def -> def.getAllowedValues().stream())
+                .map(ParamAllowedValue::getValue)
+                .toList();
+    }
+
     // NOT_SUPPORTED so the probe phase runs with NO ambient transaction (the seam the
     // fake records) and the persist phase's own TransactionTemplate really commits.
     // Because that commits into the shared in-memory DB, it registers under a unique
@@ -184,7 +305,8 @@ class DiscoveryServiceTest {
             assertThat(fake.transactionActive).allMatch(active -> !active);
 
             // Proposals still land PENDING_APPROVAL; discovery never approves.
-            List<Action> persisted = discovered.stream().flatMap(d -> d.actions().stream()).toList();
+            List<Action> persisted = discovered.stream()
+                    .flatMap(d -> d.actions().stream()).map(ReconciledAction::action).toList();
             assertThat(persisted).isNotEmpty();
             assertThat(persisted).allSatisfy(action ->
                     assertThat(action.getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL));
@@ -203,7 +325,7 @@ class DiscoveryServiceTest {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         tx.executeWithoutResult(status -> {
             for (DiscoveredRecipe d : discovered) {
-                d.actions().forEach(action -> actions.deleteById(action.getId()));
+                d.actions().forEach(reconciled -> actions.deleteById(reconciled.action().getId()));
                 recipes.deleteById(d.recipe().getId());
             }
             machines.findByOwnerId(owner.getId()).forEach(machine -> machines.deleteById(machine.getId()));
@@ -219,7 +341,7 @@ class DiscoveryServiceTest {
             case "ls /etc/nginx/sites-available" -> ok("default\n");
             case "ls /etc/nginx/sites-enabled" -> ok("default\n");
             case "command -v docker" -> ok("/usr/bin/docker");
-            case "docker ps --format {{.Names}}" -> ok("web\n");
+            case "docker ps --format {{.Names}}" -> ok(dockerPsOutput);
             case "command -v mysql" -> ok("/usr/bin/mysql");
             case "systemctl is-active mysql" -> ok("active");
             case "mysql -N -B -e SHOW DATABASES" -> ok("information_schema\nappdb\n");
