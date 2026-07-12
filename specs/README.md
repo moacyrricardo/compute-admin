@@ -25,7 +25,7 @@ merges and renames it).
 | 010 | Recipe blueprints (author once, instantiate per-machine) | ✅ done | on `main` |
 | 008 | MCP write & run tools | ✅ done | on `main` — MCP actor-propagation resolved |
 | 012 | Web UI shell, design system & the approval screen | ✅ done | on `main` — live-integrated |
-| 013 | Runtime resource hygiene (H1/H3/H6) | ⚪ todo | streaming eviction, tx scoping, SSH pooling |
+| 013 | Runtime resource hygiene (H1/H3/H6) | ✅ done | on `main` — streaming eviction, tx scoping, one shared SSH client |
 | 014 | Email + password authentication | ✅ done | replaces Google sign-in; supersedes 011's auth mechanism |
 | 015 | Custom-script content-pinning | ⚪ todo | security: hash-at-approval + re-hash-at-run; resolves **H5**, hardens S5 |
 | 016 | Graceful shutdown & run reconciliation | ⚪ todo | drain in-flight runs + boot reconciler for orphaned QUEUED/RUNNING rows; neighbor to S7 (out of scope) |
@@ -63,10 +63,16 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 | H7 | `ActionSnapshot` canonical serialization uses unescaped delimiters (theoretical hash-collision surface; currently moot) | 004 | low |
 
 **Promoted:** **H1 + H3 + H6 → spec 013** (runtime resource hygiene) — grouped by
-their shared root cause (holding a resource across network I/O). **H5 → spec 015**
-(custom-script content-pinning) — a *security* spec beside the ARCH S-register
-(posture, not robustness); resolves H5 and hardens S5. **H2 / H4 / H7** remain
-backlog.
+their shared root cause (holding a resource across network I/O); ✅ **shipped on
+`main`**. **H5 → spec 015** (custom-script content-pinning, ⚪ todo) — a *security*
+spec beside the ARCH S-register (posture, not robustness); resolves H5 and hardens
+S5. **H2 / H4 / H7** remain backlog.
+
+**Post-v1 follow-ups (authored, awaiting build):** **015** (content-pinning, the
+one live TOCTOU hole) and **016** (graceful shutdown + orphaned-run reconciliation,
+from the runtime-lifecycle review) are `todo` specs ready to build. **017** is a
+*concern* (not a decision) weighing the transaction-boundary strategy behind 013's
+H3/H6 — its leaning: keep the injected `TransactionTemplate`.
 
 **Resolved (shipped in 008):** MCP actor-propagation. `ScopedValue` is
 thread-confined and the MCP SDK dispatches tool handlers off the request thread, so

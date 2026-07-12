@@ -65,7 +65,7 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
 | `machine` | Machine registry: host/port/login-user, **tags**, connection status. No host-key store (see S3). |
 | `recipe` | Recipes and their **actions**. An action is the runnable unit: command template + typed param schema + `sudo` flag + **approval state**. Approval logic lives here. |
 | `discovery` | **Recipe** discovery: SSH into a known machine, detect installed services, **propose** recipes+actions (never mutates the box, never auto-approves). One `RecipeDiscoverer` port per service type. |
-| `cloud` | **Cloud** discovery: import machines (with cloud tags) from a provider account. `CloudProvider` port; impls `AwsCloudProvider`, `GcpCloudProvider`, `MagaluCloudProvider`. Read-only against the cloud. |
+| `cloud` | **Cloud** discovery: import machines (with cloud tags) from a provider account. `CloudProvider` port; impls `AwsCloudProvider`, `GcpCloudProvider`, `MagaluCloudProvider`. Read-only against the cloud. *(Target only — spec 009, parked; no `cloud` package exists yet.)* |
 | `run` | Execution engine: async **jobs** (queued/running/done/failed), captured stdout/stderr + exit code, **live streaming** to UI (SSE) and MCP (progress). |
 | `ssh` | SSH adapter (MINA SSHD) behind the `SshExecutor` port; owns the **app keypair** lifecycle (generate on first boot, expose public key). |
 | `mcp` | MCP tool/resource definitions. A **thin** adapter that maps tools onto the feature services — it holds **no business rules**, so the approval gate can't be bypassed by talking to MCP. |
@@ -138,7 +138,7 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
   `get_run(runId)`.
 - **Create (allowed, never approves):** `register_machine`, `tag_machine`,
   `add_recipe`, `add_action`, `discover_recipes(machineId)`,
-  `discover_cloud(provider)`.
+  `discover_cloud(provider)` *(spec 009, parked — not yet implemented)*.
 - **Run:** `run_action(machineId, actionId, params)` → `runId`; refuses if not
   `APPROVED` or params invalid. Streams output via MCP progress.
 - **Resources:** the app's public SSH key (to install on targets); run output.
@@ -207,9 +207,9 @@ travels in the **same commit** as the code it backs.
 **Audit (Envers, validity strategy).** Add `@Audited` to the entities we version
 (`Machine`, `Recipe`, `Action`). Because `ddl-auto=none`, each `_aud` table is
 created **by hand** in the same migration as its base table. `audit/AuditRevision`
-is the `@RevisionEntity(CurrentActorRevisionListener.class)`;
-`audit/CurrentActorRevisionListener` stamps the ambient actor read from
-`CurrentActor`. Config pins `…envers.audit_table_suffix=_aud` and
+is the `@RevisionEntity(CurrentUserRevisionListener.class)`;
+`audit/CurrentUserRevisionListener` stamps the ambient actor read from
+`CurrentUser`. Config pins `…envers.audit_table_suffix=_aud` and
 `store_data_at_delete=true`.
 
 **Exceptions.** Domain exception is a tiny `extends RuntimeException` **in the
