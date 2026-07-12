@@ -1,10 +1,55 @@
 # 025 — App-monitor recipes (springboot / fastapi / generic), discovery-routed
 
-> **Status:** todo. Linear BLOCKED — commits use `spec-025`. Graduated from concern
+> **Status:** done. Branch `moacyrricardo/monitoring-021-025` (PR #35). Linear
+> BLOCKED — commits use `spec-025`. Graduated from concern
 > [020](./020-todo-machine-monitoring.md). **Depends on
-> [022](./022-todo-monitoring-foundations.md)** (`RecipeType.MONITOR`, the
+> [022](./022-done-monitoring-foundations.md)** (`RecipeType.MONITOR`, the
 > `APP_PORT_LIST` param + fan-out run mode, the `appName`/`runtime` convention and
-> the double-detection link) and transitively **[021](./021-todo-discovery-idempotency.md)**.
+> the double-detection link) and transitively **[021](./021-done-discovery-idempotency.md)**.
+
+## Implementation notes (as-built)
+
+Implemented to the decision. Deviations / concretions worth recording:
+
+- **Probes are fixed `sh -c` script templates, not bare discrete tokens.** The
+  spec's endpoint-probe example (`[LIT "curl", … , LIT "http://127.0.0.1:", PARAM
+  "port", LIT "/actuator/health"]`) is illustrative ("E.g."): the 004 token model
+  cannot embed a validated `PARAM` *inside* a single URL argv element, and three
+  separate `http://127.0.0.1:`/`<port>`/`/actuator/health` argv elements are not a
+  working `curl`. So every probe (endpoint **and** process) is realised as the
+  spec-blessed *fixed script template* — `sh -c '<constant script>' sh <port>` — with
+  the host + path baked into the source-controlled script body and the validated
+  `port` passed as the sole positional `$1`. The script string never varies per item,
+  so the fan-out is still discrete argv run once per item, never a looping/variable
+  shell command (S4 preserved). The process probe additionally aggregates across a
+  port's worker PIDs (gunicorn/uvicorn) inside that fixed script.
+- **Pre-fill lives on the recipe (`V11__recipe_app_port_list.sql`).** The
+  `(app-name, port)` list is one runtime value shared by all a recipe's probe
+  actions, stored as `recipe.app_port_list` — the same `[{"appName","port","runtime"}]`
+  JSON `RunService` binds per item, `@NotAudited` (not part of any content hash). The
+  spec named no version; `V11` is the next free after `V10` (spec-022). Discovery
+  refreshes it in place through `RecipeService.refreshDiscoveredAppPortList` every
+  run, so a new/removed app reconciles onto the one recipe with no re-approval and no
+  duplicate card (spec-021/022). `runtime` (`docker`/`systemd`/`process`) rides on
+  each item; `RunService` ignores the extra field.
+- **`fastapi` health-path configurability = editable fixed template, not a runtime
+  param.** The default `/openapi.json` (and the actuator/`/metrics` paths) are fixed
+  literals in the probe script; "configurable" means the operator edits the proposed
+  action before approving (edit → re-approve), never a caller-supplied path param —
+  adding a free-form path param would widen S4. The `/metrics` action is proposed only
+  when the discovery `curl -sf .../metrics` GET responds (Prometheus present).
+- **Container-name recovery from cgroup.** A cgroup segment that is a bare hex id
+  can't be reconciled with a `DockerDiscoverer` name, so it is skipped and `appName`
+  falls back to the cmdline-derived label; a human-readable docker segment (e.g.
+  `/docker/orders-api`) becomes the `appName` + `runtime = docker` link.
+- **Dashboard read surface.** The pre-filled apps surface on `GET /api/monitor` via
+  `MonitorDtos.MonitorActionView.appPortList` (each fan-out probe action carries its
+  recipe's apps) so spec-024's cards can group per app and know which ports to poll.
+- **Tests.** `AppMonitorDiscovererTest` (classifier routing java→springboot,
+  uvicorn/gunicorn→fastapi, else→generic; pre-filled items; docker double-detection;
+  read-only-probes-only) and `AppMonitorReconcileTest` (re-discovery refreshes the
+  list in place, no duplicate recipe). The fan-out execution itself stays covered by
+  spec-022's `RunServiceTest`.
 
 ## Context
 
