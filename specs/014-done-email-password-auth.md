@@ -1,7 +1,8 @@
 # 014 — Email + password authentication (replaces Google sign-in)
 
-> **Status:** todo. Linear is BLOCKED for this repo, so no issue identifier;
-> commits use `spec-014`. Supersedes the **authentication mechanism** of spec 011
+> **Status:** done — branch `moacyrricardo/spec-014-email-password-auth`. Linear is
+> BLOCKED for this repo, so no issue identifier; commits use `spec-014`. Supersedes
+> the **authentication mechanism** of spec 011
 > (Google sign-in): the JWT session, per-user MCP personal tokens, the pairing
 > flow, `AuthContext`/`CurrentUser`/`Via`, `@Secured`, and the ownership→404 model
 > from 011 are all **retained unchanged** — only the way a user proves identity and
@@ -150,3 +151,29 @@ unchanged; `authHeaders()` unchanged). Surface 401/409 via the existing toast.
 - `AuthScopeTest` / `PairingServiceTest` — drop `setGoogleSub` from the user
   fixtures; filter/pairing assertions otherwise unchanged (pairing still mints a
   token for a password-registered signed-in user).
+
+## Implementation notes (done)
+
+Built on branch `moacyrricardo/spec-014-email-password-auth`; `mvn -q -B clean
+verify` green (140 tests, 0 failures). Faithful to the plan above. Deltas worth
+recording:
+
+- **`PasswordEncoder` bean** lives in a dedicated `config/PasswordEncoderConfig`
+  (`new BCryptPasswordEncoder()`, default strength 10), matching the one-config-class-
+  per-concern style of the existing `config` package.
+- **Password/email validation** raises `jakarta.ws.rs.BadRequestException` (→ 400)
+  directly from `AuthService` — reusing the built-in RESTEasy mapping rather than
+  adding a new exception+mapper, since the spec only mandated a mapper for the 409
+  duplicate case.
+- **Broader test fallout than the five named tests.** Every `@SpringBootTest`
+  web-test `login(email)` helper across the suite (`Machine`/`Discovery`/`Run`/
+  `McpCatalog`/`McpTools`/`McpSeam`WebTest) relied on Google's *find-or-create*
+  being idempotent for a reused email against the shared in-memory DB. Register is
+  not idempotent (a repeat is a 409), so those helpers were changed to
+  **register-then-login-on-conflict**. All `setGoogleSub(...)` persistence fixtures
+  across the non-auth modules were switched to `setPasswordHash(...)` (the column is
+  now `NOT NULL`). `AuthWebTest` deliberately keeps distinct emails and asserts the
+  non-idempotent 409/401 semantics directly.
+- **Cosmetic Javadoc** also touched `config/JwtScopeFilter` (its public-endpoint
+  list named `POST /api/auth/google`) alongside the `AuthContext` / `BeginSetupTool`
+  edits the spec called out.

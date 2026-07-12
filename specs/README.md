@@ -26,7 +26,7 @@ merges and renames it).
 | 008 | MCP write & run tools | ✅ done | on `main` — MCP actor-propagation resolved |
 | 012 | Web UI shell, design system & the approval screen | ✅ done | on `main` — live-integrated |
 | 013 | Runtime resource hygiene (H1/H3/H6) | ⚪ todo | streaming eviction, tx scoping, SSH pooling |
-| 014 | Email + password authentication | ⚪ todo | replaces Google sign-in; supersedes 011's auth mechanism |
+| 014 | Email + password authentication | ✅ done | replaces Google sign-in; supersedes 011's auth mechanism |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
