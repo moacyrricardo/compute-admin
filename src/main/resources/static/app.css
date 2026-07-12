@@ -213,6 +213,26 @@ p { margin: 0; }
   border: 1px solid var(--border);
 }
 
+/* Tag filter chips on the Machines list (spec-018): a .tag rendered as a toggle. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.tag--filter {
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.6;
+}
+
+.tag--filter.tag--on {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: transparent;
+}
+
 /* --------------------------------------------------------------- buttons --- */
 
 .btn {
