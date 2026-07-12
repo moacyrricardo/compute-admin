@@ -5,8 +5,11 @@ import com.iskeru.computeadmin.auth.repository.AppUserRepository;
 import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
 import com.iskeru.computeadmin.machine.model.Machine;
+import com.iskeru.computeadmin.machine.model.Tag;
+import com.iskeru.computeadmin.machine.repository.MachineRepository;
 import com.iskeru.computeadmin.machine.repository.TagRepository;
 import com.iskeru.computeadmin.machine.service.MachineAlreadyRegisteredException;
+import com.iskeru.computeadmin.machine.service.MachineFacts;
 import com.iskeru.computeadmin.machine.service.MachineNotFoundException;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
@@ -48,6 +51,9 @@ class MachineServiceTest {
     @Autowired
     private TagRepository tags;
 
+    @Autowired
+    private MachineRepository machines;
+
     private AppUser alice;
     private AppUser bob;
 
@@ -66,6 +72,21 @@ class MachineServiceTest {
         assertThat(machine.getOwner().getId()).isEqualTo(alice.getId());
         assertThat(asUser(alice, () -> machineService.list(null))).hasSize(1);
         assertThat(asUser(bob, () -> machineService.list(null))).isEmpty();
+    }
+
+    @Test
+    void register_LoginUserGuess_AppliesProvisionalTag() {
+        Machine aws = asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("aws-host", 22, "ec2-user")));
+        Machine ubuntu = asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("ubuntu-host", 22, "ubuntu")));
+        Machine plain = asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("root-host", 22, "root")));
+
+        assertThat(tagNames(aws)).containsExactly("aws");
+        assertThat(tagNames(ubuntu)).containsExactly("ubuntu");
+        // admin/root carry no signal — no provisional tag.
+        assertThat(tagNames(plain)).isEmpty();
     }
 
     @Test
@@ -108,10 +129,50 @@ class MachineServiceTest {
         asUser(alice, () -> machineService.register(
                 new RegisterMachineInput("dev-host", 22, "root")));
         asUser(alice, () -> machineService.tag(prod.getId(), Set.of("prod")));
+        // Bob owns a machine tagged the same — it must never leak into alice's filter.
+        Machine bobProd = asUser(bob, () -> machineService.register(
+                new RegisterMachineInput("bob-prod", 22, "root")));
+        asUser(bob, () -> machineService.tag(bobProd.getId(), Set.of("prod")));
 
-        List<Machine> matched = asUser(alice, () -> machineService.list("prod"));
+        List<Machine> matched = asUser(alice, () -> machineService.list(List.of("prod")));
 
         assertThat(matched).extracting(Machine::getId).containsExactly(prod.getId());
+    }
+
+    @Test
+    void list_ByMultipleTags_IsOrAndDistinct() {
+        Machine prod = asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("prod-host", 22, "root")));
+        Machine staging = asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("staging-host", 22, "root")));
+        asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("dev-host", 22, "root")));
+        // prod carries both requested tags → must appear exactly once (distinct).
+        asUser(alice, () -> machineService.tag(prod.getId(), Set.of("prod", "eu")));
+        asUser(alice, () -> machineService.tag(staging.getId(), Set.of("eu")));
+
+        List<Machine> matched = asUser(alice, () -> machineService.list(List.of("prod", "eu")));
+
+        assertThat(matched).extracting(Machine::getId)
+                .containsExactlyInAnyOrder(prod.getId(), staging.getId());
+    }
+
+    @Test
+    void applyDetectedFacts_IsAddOnly_RefinesProvisional_AndRunsOnce() {
+        // Provisional login-user guess (aws) plus a manual tag the user owns.
+        Machine machine = asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("box", 22, "ec2-user")));
+        asUser(alice, () -> machineService.tag(machine.getId(), Set.of("prod")));
+
+        // First reach: the probe found the box is really Ubuntu on AWS → add-only,
+        // so the fuzzy provisional and the manual tag both survive.
+        machineService.applyDetectedFacts(machine.getId(), new MachineFacts("ubuntu", "aws"));
+        assertThat(tagNames(reload(machine))).containsExactlyInAnyOrder("aws", "prod", "ubuntu");
+
+        // The user removes an auto-tag; a later reach must NOT re-add it (once-per-machine).
+        asUser(alice, () -> machineService.untag(machine.getId(), "ubuntu"));
+        machineService.applyDetectedFacts(machine.getId(), new MachineFacts("ubuntu", "aws"));
+        assertThat(tagNames(reload(machine))).containsExactlyInAnyOrder("aws", "prod");
     }
 
     @Test
@@ -133,5 +194,13 @@ class MachineServiceTest {
 
     private <R> R asUser(AppUser user, Supplier<R> body) {
         return CurrentUser.runWhere(AuthContext.ui(user.getId(), user.getEmail()), body::get);
+    }
+
+    private Machine reload(Machine machine) {
+        return machines.findById(machine.getId()).orElseThrow();
+    }
+
+    private static List<String> tagNames(Machine machine) {
+        return machine.getTags().stream().map(Tag::getName).sorted().toList();
     }
 }

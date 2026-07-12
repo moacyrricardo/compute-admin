@@ -148,7 +148,7 @@ public class InstantiationService {
         }
         if (hasTag) {
             // Owner-scoped: matches only the current user's machines carrying the tag.
-            return machineService.list(target.tag());
+            return machineService.list(java.util.List.of(target.tag()));
         }
         List<Machine> resolved = new ArrayList<>();
         for (String id : target.machineIds()) {

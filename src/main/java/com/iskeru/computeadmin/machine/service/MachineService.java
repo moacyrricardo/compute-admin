@@ -13,7 +13,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -36,6 +39,19 @@ public class MachineService {
      */
     public record RegisterMachineInput(String host, int port, String loginUser) {
     }
+
+    /**
+     * Curated, deliberately small SSH-login-user → provisional tag map (spec-018,
+     * source 1). Applied add-only at registration as a best guess; refined by the
+     * real OS/cloud probe on first reach. {@code admin}/{@code root} carry no signal
+     * and are intentionally absent. {@code ubuntu} is fuzzy (also the AWS Ubuntu AMI
+     * user), which is exactly why source 2 corrects it.
+     */
+    private static final Map<String, String> LOGIN_USER_TAGS = Map.of(
+            "ec2-user", "aws",
+            "centos", "centos",
+            "debian", "debian",
+            "ubuntu", "ubuntu");
 
     private final MachineRepository machines;
     private final TagRepository tags;
@@ -76,15 +92,75 @@ public class MachineService {
         machine.setHost(normalizedHost);
         machine.setPort(port);
         machine.setLoginUser(normalizedLoginUser);
+        applyLoginUserTags(machine);
         return machines.save(machine);
     }
 
-    /** The current user's machines, all or filtered by {@code tag}. */
-    public List<Machine> list(String tag) {
+    /**
+     * The current user's machines, all or filtered by {@code tags} (OR semantics —
+     * a machine carrying any of the names matches). Null/blank names are ignored;
+     * an empty effective filter returns every owned machine.
+     */
+    public List<Machine> list(List<String> tags) {
         String ownerId = CurrentUser.require().userId();
-        return (tag == null || tag.isBlank())
-                ? machines.findByOwnerId(ownerId)
-                : machines.findByOwnerIdAndTags_Name(ownerId, tag.trim());
+        List<String> names = tags == null ? List.of()
+                : tags.stream()
+                        .filter(t -> t != null && !t.isBlank())
+                        .map(String::trim)
+                        .distinct()
+                        .toList();
+        if (names.isEmpty()) {
+            return machines.findByOwnerId(ownerId);
+        }
+        // The tag join repeats a machine once per matching name; de-dupe by id,
+        // preserving encounter order.
+        Map<String, Machine> distinct = new LinkedHashMap<>();
+        for (Machine machine : machines.findByOwner_IdAndTags_NameIn(ownerId, names)) {
+            distinct.putIfAbsent(machine.getId(), machine);
+        }
+        return List.copyOf(distinct.values());
+    }
+
+    /**
+     * Applies the provisional {@link #LOGIN_USER_TAGS login-user tag} (source 1) to a
+     * machine being registered, if its login user maps to one. Add-only and get-or-create,
+     * so it never removes anything and creates no duplicate {@code Tag} rows (spec-018).
+     */
+    public void applyLoginUserTags(Machine machine) {
+        String tag = LOGIN_USER_TAGS.get(machine.getLoginUser().toLowerCase(Locale.ROOT));
+        if (tag != null) {
+            addTag(machine.getOwner(), machine, tag);
+        }
+    }
+
+    /**
+     * Applies the OS/cloud tags detected by the read-only facts probe (source 2), on
+     * the first successful reach. <strong>System-scoped</strong>: it loads the machine
+     * by id (the facts-probe listener runs on an unbound pool thread) and get-or-creates
+     * tags for the machine's own owner. Add-only, and guarded to run at most once per
+     * machine by {@code factsProbedAt}, so a user-removed auto-tag is never re-added
+     * (spec-018). A machine that has gone away, or that was already probed, is a no-op.
+     */
+    @Transactional
+    public void applyDetectedFacts(String machineId, MachineFacts facts) {
+        Machine machine = machines.findById(machineId).orElse(null);
+        if (machine == null || machine.getFactsProbedAt() != null) {
+            return;
+        }
+        AppUser owner = machine.getOwner();
+        if (facts != null) {
+            if (facts.os() != null) {
+                addTag(owner, machine, facts.os());
+            }
+            if (facts.cloud() != null) {
+                addTag(owner, machine, facts.cloud());
+            }
+        }
+        // Mark probed even when nothing was detected: the box was reached and offered
+        // no signal, so we do not keep re-probing it (facts_probed_at is @NotAudited,
+        // so this opens no machine_aud revision — a liveness-derived marker, not a
+        // config edit).
+        machine.setFactsProbedAt(Instant.now());
     }
 
     /**
@@ -106,18 +182,26 @@ public class MachineService {
             if (raw == null || raw.isBlank()) {
                 continue;
             }
-            String name = raw.trim();
-            Tag tag = tags.findByOwnerIdAndName(owner.getId(), name)
-                    .orElseGet(() -> {
-                        Tag created = new Tag();
-                        created.setOwner(owner);
-                        created.setName(name);
-                        return tags.save(created);
-                    });
-            machine.getTags().add(tag);
+            addTag(owner, machine, raw.trim());
         }
         machine.setUpdatedAt(Instant.now());
         return machine;
+    }
+
+    /**
+     * Adds one tag by name to a machine, get-or-creating the owner's {@link Tag} so
+     * there are no duplicate rows and owner-scoping stays centralised. Add-only; the
+     * membership set de-dupes. Shared by manual tagging and both auto-tag sources.
+     */
+    private void addTag(AppUser owner, Machine machine, String name) {
+        Tag tag = tags.findByOwnerIdAndName(owner.getId(), name)
+                .orElseGet(() -> {
+                    Tag created = new Tag();
+                    created.setOwner(owner);
+                    created.setName(name);
+                    return tags.save(created);
+                });
+        machine.getTags().add(tag);
     }
 
     /** Removes a tag from a machine by name (leaves the tag itself intact). */

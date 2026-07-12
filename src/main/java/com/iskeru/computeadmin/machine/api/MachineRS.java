@@ -53,9 +53,14 @@ public class MachineRS {
         return MachineDtos.MachineView.of(machineService.register(input));
     }
 
+    /**
+     * The caller's machines, optionally narrowed by a repeatable {@code ?tag=<name>}
+     * filter (OR semantics — a machine carrying any of the given tags matches). Owner
+     * scoping is unchanged: a user only ever sees their own machines (spec-018).
+     */
     @GET
-    public java.util.List<MachineDtos.MachineView> list(@QueryParam("tag") String tag) {
-        return machineService.list(tag).stream().map(MachineDtos.MachineView::of).toList();
+    public java.util.List<MachineDtos.MachineView> list(@QueryParam("tag") java.util.List<String> tags) {
+        return machineService.list(tags).stream().map(MachineDtos.MachineView::of).toList();
     }
 
     @GET
