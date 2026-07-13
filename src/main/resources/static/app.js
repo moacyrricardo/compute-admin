@@ -1320,8 +1320,78 @@
     return mib + " MiB";
   }
 
+  /** Percent-ish "1.20%" → 1.2 (number), null when unparseable. */
+  function pctNum(s) {
+    if (s == null) return null;
+    var m = String(s).match(/([\d.]+)/);
+    return m ? parseFloat(m[1]) : null;
+  }
+
+  /**
+   * Parse `docker stats --no-stream --format '{{json .}}'` (spec-033): one JSON object
+   * per line → [{ name, cpu, mem, memUsage }] with cpu/mem as numeric percents. The
+   * cgroup-sourced RAM/CPU per container; degrade-to-raw (null) when no line parses.
+   */
+  function parseDockerStats(text) {
+    if (!text) return null;
+    var rows = [];
+    text.split(/\r?\n/).forEach(function (ln) {
+      ln = ln.trim();
+      if (!ln) return;
+      try {
+        var o = JSON.parse(ln);
+        var name = o.Name || o.Container;
+        if (name) rows.push({ name: name, cpu: pctNum(o.CPUPerc), mem: pctNum(o.MemPerc), memUsage: o.MemUsage || null });
+      } catch (e) { /* not a JSON line → skip (degrade-to-raw) */ }
+    });
+    return rows.length ? rows : null;
+  }
+
+  /**
+   * Parse `docker ps -s --format '{{json .}}'` (spec-033): one JSON object per line →
+   * [{ name, size }], the writable-layer + image size per container for the disk axis.
+   * Named-volume sizes come from `docker system df -v` (kept raw). null → degrade-to-raw.
+   */
+  function parseDockerPs(text) {
+    if (!text) return null;
+    var rows = [];
+    text.split(/\r?\n/).forEach(function (ln) {
+      ln = ln.trim();
+      if (!ln) return;
+      try {
+        var o = JSON.parse(ln);
+        if (o.Names) rows.push({ name: (o.Names || "").split(",")[0].trim(), size: o.Size || null });
+      } catch (e) { /* skip */ }
+    });
+    return rows.length ? rows : null;
+  }
+
+  /**
+   * A compact per-container summary of a docker metric check's stdout (spec-033),
+   * routed by the check name: `docker stats` → CPU%/mem% per container, `docker
+   * disk`/`docker volumes` → size per container. null when nothing parses (the caller
+   * then shows the raw output — the spec-023/025 degrade-to-raw contract). The parsed
+   * values feed the 032 consumer axes once the fleet redesign (034) renders them.
+   */
+  function dockerSummary(action, text) {
+    var n = (action.name || "").toLowerCase();
+    if (n.indexOf("stat") >= 0) {
+      var s = parseDockerStats(text);
+      if (s) return s.map(function (r) {
+        return r.name + " — cpu " + (r.cpu == null ? "?" : r.cpu + "%") + ", mem " + (r.mem == null ? "?" : r.mem + "%");
+      }).join("\n");
+    } else {
+      var p = parseDockerPs(text);
+      if (p) return p.map(function (r) { return r.name + " — " + (r.size || "?"); }).join("\n");
+    }
+    return null;
+  }
+
   function metricKind(action) {
     var n = (action.name || "").toLowerCase();
+    // Docker consumer metrics (spec-033) route first — a "docker disk" check must not be
+    // mistaken for the host `df` disk vital below.
+    if (n.indexOf("docker") >= 0) return "docker";
     if (n.indexOf("cpu") >= 0 || n.indexOf("load") >= 0) return "cpu";
     if (n.indexOf("mem") >= 0 || n.indexOf("ram") >= 0) return "memory";
     if (n.indexOf("disk") >= 0 || n.indexOf("df") >= 0 || n.indexOf("filesystem") >= 0) return "disk";
@@ -1742,6 +1812,18 @@
           if (disk) {
             hostPanel.appendChild(meter("Disk " + disk.primary.mount, disk.primary.pct));
             anyBar = true; return;
+          }
+        } else if (kind === "docker") {
+          // Docker consumer metrics (spec-033): CPU/mem from `docker stats` and disk from
+          // `docker ps -s`, parsed client-side per container. The per-consumer headline
+          // axes render with the fleet redesign (spec-034); until then an approved docker
+          // monitor shows its parsed reading as a labelled block (degrade-to-raw below).
+          var summary = dockerSummary(a, text);
+          if (summary) {
+            rawBlocks.push(h("details", { class: "host-raw-item" },
+              h("summary", { text: a.name }),
+              h("pre", { class: "mono", text: summary })));
+            return;
           }
         }
         // Unknown metric or parse failure → degrade to raw text (spec-024 known gap).
