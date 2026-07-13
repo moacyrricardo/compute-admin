@@ -2,8 +2,9 @@
 
 The architectural decision record for compute-admin. Each feature lands as a
 numbered spec (`NNN-status-slug.md`, status `todo`/`doing`/`done` by file rename),
-authored with `/new-spec` and grounded in [ARCH.md](../ARCH.md) (whose "Code
-conventions" section is the build charter, mirroring `birthday-rsvp`). Linear is
+authored with `/new-spec`, grounded in [ARCH.md](../ARCH.md) for architecture and
+[CONTRIBUTING.md](../CONTRIBUTING.md) for build/commit conventions and code style
+(the build charter, mirroring `birthday-rsvp`). Linear is
 **blocked** for this repo — specs carry no issue id and commits use `spec-NNN`.
 
 Filename status is the source of truth once merged to `main`; the **Status** column
@@ -32,7 +33,7 @@ merges and renames it).
 | 017 | Transaction-boundary strategy | ⚪ todo | **concern** (exploratory, options open) — `TransactionTemplate` (A, as-built) vs bean-refactor (B) vs `@Async`+future (C) for "I/O outside tx, persist in a short tx" |
 | 018 | Machine tags: filtering & auto-tagging | ✅ done | filter machines by tag; auto-tag from login-user + OS/cloud probe |
 | 019 | Event-driven connectivity status | ✅ done | `MachineReached` event + async listener updates status (fixes stale UNREACHABLE pill); manual test-connection |
-| 020 | Machine monitoring | 🟢 graduated | **umbrella concern of record** — resolved into specs 021–026 (build order below); keeps the problem framing + the Q1/Q2 decisions |
+| 020 | Machine monitoring | 🟢 graduated | **umbrella concern of record** — resolved into specs 021–026 + 029 (build order below); keeps the problem framing + the Q1/Q2 decisions |
 | 021 | Discovery idempotency | ✅ done | resolves **H2** — re-discovery reconciles by `(machine, type, name)` instead of duplicating; refresh DRAFT/PENDING proposals in place, surface a diff on APPROVED-differs; uniqueness guard. **Monitoring prerequisite (build first)** |
 | 022 | Monitoring foundations | ✅ done | the decisions spec — `RecipeType.MONITOR` (display-only, gate unchanged); `appName`(+`runtime`) label convention + double-detection link; `APP_PORT_LIST` param + **fan-out run mode** (S4-safe: fixed template per item, never a shell loop); run-row pruning (extends 013 eviction) |
 | 023 | `monitor machine` recipe | ✅ done | universal read-only host vitals — cpu (`top -bn1`), ram+swap (`free -m`), disk (`df -h`); auto-proposed on every reachable box; no app param (→ host panel) |
@@ -41,6 +42,7 @@ merges and renames it).
 | 026 | App-ops recipes | ✅ done | **reserved `app-name` param** correlates ops to app cards (NOT tags/labels, NOT a new recipe class); `SystemdDiscoverer` (`RecipeType.SYSTEMD`) mirrors docker; bounded `tail-logs` + **follow-mode via new run cancellation** (`RunStatus.STOPPED`, `RunService.cancel`, `SshExecutor` channel-close seam, `POST /runs/{id}/cancel`, Stop control); redeploy stays `CUSTOM`/blueprint |
 | 027 | Signal-driven machine unreachability | ⚪ todo | **concern** — the going-**OFFLINE**/UNREACHABLE counterpart to 019's instant going-**ONLINE** event: flip faster than the 5-min cron **without flapping** (leaning: a connect-failure triggers an immediate authoritative confirmation probe, not a direct flip). Builds on 019 (PR #30) |
 | 028 | Machine name & MCP identity hardening | ⚪ todo | **security** (ARCH **S9**): MCP identifies machines by `id`+user-provided `name`, hides `host`/`port`/`loginUser`; adds a required per-owner-unique **name** at registration; splits the MCP view (`id/name/tags/status`) from the full UI view; `register_machine` still takes host as input but stops echoing it |
+| 029 | Fleet monitoring dashboard | ✅ done | fleet view — per-machine sections, tag + app-name filters (filtered-out = unpolled), a synthetic `no-apps` host-only view, per-app **mem-% of host**, unified per-app cards (checks + ops), new read `GET /api/runs/{id}/children`; folds in the spec-025 actuator-liveness → `http app monitor` fallback |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
@@ -56,17 +58,19 @@ The spine is a hard dependency chain. The fan-out specs depend only on 004/003/0
 (not each other), so they build in parallel. 008 needs 005/006/011. 012 renders the
 backend, so it builds after it.
 
-**Monitoring + app-ops (specs 021–026, graduating concern 020):**
+**Monitoring + app-ops (specs 021–026 + 029, graduating concern 020):**
 
 ```
-021 idempotency → 022 foundations → 023 monitor-machine · 024 UI → 025 app-monitors → 026 app-ops
+021 idempotency → 022 foundations → 023 monitor-machine · 024 UI → 025 app-monitors → 026 app-ops → 029 fleet
 ```
 
 021 is the hard prerequisite (else monitoring shows duplicate app cards). 022 pins
 the shared model (classification, the `appName` label convention, the fan-out
 `APP_PORT_LIST` run mode, run-row pruning). 023 (host vitals) and 024 (dashboard,
 needs ≥1 monitor recipe) then go together; 025 (app-monitor family) and 026 (app-ops
-facade, mutating, adds run-cancellation for follow-mode logs) build on 022.
+facade, mutating, adds run-cancellation for follow-mode logs) build on 022. 029
+(fleet dashboard) lands last, unifying 024's per-action cards into per-app cards
+across the whole fleet (tag + app-name filters, per-app mem-% of host).
 
 ## Deferred hardening backlog
 
@@ -84,6 +88,7 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 | H5 | Custom-script **content-pinning**: hash the script at approval, verify before each run (path-not-contents trust; escalation risk with sudo) — **promoted to spec 015** | 007 | medium |
 | H6 | `ConnectivityCheckJob` probes the whole fleet inside one `@Transactional`; `MinaSshExecutor` builds a fresh SSH client per `exec()` — move to bounded concurrency + a pooled client | 003 | medium |
 | H7 | `ActionSnapshot` canonical serialization uses unescaped delimiters (theoretical hash-collision surface; currently moot) | 004 | low |
+| H8 | Dead server-side helpers duplicate client logic — `MonitorDtos.opsForApp` (026) and `MonitorDtos.memPctOfHost`/`parseHostMemTotalMb` (029) are unused in production (metrics computed client-side) and only test-called; drop them or wire them so mem-% has a single source of truth (surfaced by spec-eval on PRs #38/#39) | 026/029 | low |
 
 **Promoted:** **H1 + H3 + H6 → spec 013** (runtime resource hygiene) — grouped by
 their shared root cause (holding a resource across network I/O); ✅ **shipped on
@@ -92,14 +97,27 @@ spec beside the ARCH S-register (posture, not robustness); resolves H5 and harde
 S5. **H2 → spec 021** (discovery idempotency, ✅ done) — the monitoring
 prerequisite. **H4 / H7** remain backlog.
 
-**Post-v1 follow-ups (authored, awaiting build):** **015** (content-pinning, the
-one live TOCTOU hole) and **016** (graceful shutdown + orphaned-run reconciliation,
-from the runtime-lifecycle review) are `todo` specs ready to build. **017** is a
-*concern* (not a decision) weighing the transaction-boundary strategy behind 013's
-H3/H6 — its leaning: keep the injected `TransactionTemplate`.
+**Post-v1 follow-ups:** **016** (graceful shutdown + orphaned-run reconciliation,
+from the runtime-lifecycle review) is ✅ **done on `main`**. The one live
+content-pinning todo is **015** (the TOCTOU hole; hash-at-approval + re-hash-at-run).
+Also `todo`: **027** (a *concern* — signal-driven going-OFFLINE, options still open)
+and **028** (an authored *security* spec — machine name & MCP identity hardening,
+ARCH S9). **017** is a *concern* (not a decision) weighing the transaction-boundary
+strategy behind 013's H3/H6 — its leaning: keep the injected `TransactionTemplate`.
 
 **Resolved (shipped in 008):** MCP actor-propagation. `ScopedValue` is
 thread-confined and the MCP SDK dispatches tool handlers off the request thread, so
 `CurrentUser.require()` inside a tool would throw — 008 fixed it with
 `immediateExecution(true)` (tools run on the token-bound request thread) plus a test
 asserting the user resolves inside a tool call.
+
+## Proposed next
+
+**Spec 030 — container monitoring (proposed).** The current app-monitor path finds
+apps via the host's `ss -ltnp` (open listening ports → PID → cmdline). That
+structurally misses bridge-networked containers, portless workers, and datastores
+that publish no host-visible listening socket. A future spec would add
+**Docker-native discovery** (`docker ps` / `docker stats` / `docker inspect`) to
+monitor those, building on the existing `DockerDiscoverer`, the spec-022 monitoring
+conventions (`appName`/`APP_PORT_LIST`, fan-out run mode, `RecipeType.MONITOR`), and
+the 029 fleet per-app card.
