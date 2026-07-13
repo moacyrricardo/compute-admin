@@ -1,7 +1,8 @@
 # 038 — Compose-project grouping in the fleet view
 
-> **Status: todo.** Stacked on `moacyrricardo/spec-037-docker-consumer-metrics`
-> (merge after spec-037). Builds on the discovery of
+> **Status: done.** Branch `moacyrricardo/spec-038-compose-project-grouping`,
+> stacked on `moacyrricardo/spec-037-docker-consumer-metrics` (merge after spec-037).
+> Builds on the discovery of
 > [033](./033-done-docker-container-discovery.md)
 > (`DockerComposeDiscoverer`, on main), the fleet UI of
 > [034](./034-done-fleet-monitor-ui-redesign.md), and the docker metric poll of
@@ -105,4 +106,27 @@ client stays `textContent`-only (the `h()` no-`innerHTML` invariant).
 
 ## Divergence from the spec (as built)
 
-_(filled in on the final commit)_
+Implemented faithfully to the three decisions; the deltas below are the only
+elaborations:
+
+- **No server read-side change was needed.** `MonitorConsumerView.ofDockerConsumer`
+  and `ConsumerServiceView` already carry `services[].role` through the JSON
+  round-trip (discovery → `appPortList` column → monitor read → client), so the only
+  server edit was `DockerComposeDiscoverer.projectRecipe`. `MonitorService` /
+  `MonitorDtos` were untouched.
+- **Dedicated-split labelling.** With datastores now derived from services, two
+  datastores of one project would share the project name as their owner. Added a
+  `dedLabel` helper so each dedicated slice is labelled by its own service name
+  (prefixed with the owning project when the name doesn't already carry it) — the
+  mock only ever had one datastore per project, so this generalises it.
+- **Drawer datastore tag.** Tagged a `role=DATABASE` service row "database" in the
+  consumer drawer so a datastore reads as a datastore inside its project card
+  (implied by the mock's per-service badge).
+- **`MonitorRollupTest` docker assembly** was updated to the grouped input shape even
+  though the read layer is unchanged — the old hand-built input (a separate
+  `DEDICATED` `orders-db-1` consumer) is a shape the discoverer no longer produces, so
+  the test now documents the spec-038 contract.
+- **Verification.** `node --check src/main/resources/static/app.js` clean; the headless
+  render check passes both blocks; the full `mvn test` suite is green —
+  **249 tests, 0 failures, 0 errors, 0 skipped** (incl. the ArchTests / `GateArchTest`).
+  Gate + `mcp/` + `*ArchTest`s untouched; no Flyway migration.
