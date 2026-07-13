@@ -169,6 +169,48 @@ class McpToolsWebTest {
     }
 
     @Test
+    void mcpSurface_OmitsInfra_AndRequiresName() throws Exception {
+        AuthDtos.Session owner = login("mcp-infra@example.com");
+        String token = mintToken(owner);
+
+        try (McpSyncClient client = connect(token)) {
+            client.initialize();
+
+            // register_machine echoes id/name/status/tags — never the SSH coordinates.
+            JsonNode registered = callJson(client, "register_machine",
+                    Map.of("name", "web-prod-1", "host", "10.0.0.5", "port", 2222, "loginUser", "deploy"));
+            assertThat(registered.get("id").asText()).isNotBlank();
+            assertThat(registered.get("name").asText()).isEqualTo("web-prod-1");
+            assertThat(registered.get("status").asText()).isNotBlank();
+            assertThat(registered.has("host")).isFalse();
+            assertThat(registered.has("port")).isFalse();
+            assertThat(registered.has("loginUser")).isFalse();
+
+            // list_machines carries id/name/status/tags only — no infra either.
+            JsonNode machines = callJson(client, "list_machines", Map.of());
+            assertThat(machines.isArray()).isTrue();
+            JsonNode mine = null;
+            for (JsonNode m : machines) {
+                if ("web-prod-1".equals(m.path("name").asText())) {
+                    mine = m;
+                }
+            }
+            assertThat(mine).as("registered machine present in list_machines").isNotNull();
+            assertThat(mine.get("id").asText()).isNotBlank();
+            assertThat(mine.get("status").asText()).isNotBlank();
+            assertThat(mine.has("tags")).isTrue();
+            assertThat(mine.has("host")).isFalse();
+            assertThat(mine.has("port")).isFalse();
+            assertThat(mine.has("loginUser")).isFalse();
+
+            // register_machine without the required name is refused.
+            McpSchema.CallToolResult noName = client.callTool(new McpSchema.CallToolRequest(
+                    "register_machine", Map.of("host", "10.0.0.6", "loginUser", "deploy")));
+            assertThat(noName.isError()).isTrue();
+        }
+    }
+
+    @Test
     void tokenlessSession_reachesOnlyBootstrapTools() throws Exception {
         try (McpSyncClient client = connectTokenless()) {
             client.initialize();
