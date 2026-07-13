@@ -1401,23 +1401,25 @@
         function selTags() { return allTags.filter(function (t) { return selectedTags[t]; }); }
         function selApps() { return allApps.filter(function (a) { return selectedApps[a]; }); }
         function noAppsOn() { return !!selectedApps[NO_APPS]; }
-        function appFilterActive() { return selApps().length > 0 || noAppsOn(); }
+        function appFilterActive() { return selApps().length > 0; }
         function tagMatch(m) {
           var s = selTags(); if (!s.length) return true;
           var mine = m.tags || [];
           return s.some(function (t) { return mine.indexOf(t) >= 0; });
         }
-        // A machine is visible when it matches the tag filter AND (no app filter ⇒ all;
-        // else it runs a selected app, or is app-less when `no-apps` is pinned). With an
-        // app pinned, machines that don't run it disappear entirely (broad → deep).
+        // A machine is visible when it matches the tag filter AND either no app-name is
+        // pinned (⇒ all machines) or it runs a pinned app (⇒ machines that don't run it
+        // disappear: broad → deep). The `no-apps` toggle is a host-only view: it keeps
+        // ALL tag-matching machines but hides every app card (see visibleAppsFor).
         function machineVisible(m) {
           if (!tagMatch(m)) return false;
+          if (noAppsOn()) return true;
           if (!appFilterActive()) return true;
-          if (noAppsOn() && !((m.apps || []).length)) return true;
           var s = selApps();
           return (m.apps || []).some(function (a) { return s.indexOf(a.appName) >= 0; });
         }
         function visibleAppsFor(m) {
+          if (noAppsOn()) return [];
           var apps = m.apps || [];
           if (!appFilterActive()) return apps;
           var s = selApps();
@@ -1459,7 +1461,14 @@
         var body = h("div", { class: "monitor-machines" });
 
         // Clicking a card's app-name is the second entry point to the app filter.
-        function toggleApp(name) { selectedApps[name] = !selectedApps[name]; renderChips(); rebuild(); cycle(); }
+        function toggleApp(name) {
+          var on = !selectedApps[name];
+          selectedApps[name] = on;
+          // no-apps (host-only view) and app-name pins are mutually exclusive.
+          if (on && name === NO_APPS) { allApps.forEach(function (a) { selectedApps[a] = false; }); }
+          else if (on) { selectedApps[NO_APPS] = false; }
+          renderChips(); rebuild(); cycle();
+        }
         function toggleTag(name) { selectedTags[name] = !selectedTags[name]; renderChips(); rebuild(); cycle(); }
 
         function chipBtn(label, on, title, onClick) {
@@ -1485,7 +1494,7 @@
             });
             if (anyHostOnly) {
               appBar.appendChild(chipBtn("no-apps", !!selectedApps[NO_APPS],
-                "Host-only machines (no discovered apps)", function () { toggleApp(NO_APPS); }));
+                "Host-only view: all machines, no app cards", function () { toggleApp(NO_APPS); }));
             }
           }
         }
@@ -1888,7 +1897,12 @@
       } else if (rssMb != null) {
         memWrap.appendChild(meter("Mem % of host", null, mibText(rssMb) + " RSS · host total unknown"));
       } else {
-        memWrap.appendChild(h("div", { class: "meter-sub mono", text: "mem % of host — no data" }));
+        var anyApproved = (app.checks || []).some(function (c) {
+          return c.approvalState === "APPROVED" && !c.changedSinceApproval;
+        });
+        memWrap.appendChild(h("div", { class: "meter-sub mono",
+          text: anyApproved ? "mem % of host — no data"
+                            : "mem % of host — approve this monitor to see metrics" }));
       }
 
       clear(checksWrap);
