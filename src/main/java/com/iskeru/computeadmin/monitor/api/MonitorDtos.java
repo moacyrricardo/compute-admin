@@ -8,6 +8,8 @@ import com.iskeru.computeadmin.monitor.model.ConsumerRole;
 import com.iskeru.computeadmin.monitor.model.ConsumerSource;
 import com.iskeru.computeadmin.monitor.model.Dedication;
 import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
+import com.iskeru.computeadmin.monitor.service.MonitorService.DockerConsumerData;
+import com.iskeru.computeadmin.monitor.service.MonitorService.DockerServiceData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
 import com.iskeru.computeadmin.monitor.service.MonitorService.OpsAction;
@@ -24,7 +26,9 @@ import com.iskeru.computeadmin.recipe.service.ActionSnapshot;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeSet;
 
 /**
@@ -102,7 +106,10 @@ public final class MonitorDtos {
             List<MonitorActionView> host = new ArrayList<>();
             List<MonitorActionView> app = new ArrayList<>();
             List<MonitorAppView> apps = new ArrayList<>();
-            List<MonitorConsumerView> consumers = new ArrayList<>();
+            // Consumers keyed by name so the native↔docker dedup (spec-033) collapses a
+            // colliding pair to one entry; a native app is inserted first and a docker
+            // consumer of the same name overwrites it (docker wins, shown once, source=DOCKER).
+            Map<String, MonitorConsumerView> consumersByName = new LinkedHashMap<>();
             for (MonitorRecipe r : m.recipes()) {
                 List<MonitorActionView> recipeChecks = new ArrayList<>();
                 for (Action action : r.actions()) {
@@ -126,15 +133,22 @@ public final class MonitorDtos {
                                 recipeChecks, opsForApp(appOps, item.appName())));
                         // The same pre-filled app as a spec-032 consumer. A native
                         // app-monitor recipe (spec-025) yields an APP consumer whose source
-                        // is read from the runtime label the discoverer attached; datastore
-                        // role, dedication, owner/usedBy and buckets arrive with spec-033.
-                        consumers.add(MonitorConsumerView.ofNativeApp(item));
+                        // is read from the runtime label the discoverer attached.
+                        consumersByName.putIfAbsent(item.appName(), MonitorConsumerView.ofNativeApp(item));
                     }
+                }
+            }
+            // Docker consumers (spec-033): the classified compose projects / datastores /
+            // bucket, surfaced with source=DOCKER and the datastore role/dedication/services
+            // 032 defined. Applied after the native pass so docker wins the dedup by name.
+            for (MonitorRecipe r : m.recipes()) {
+                for (DockerConsumerData d : r.dockerConsumers()) {
+                    consumersByName.put(d.name(), MonitorConsumerView.ofDockerConsumer(d));
                 }
             }
             return new MonitorMachineView(machine.getId(), machine.getHost(), machine.getPort(),
                     machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames),
-                    host, app, appOps, apps, consumers);
+                    host, app, appOps, apps, new ArrayList<>(consumersByName.values()));
         }
     }
 
@@ -264,6 +278,26 @@ public final class MonitorDtos {
         /** {@code docker} runtime ⇒ {@link ConsumerSource#DOCKER}; anything else ⇒ NATIVE. */
         private static ConsumerSource sourceOf(String runtime) {
             return "docker".equalsIgnoreCase(runtime) ? ConsumerSource.DOCKER : ConsumerSource.NATIVE;
+        }
+
+        /**
+         * The docker-sourced consumer (spec-033): a compose project ({@link
+         * ConsumerRole#APP}), a datastore ({@link ConsumerRole#DATABASE}, {@link
+         * Dedication#DEDICATED} with an {@code owner} or {@link Dedication#SHARED} with
+         * {@code usedBy}), or the {@link Bucket#DOCKER} remainder — as classified by the
+         * discoverer and re-read from the pre-fill. {@code source} is always {@link
+         * ConsumerSource#DOCKER}; the three axes stay {@code null} for the client to fill;
+         * {@code services} lists the project's containers (empty for a bucket).
+         */
+        public static MonitorConsumerView ofDockerConsumer(DockerConsumerData d) {
+            List<ConsumerServiceView> services = new ArrayList<>();
+            for (DockerServiceData s : d.services()) {
+                services.add(new ConsumerServiceView(s.name(), s.image(), s.role(),
+                        ConsumerSource.DOCKER, null, null, null));
+            }
+            return new MonitorConsumerView(d.name(), d.name(), d.role(), ConsumerSource.DOCKER,
+                    null, null, null, d.dedication(), d.owner(),
+                    d.usedBy() == null ? null : List.copyOf(d.usedBy()), d.bucket(), services);
         }
     }
 

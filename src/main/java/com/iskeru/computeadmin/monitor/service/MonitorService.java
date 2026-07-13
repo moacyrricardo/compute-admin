@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
+import com.iskeru.computeadmin.monitor.model.Bucket;
+import com.iskeru.computeadmin.monitor.model.ConsumerRole;
+import com.iskeru.computeadmin.monitor.model.Dedication;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
 import com.iskeru.computeadmin.recipe.model.Recipe;
@@ -56,16 +59,39 @@ public class MonitorService {
     }
 
     /**
-     * A {@code MONITOR}-typed recipe paired with its (already-loaded) actions and its
-     * discovery-pre-filled {@code (app-name, port)} list (spec-025) — the apps every
-     * probe action in the recipe fans out over. Empty for host-vitals (spec-023) and
-     * any recipe whose {@code appPortList} is unset.
+     * A {@code MONITOR}-typed recipe paired with its (already-loaded) actions and either
+     * its discovery-pre-filled {@code (app-name, port)} list (spec-025) — the apps every
+     * probe action fans out over — or its classified docker {@code consumers} (spec-033).
+     * The two pre-fill channels are mutually exclusive; both are empty for host-vitals
+     * (spec-023) and any recipe whose {@code appPortList} is unset.
      */
-    public record MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList) {
+    public record MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList,
+                                List<DockerConsumerData> dockerConsumers) {
+
+        /** A native (or host) monitor recipe with no docker consumers (spec-025). */
+        public MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList) {
+            this(recipe, actions, appPortList, List.of());
+        }
     }
 
     /** One pre-filled app the dashboard shows/edits and the poller probes (spec-022/025). */
     public record AppPort(String appName, int port, String runtime) {
+    }
+
+    /**
+     * One docker-sourced consumer parsed from a compose monitor's pre-fill (spec-033):
+     * the discovery-side {@code DockerConsumer} re-read on this side. Its classification
+     * ({@code role}/{@code dedication}/{@code owner}/{@code usedBy}/{@code bucket}) and
+     * {@code services} feed the {@code MonitorConsumerView}; the host-relative axes stay
+     * client-filled (no server sampler).
+     */
+    public record DockerConsumerData(String name, ConsumerRole role, Dedication dedication,
+                                     String owner, List<String> usedBy, Bucket bucket,
+                                     List<DockerServiceData> services) {
+    }
+
+    /** One container inside a docker consumer: its name, image, and classified role. */
+    public record DockerServiceData(String name, String image, ConsumerRole role) {
     }
 
     private final MachineService machineService;
@@ -113,7 +139,8 @@ public class MonitorService {
                 List<Action> actions = recipeService.listActions(recipe.getId());
                 if (recipe.getType() == RecipeType.MONITOR) {
                     recipes.add(new MonitorRecipe(recipe, actions,
-                            parseAppPortList(recipe.getAppPortList())));
+                            parseAppPortList(recipe.getAppPortList()),
+                            parseDockerConsumers(recipe.getAppPortList())));
                 }
                 // App-ops correlation (spec-026): any APPROVED action carrying the reserved
                 // scalar `app-name` param is an ops action, regardless of recipe type. Only
@@ -158,5 +185,87 @@ public class MonitorService {
             return List.of();
         }
         return items;
+    }
+
+    /**
+     * Parses a docker compose monitor's stored consumers (spec-033) from the same
+     * {@code appPortList} column — the object shape {@code {"dockerConsumers":[…]}} the
+     * {@code DockerComposeDiscoverer} writes, told apart from the native {@code [{…}]}
+     * array by being a JSON object. Tolerant: a null/blank/array/malformed value yields
+     * an empty list (a native or host recipe simply has no docker consumers).
+     */
+    private List<DockerConsumerData> parseDockerConsumers(String rawJson) {
+        if (rawJson == null || rawJson.isBlank()) {
+            return List.of();
+        }
+        List<DockerConsumerData> consumers = new ArrayList<>();
+        try {
+            JsonNode root = json.readTree(rawJson);
+            JsonNode array = root.get("dockerConsumers");
+            if (array == null || !array.isArray()) {
+                return List.of();
+            }
+            for (JsonNode node : array) {
+                JsonNode name = node.get("name");
+                if (name == null || name.isNull()) {
+                    continue;
+                }
+                consumers.add(new DockerConsumerData(name.asText(),
+                        enumOf(ConsumerRole.class, node.get("role")),
+                        enumOf(Dedication.class, node.get("dedication")),
+                        text(node.get("owner")),
+                        stringList(node.get("usedBy")),
+                        enumOf(Bucket.class, node.get("bucket")),
+                        services(node.get("services"))));
+            }
+        } catch (JsonProcessingException e) {
+            return List.of();
+        }
+        return consumers;
+    }
+
+    private List<DockerServiceData> services(JsonNode array) {
+        List<DockerServiceData> out = new ArrayList<>();
+        if (array != null && array.isArray()) {
+            for (JsonNode node : array) {
+                JsonNode name = node.get("name");
+                if (name != null && !name.isNull()) {
+                    out.add(new DockerServiceData(name.asText(), text(node.get("image")),
+                            enumOf(ConsumerRole.class, node.get("role"))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** A nullable JSON text value ({@code null} for missing/null nodes). */
+    private static String text(JsonNode node) {
+        return node == null || node.isNull() ? null : node.asText();
+    }
+
+    /** A tolerant enum read: {@code null} for a missing/null/unknown value. */
+    private static <E extends Enum<E>> E enumOf(Class<E> type, JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(type, node.asText());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    /** A JSON string array as a list ({@code null} node → empty list). */
+    private static List<String> stringList(JsonNode array) {
+        if (array == null || !array.isArray()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (JsonNode node : array) {
+            if (!node.isNull()) {
+                out.add(node.asText());
+            }
+        }
+        return out;
     }
 }
