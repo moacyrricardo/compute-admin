@@ -1,11 +1,33 @@
 # 028 — Machine name & MCP identity hardening
 
-> **Status: todo.** Branch `moacyrricardo/spec-028-machine-name-mcp-identity`
-> (cut from `main`). Linear is blocked for this repo, so there is no issue id; the
-> implementing commits use `spec-028` subjects.
+> **Status: done.** Branch `moacyrricardo/spec-028-machine-name-mcp-identity`,
+> now **stacked on spec-015** (base branch
+> `moacyrricardo/spec-015-custom-script-content-pinning`, PR #45 stacked on #44) —
+> it must merge only after 015. Linear is blocked for this repo, so there is no
+> issue id; the implementing commits use `spec-028` subjects.
 >
 > Tracks ARCH.md **S9** (MCP infra exposure). This spec is the decision of record
-> for closing it; S9 flips to resolved when 028 ships.
+> for closing it; S9 is resolved by this branch.
+>
+> **Closeout / how the build diverged from the spec:**
+> - The Flyway migration is **`V13__machine_name.sql`** — the next sequential
+>   version atop spec-015's **`V12__custom_script_content_pinning.sql`**, which is
+>   supplied by the base branch. (The spec left the exact `Vn` to be assigned at
+>   build/rebase time; V13 is correct on this stacked base.)
+> - Name collisions raise a dedicated `MachineNameTakenException` (mapped to 409),
+>   mirroring the existing tag/host-uniqueness handling rather than a generic
+>   conflict.
+> - Stacking on 015 forced a one-time reconcile of the ~9 test files both specs
+>   touch: 015 wires a `StubSshExecutor`/`SshExecutor` bean into the slices and
+>   `RunServiceTest`/`ApprovalServiceTest` gained content-pinning `seedCustomAction`
+>   helpers, while 028 makes machine `name` required at registration and adds the
+>   MCP-view assertions. Both concerns are kept in every shared file; the only
+>   semantic fix-up was updating 015's two new `RegisterMachineInput(...)` seed
+>   call sites to the 4-arg `(name, host, port, loginUser)` signature 028
+>   introduced.
+> - **Verified green on the stacked base:** full `mvn test` →
+>   `Tests run: 241, Failures: 0, Errors: 0, Skipped: 0` (BUILD SUCCESS), the whole
+>   ArchTest suite (incl. the UI-only approval gate) included.
 
 ## Context
 
