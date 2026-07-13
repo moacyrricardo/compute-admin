@@ -1,9 +1,39 @@
 # 015 — Custom-script content-pinning
 
+> **Status: done.** Branch `moacyrricardo/spec-015-custom-script-content-pinning`.
+>
 > Resolves **H5** (specs/catalog.md deferred-hardening backlog) and hardens the
 > **S5** posture (ARCH.md security register). Security spec sitting beside the
 > S-register: it closes a TOCTOU hole in the approve-then-run invariant for
 > `CUSTOM` script actions.
+
+## How the implementation diverged from the spec
+
+- **Migration number:** shipped as `V12__custom_script_content_pinning.sql`, not
+  the `V8` the spec text names (`V8` was already taken — it is
+  `V8__machine_facts_probed_at.sql`). Same content: nullable `approved_script_hash`
+  on `action` and `action_aud`.
+- **`ScriptPinService` chosen over a private method on `ApprovalService`** (the spec
+  offered either). It exposes `probe(machine, scriptPath, sudo)` plus a static
+  `scriptPath(action)` (leading `LITERAL` token by position), shared by
+  `ApprovalService` and `RunService`, isolating the SSH concern.
+- **Probe ordering at approval:** the probe runs *before* any state mutation, so an
+  unreadable script refuses approval with the action left untouched
+  (`PENDING_APPROVAL`) rather than mutated-then-rolled-back — cleaner and robust to
+  the test persistence context.
+- **`ScriptUnreadableException` maps to 409** (the spec's recommended choice over 400):
+  the target's state prevents pinning.
+- **Run-time probe stays inside `RunService.run`'s `@Transactional` scope.** The spec's
+  Implementation section prescribes the check inline (right after the
+  `ActionModifiedException` gate) and that is what shipped, matching the existing
+  spec-004 structural gate. The Known Gap "SSH inside the run transaction" (mirror
+  spec-013's out-of-transaction probe) was **not** closed here — it remains a
+  documented Known Gap; extracting the probe would have required restructuring the
+  carefully-built fan-out/cancel/after-commit transaction semantics for a hygiene gain
+  the spec itself files as deferred.
+- **Test wiring:** because `ApprovalService`/`RunService` now transitively depend on the
+  `SshExecutor` port via `ScriptPinService`, slice tests that import them gained a
+  test `StubSshExecutor` (or their existing fake now answers `sha256sum`).
 
 ## Context
 
