@@ -49,6 +49,7 @@ merges and renames it).
 | 033 | Docker container discovery | ⚪ todo | docker-native discovery — **compose project = app** (`com.docker.compose.project` label), datastore classification by image, `docker stats`/`ps -s`/`system df -v` metrics, springboot-in-docker shown once. `RecipeType.MONITOR`, gate untouched. **Resolves concern 030**; gated by 035 |
 | 034 | Fleet monitor UI/UX redesign | ⚪ todo | segmented tri-axis machine bars (one colour per consumer), all-three-axes cards, the **databases lens** (Dedicated owner-split / Shared used-by, one lens two bands), hidden docker/system buckets, categorical palette token group. spec-012 idiom; ref [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html). Builds on 029 + 032 |
 | 035 | Discovery enablement & UX | ⚪ todo | **per-family** discovery enablement (Docker/Systemd/Database…), **docker off by default** (socket = root-equivalent); a machine "Discovery" panel. Enablement ≠ the approval gate. **Resolves 030 doubt (1)**; gates 033 |
+| 036 | Recipe & param discovery lifecycle | ⚪ todo | **concern** (options open) — lifecycle *beyond approval*: re-discovery adds/refreshes but never **retires** a vanished resource (lingers, incl. runnable APPROVED); no delete/hide/**suppress** (revoke is the only stop); fan-out lists are all-or-nothing and discoverers **flood** (all systemd units / all containers). Keyed on the gate-safety asymmetry: narrowing `APP_PORT_LIST` is gate-free, but the `app-name` ALLOWED_SET is hashed |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
@@ -139,6 +140,14 @@ keeps the problem framing). Dependency order — 033 and 034 parallelise once 03
   default** (the socket is root-equivalent). Enablement is not the approval gate.
 
 ## Open concerns
+
+- **[036](./036-todo-recipe-param-discovery-lifecycle.md) — Recipe & param discovery lifecycle.**
+  The lifecycle *after* approval: vanished-resource recipes never retire (they linger,
+  including as runnable APPROVED), there is no delete/hide/suppress (revoke is the only
+  stop), and fan-out lists are all-or-nothing while discoverers enumerate broadly.
+  Options span retire-vs-mark-stale, an ignore/suppress list, per-item curation, and
+  discoverer scoping — turning on the gate-safety asymmetry (narrowing is free; the
+  hashed `app-name` ALLOWED_SET is not). Follows the 032–035 epic; grounded in code.
 
 - **[031](./031-todo-deferred-followups-triage.md) — Deferred follow-ups triage.**
   A single worklist of every deferred note and spec-eval finding across the built
