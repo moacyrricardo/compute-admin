@@ -1,6 +1,6 @@
 # 029 — Fleet monitoring dashboard
 
-_Status: doing · branch `moacyrricardo/spec-029-fleet-monitoring` (stacked on #38 → #35
+_Status: done · branch `moacyrricardo/spec-029-fleet-monitoring` (stacked on #38 → #35
 → #37 → main) · Linear blocked (no ticket)._
 
 ## Context
@@ -126,3 +126,35 @@ control). Builds on 024 (UI), 025 (app-monitors), 026 (app-ops), 023 (host vital
 - **Cross-machine app identity is by `app-name` string.** Two unrelated apps sharing a
   name on different machines will be compared as "the same app"; acceptable given
   operators choose the names.
+
+## Delivered (how the implementation differed)
+
+- **Backend.** `MonitorDtos.MonitorAppView { machineId, appName, framework, runtime,
+  port, up, rssMb, hostMemTotalMb, memPctOfHost, checks[], ops[] }` is assembled per
+  `(machine, app-name)` from each app-monitor recipe's `appPortList`, sharing the
+  recipe's fan-out probes as `checks` and correlating app-ops by `app-name`. Consistent
+  with the Known Gap "polling stays client-driven, no server sampler", the four live
+  metrics are assembled `null`; the browser fills them from the poll. The server owns
+  the pure, unit-tested helpers `memPctOfHost(rssMb, hostMemTotalMb)`,
+  `parseHostMemTotalMb(freeOutput)` (the mem% denominator, spec §5) and
+  `frameworkOf(recipeName)` (incl. the actuator-less `http` family). `GET /api/monitor`
+  gained optional `?tag=`/`?machineId=` scoping (the client's visible set → never
+  enumerated ⇒ never polled).
+- **New read affordance.** To realise "attach each app's fan-out probe results" without
+  a server sampler, added `GET /api/runs/{id}/children` (+ `RunDtos.ChildRunView` and
+  `RunService.childRuns`, owner-scoped): after the browser POSTs a fan-out probe for the
+  visible apps, it lists the parent's children (each carrying its `appLabel`) and streams
+  each child's output, attributing `up`/`VmRSS`→`rssMb` back to the right app card. No
+  gate/approval change (`GateArchTest` stays green).
+- **Frontend.** The machine dropdown is replaced by a tag + app-name filter bar (with the
+  synthetic `no-apps` chip, the poll cadence segment, and a `polling N machines · M apps`
+  counter). Per-machine sections carry a compact host-vitals header and a per-app card
+  grid built from `MonitorAppView`: framework badge (http tagged "actuator-less"),
+  UP/DOWN rollup, a mem-%-of-host bar, per-check status chips, and pre-filled ops chips —
+  checks and ops on one card. Clicking a card's app-name toggles the app-name filter; the
+  poll loop touches only the visible sections. All DOM is `textContent`/`h()`-built
+  (spec-012) and theme-aware.
+- **Tests.** `MonitorRollupTest` (pure DTO assembly + `memPctOfHost`/`parseHostMemTotalMb`/
+  `frameworkOf`), `MonitorWebTest` extended (fleet endpoint: `apps` present + `?machineId=`
+  scoping), `RunServiceTest` extended (`childRuns` by app-label + 404 for another user's
+  parent). Full `mvn clean verify` green (221 tests).
