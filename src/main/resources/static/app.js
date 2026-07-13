@@ -1651,10 +1651,16 @@
       }).catch(function () { return {}; });
   }
 
-  /** Classify a check by name: liveness/health, process (VmRSS), or other. */
+  /**
+   * Classify a check by name: liveness/health, process (VmRSS), cpu, or other. The
+   * app-level cpu probe (spec-032) is a first-class metric-kind here, the client-side
+   * mirror of the server classification — matching metricKind()'s host-CPU rule so an
+   * app's process-tree CPU probe is recognised, not lumped into "other".
+   */
   function checkKind(action) {
     var n = (action.name || "").toLowerCase();
     if (n.indexOf("process") >= 0 || n.indexOf("proc") >= 0) return "process";
+    if (n.indexOf("cpu") >= 0 || n.indexOf("load") >= 0) return "cpu";
     if (n.indexOf("health") >= 0 || n.indexOf("live") >= 0 || n.indexOf("ping") >= 0
         || n.indexOf("readiness") >= 0) return "liveness";
     return "other";
@@ -1880,6 +1886,11 @@
             var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
             processUp = listener;
             state = listener ? "up" : "down";
+          } else if (kind === "cpu") {
+            // The app-level CPU probe (spec-032): a process-tree read. It has no headline
+            // bar yet (the consumer axes land with the 034 redesign) — its check row just
+            // reflects whether the probe found a live listener to sample.
+            state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
           } else if (kind === "liveness") {
             livenessUp = res.exit === 0;
             state = livenessUp ? "up" : "down";
