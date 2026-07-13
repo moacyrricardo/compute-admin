@@ -81,6 +81,10 @@ public class Action {
     @Column(name = "approved_snapshot_hash", length = 64)
     private String approvedSnapshotHash;
 
+    /** SHA-256 of the pinned script's bytes at approval (CUSTOM actions); null otherwise. spec-015. */
+    @Column(name = "approved_script_hash", length = 64)
+    private String approvedScriptHash;
+
     @Column(name = "approved_at")
     private Instant approvedAt;
 
