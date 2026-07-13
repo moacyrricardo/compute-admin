@@ -10,6 +10,7 @@ import com.iskeru.computeadmin.machine.repository.MachineRepository;
 import com.iskeru.computeadmin.machine.repository.TagRepository;
 import com.iskeru.computeadmin.machine.service.MachineAlreadyRegisteredException;
 import com.iskeru.computeadmin.machine.service.MachineFacts;
+import com.iskeru.computeadmin.machine.service.MachineNameTakenException;
 import com.iskeru.computeadmin.machine.service.MachineNotFoundException;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
@@ -98,6 +99,37 @@ class MachineServiceTest {
         assertThatThrownBy(() -> asUser(alice, () -> machineService.register(
                 new RegisterMachineInput("second", "  host-a  ", 22, "  root  "))))
                 .isInstanceOf(MachineAlreadyRegisteredException.class);
+    }
+
+    @Test
+    void register_BlankOrNullName_IsRejected() {
+        assertThatThrownBy(() -> asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("   ", "host-a", 22, "root"))))
+                .isInstanceOf(jakarta.ws.rs.BadRequestException.class);
+        assertThatThrownBy(() -> asUser(alice, () -> machineService.register(
+                new RegisterMachineInput(null, "host-a", 22, "root"))))
+                .isInstanceOf(jakarta.ws.rs.BadRequestException.class);
+    }
+
+    @Test
+    void register_DuplicateNameSameOwner_ThrowsNameTaken() {
+        asUser(alice, () -> machineService.register(new RegisterMachineInput("web-prod-1", "host-a", 22, "root")));
+
+        // Same owner, same name, a genuinely different address → the name key fires.
+        assertThatThrownBy(() -> asUser(alice, () -> machineService.register(
+                new RegisterMachineInput("  web-prod-1  ", "host-b", 2222, "deploy"))))
+                .isInstanceOf(MachineNameTakenException.class);
+    }
+
+    @Test
+    void register_SameNameForAnotherUser_IsAllowed() {
+        asUser(alice, () -> machineService.register(new RegisterMachineInput("web-prod-1", "host-a", 22, "root")));
+
+        Machine bobMachine = asUser(bob, () -> machineService.register(
+                new RegisterMachineInput("web-prod-1", "host-b", 22, "root")));
+
+        assertThat(bobMachine.getName()).isEqualTo("web-prod-1");
+        assertThat(bobMachine.getOwner().getId()).isEqualTo(bob.getId());
     }
 
     @Test
