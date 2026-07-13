@@ -67,6 +67,7 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
 | `discovery` | **Recipe** discovery: SSH into a known machine, detect installed services, **propose** recipes+actions (never mutates the box, never auto-approves). One `RecipeDiscoverer` port per service type. |
 | `cloud` | **Cloud** discovery: import machines (with cloud tags) from a provider account. `CloudProvider` port; impls `AwsCloudProvider`, `GcpCloudProvider`, `MagaluCloudProvider`. Read-only against the cloud. *(Target only — spec 009, parked; no `cloud` package exists yet.)* |
 | `run` | Execution engine: async **jobs** (queued/running/done/failed), captured stdout/stderr + exit code, **live streaming** to UI (SSE) and MCP (progress). |
+| `monitor` | Fleet monitoring read surface — enumerates approved MONITOR / app-monitor / app-ops actions into a per-(machine, app) rollup (host vitals + per-app checks + matched ops), served to the client-polled dashboard. Read-only; adds no gate. (`api`/`service` only.) |
 | `ssh` | SSH adapter (MINA SSHD) behind the `SshExecutor` port; owns the **app keypair** lifecycle (generate on first boot, expose public key). |
 | `mcp` | MCP tool/resource definitions. A **thin** adapter that maps tools onto the feature services — it holds **no business rules**, so the approval gate can't be bypassed by talking to MCP. |
 | `auth` | Users, email+password sign-in, app JWT, per-user MCP **personal tokens**, the `AuthContext`/`CurrentUser` scope, `@Secured` filter. Owns the ownership rule everything else scopes by (spec 011; email+password sign-in per spec 014). |
@@ -117,6 +118,10 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
 | `RecipeDiscoverer` | `discovery` | one per service: `NginxDiscoverer`, `DockerDiscoverer`, `DatabaseDiscoverer`, `CronDiscoverer` |
 | `CloudProvider` | `cloud` | `AwsCloudProvider` (first), `GcpCloudProvider`, `MagaluCloudProvider` |
 
+`SshExecutor` also exposes `execStreaming(…, cancelKey)` + `cancel(cancelKey)` for
+cancellable streamed runs — the channel-close seam behind run cancellation
+(`RunStatus.STOPPED`, spec 026).
+
 ## Naming vocabulary
 
 | Concept | Suffix | Example |
@@ -126,6 +131,7 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
 | Spring Data repository | `*Repository` | `MachineRepository` |
 | JPA entity | (noun) | `Machine`, `Recipe`, `Action`, `Run` |
 | DTO record bundle | `*Dtos` (nested records) | `RecipeDtos.ActionInput` |
+| Read-model / view DTO | `*View` (nested in `*Dtos`) | `MonitorAppView`, `AppOpView`, `ChildRunView` |
 | Domain exception + mapper | `*Exception` / `*ExceptionMapper` | `ActionNotApprovedException` |
 | Port / adapter | `*Executor` / `*Provider` / `*Discoverer` | `SshExecutor` |
 | MCP tool handler | `*Tool` | `RunActionTool`, `ListMachinesTool` |
@@ -150,6 +156,12 @@ packages (`common`, `config`) plus `audit` sit beside the modules. Base package
 approval transition) with `REV`/`REVEND`. `Run` is an append-only execution log
 (not Envers-audited — it's already immutable history).
 
+`Recipe` carries a mutable, **un-audited** `app_port_list` (JSON, the discovery
+pre-fill of `(app-name, port)` pairs). `Run` supports **fan-out**: a parent `Run`
+spawns one child `Run` per `(app-name, port)` item, linked by a self-referential
+`parentRunId`. `RunStatus` includes **`STOPPED`** (a user-cancelled run — see the
+`SshExecutor` cancel seam, spec 026).
+
 ## Additional rules
 
 - JAX-RS resources **return DTO records** and throw mapped exceptions; they do
@@ -157,6 +169,9 @@ approval transition) with `REV`/`REVEND`. `Run` is an append-only execution log
   output stream).
 - All hand-rendered HTML escaping goes through `common/HtmlEscaper`.
 - No server-side templating engine — static shell + JSON-driven vanilla JS.
+- New `RecipeType` values **`MONITOR`** (specs 022–025) and **`SYSTEMD`** (spec 026)
+  are **display metadata only** — they classify recipes for the UI and do **not**
+  change the gate; every one of their actions still requires UI approval to run.
 - The acting caller is **ambient**: a filter binds a `ScopedValue<AuthContext>`
   (`userId`, `email`, `via`) read via the `CurrentUser` facade; the Envers
   listener records it. `/api` → `via = UI`, `/mcp` → `via = MCP`; a run records

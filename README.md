@@ -34,9 +34,10 @@ command previews as you choose, then runs.
 - **Register machines** — an SSH-reachable host (host, port, login user), tagged
   with free-form labels. The app owns a single keypair; you install its public
   key into each box's `authorized_keys`.
-- **Cloud import (discovery provider)** — pull instances (and their cloud tags)
-  from a provider account to register machines in bulk. Providers: **AWS**, then
-  **GCP** and **MagaluCloud**. Import never mutates the cloud side.
+- **Cloud import (discovery provider)** *(planned — spec 009)* — pull instances
+  (and their cloud tags) from a provider account to register machines in bulk.
+  Providers: **AWS**, then **GCP** and **MagaluCloud**. Import never mutates the
+  cloud side.
 - **Add recipes** — a recipe is a named bundle of **actions** on a machine.
   - *Built-in* recipe types: **nginx, docker, database (mysql/mariadb/postgres),
     cron.** Their actions are auto-discovered by SSHing into the box and
@@ -48,6 +49,9 @@ command previews as you choose, then runs.
   validated parameters** and an optional per-action `sudo` flag. Once approved in
   the UI, it can be run. Runs are **asynchronous jobs** with **live-streamed**
   output (stdout/stderr) and a recorded exit code.
+- **Monitor the fleet** — auto-discovered host vitals + per-app health/metrics; a
+  dashboard groups apps under machines with tag + app-name filters and a per-app
+  memory-of-host bar; approved app-ops run inline from the card. (specs 021–026, 029)
 - **Full audit** — every approval, config change, and each run (who/what/when/
   exit code, MCP vs UI) is recorded.
 
@@ -79,13 +83,16 @@ register** of everything currently left insecure on purpose.
 
 ## Status
 
-The **v1 core is built and on `main`**: the MCP transport, user accounts &
-ownership, machine registry & SSH adapter, the recipe/action approval gate,
-the execution engine, auto-discovery, custom & blueprint recipes, the MCP
-tool surface, and the web UI shell (specs 001–012). Runtime hardening
-(spec 013) and cloud import (spec 009) are the tracked follow-ups. Architecture
-is specified in [ARCH.md](./ARCH.md); each feature lands as a numbered spec —
-see the [spec catalog](./specs/catalog.md) for status.
+The **v1 core** (specs 001–012: MCP transport, user accounts & ownership, the
+machine registry & SSH adapter, the recipe/action approval gate, the execution
+engine, auto-discovery, custom & blueprint recipes, the MCP tool surface, and the
+web UI shell) is on `main`, along with runtime hardening (013), email+password
+auth (014), graceful shutdown & run reconciliation (016), machine tags (018),
+event-driven connectivity (019), and the full **monitoring + app-ops +
+fleet-dashboard** stack (021–026, 029). Tracked follow-ups: custom-script
+content-pinning (015), cloud import (009, parked), and the 027/028 hardening specs.
+Architecture is specified in [ARCH.md](./ARCH.md); each feature lands as a numbered
+spec — see the [spec catalog](./specs/catalog.md) for status.
 
 ## Running
 
