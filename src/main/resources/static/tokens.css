@@ -60,6 +60,20 @@
 
   /* --- focus ring --------------------------------------------------------- */
   --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
+
+  /* --- categorical consumer palette (spec-034) ---------------------------- */
+  /* The one data-colour group spec-012 deliberately lacked (it is semantic-only).
+     ~5 categorical hues for named consumers plus a NEUTRAL for the docker bucket;
+     system/free is the transparent remainder. One colour per consumer, held
+     constant across all three axes. It is ALWAYS paired with a labelled legend so
+     colour is never the sole signal (WCAG AA — the house rule). */
+  --c-1: #6366f1;
+  --c-2: #0d9488;
+  --c-3: #a855f7;
+  --c-4: #e11d48;
+  --c-5: #d97706;
+  --c-docker: #64748b;
+  --c-system: transparent;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -80,5 +94,14 @@
     --s-neutral: #64748b;
 
     --elevation: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+
+    /* categorical consumer palette (spec-034), tuned for the dark ground */
+    --c-1: #818cf8;
+    --c-2: #2dd4bf;
+    --c-3: #c084fc;
+    --c-4: #fb7185;
+    --c-5: #fbbf24;
+    --c-docker: #94a3b8;
+    --c-system: transparent;
   }
 }
