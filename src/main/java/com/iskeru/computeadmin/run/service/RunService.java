@@ -312,6 +312,18 @@ public class RunService {
     }
 
     /**
+     * The fan-out children of a parent run (spec-029): one per {@code (app-name, port)}
+     * item, each carrying its {@code appLabel} so the fleet poll can correlate a fan-out
+     * probe's output back to the app card that issued it. Ownership is enforced via
+     * {@link #requireRun} on the parent (a not-owned/absent parent is 404); a scalar
+     * (non-fan-out) run simply has no children.
+     */
+    public List<Run> childRuns(String parentId) {
+        requireRun(parentId);
+        return runs.findByParentRunId(parentId);
+    }
+
+    /**
      * Cancels one of the current user's live runs — the capability follow-mode
      * ({@code -f}) log streaming needs, since such a command never exits on its own
      * (spec-026). Owner-scoped through {@link #requireRun} (a not-owned/absent id 404s),

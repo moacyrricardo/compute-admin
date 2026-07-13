@@ -5,8 +5,11 @@ import com.iskeru.computeadmin.monitor.service.MonitorService;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * Read-only enumeration of the current user's {@code MONITOR}-classified actions for
@@ -34,8 +37,16 @@ public class MonitorRS {
         this.monitorService = monitorService;
     }
 
+    /**
+     * The fleet dashboard read (spec-029). Optional scoping: {@code ?tag=} (repeatable)
+     * narrows to machines carrying any of the tags (OR), {@code ?machineId=} (repeatable)
+     * restricts to an explicit in-scope id set — the client's visible selection, so a
+     * filtered-out machine is never enumerated and thus never polled. Both absent ⇒ the
+     * whole owned fleet. Owner-scoped: another user's machines are simply absent.
+     */
     @GET
-    public MonitorDtos.Dashboard dashboard() {
-        return MonitorDtos.Dashboard.of(monitorService.listMonitors());
+    public MonitorDtos.Dashboard dashboard(@QueryParam("tag") List<String> tags,
+                                           @QueryParam("machineId") List<String> machineIds) {
+        return MonitorDtos.Dashboard.of(monitorService.listMonitors(tags, machineIds));
     }
 }

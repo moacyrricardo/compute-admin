@@ -14,7 +14,9 @@ import com.iskeru.computeadmin.recipe.service.RecipeService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Enumerates the current user's {@link RecipeType#MONITOR}-classified actions so
@@ -82,8 +84,29 @@ public class MonitorService {
      * panel) so the dashboard can show it and offer discovery.
      */
     public List<MachineMonitors> listMonitors() {
+        return listMonitors(null, null);
+    }
+
+    /**
+     * The fleet read (spec-029): the current user's machines scoped to a set —
+     * {@code tags} narrows by machine tag (OR semantics, delegated to
+     * {@link MachineService#list}; null/empty ⇒ every owned machine), and
+     * {@code machineIds} further restricts to an explicit in-scope id set (the client's
+     * visible selection; null/empty ⇒ no id restriction). Filtering out a machine means
+     * it is never enumerated here, so the browser never polls it ("filtered-out =
+     * unpolled"). Owner-scoped throughout: a not-owned id is simply absent.
+     */
+    public List<MachineMonitors> listMonitors(List<String> tags, List<String> machineIds) {
+        Set<String> idFilter = machineIds == null ? Set.of()
+                : machineIds.stream()
+                        .filter(id -> id != null && !id.isBlank())
+                        .map(String::trim)
+                        .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         List<MachineMonitors> out = new ArrayList<>();
-        for (Machine machine : machineService.list(null)) {
+        for (Machine machine : machineService.list(tags)) {
+            if (!idFilter.isEmpty() && !idFilter.contains(machine.getId())) {
+                continue;
+            }
             List<MonitorRecipe> recipes = new ArrayList<>();
             List<OpsAction> appOps = new ArrayList<>();
             for (Recipe recipe : recipeService.listForMachine(machine.getId())) {

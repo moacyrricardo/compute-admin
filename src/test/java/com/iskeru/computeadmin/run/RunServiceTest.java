@@ -471,6 +471,47 @@ class RunServiceTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void childRuns_ListsFanOutChildrenByAppLabel_ScalarHasNone() {
+        AppUser user = saveUser();
+        Seed fanOut = asUser(user, () -> seedFanOutAction(true));
+        String items = "[{\"appName\":\"orders\",\"port\":8080},"
+                + "{\"appName\":\"billing\",\"port\":9090}]";
+
+        Run parent = asUser(user, () -> runService.run(fanOut.machineId(), fanOut.actionId(), Map.of("apps", items)));
+        awaitTerminal(parent.getId());
+
+        // The fleet poll (spec-029) lists a parent's children to attribute each app's
+        // probe output to its card — one child per (app-name, port) item, keyed by label.
+        List<Run> children = asUser(user, () -> runService.childRuns(parent.getId()));
+        assertThat(children).extracting(Run::getAppLabel)
+                .containsExactlyInAnyOrder("orders", "billing");
+
+        // A scalar run is not a fan-out: no children (seeded under a fresh user, since
+        // both seeds register the same machine host and it is unique per owner).
+        AppUser scalarUser = saveUser();
+        Seed scalar = asUser(scalarUser, () -> seedAction(true));
+        Run scalarRun = asUser(scalarUser, () -> runService.run(scalar.machineId(), scalar.actionId(), Map.of("svc", "nginx")));
+        awaitTerminal(scalarRun.getId());
+        assertThat(asUser(scalarUser, () -> runService.childRuns(scalarRun.getId()))).isEmpty();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void childRuns_OfAnotherUsersParent_Is404() {
+        AppUser owner = saveUser();
+        AppUser other = saveUser();
+        Seed fanOut = asUser(owner, () -> seedFanOutAction(true));
+        Run parent = asUser(owner,
+                () -> runService.run(fanOut.machineId(), fanOut.actionId(),
+                        Map.of("apps", "[{\"appName\":\"orders\",\"port\":8080}]")));
+        awaitTerminal(parent.getId());
+
+        assertThatThrownBy(() -> asUser(other, () -> runService.childRuns(parent.getId())))
+                .isInstanceOf(RunNotFoundException.class);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void run_FanOutWithOneInvalidItem_FailsWholeRun_NothingDispatched() {
         AppUser user = saveUser();
         Seed seed = asUser(user, () -> seedFanOutAction(true));

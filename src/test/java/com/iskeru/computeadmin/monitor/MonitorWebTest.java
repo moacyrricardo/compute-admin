@@ -66,6 +66,30 @@ class MonitorWebTest {
         // The non-MONITOR action appears nowhere.
         assertThat(ids(machine.hostActions())).doesNotContain(nginxActionId);
         assertThat(ids(machine.appActions())).doesNotContain(nginxActionId);
+
+        // The fleet per-app rollup (spec-029) is always present; with no discovery
+        // pre-fill (appPortList set only by discovery) this machine has no app cards yet.
+        assertThat(machine.apps()).isEmpty();
+    }
+
+    @Test
+    void dashboard_ScopedToMachineIdQuery_EnumeratesOnlyThoseMachines() {
+        AuthDtos.Session owner = login("fleet-scope@example.com");
+        String one = registerMachineHost(owner, "fleet-one");
+        String two = registerMachineHost(owner, "fleet-two");
+
+        // No scope ⇒ the whole owned fleet.
+        MonitorDtos.Dashboard all = getDashboard(owner);
+        assertThat(all.machines()).extracting(MonitorDtos.MonitorMachineView::machineId)
+                .contains(one, two);
+
+        // ?machineId= restricts to the client's visible set — the rest is never
+        // enumerated (so never polled). spec-029.
+        MonitorDtos.Dashboard scoped = rest.exchange(
+                "/api/monitor?machineId=" + one, HttpMethod.GET,
+                new HttpEntity<>(bearer(owner.token())), MonitorDtos.Dashboard.class).getBody();
+        assertThat(scoped.machines()).extracting(MonitorDtos.MonitorMachineView::machineId)
+                .containsExactly(one);
     }
 
     @Test
@@ -157,8 +181,12 @@ class MonitorWebTest {
     }
 
     private String registerMachine(AuthDtos.Session s) {
+        return registerMachineHost(s, "monitor-host");
+    }
+
+    private String registerMachineHost(AuthDtos.Session s, String host) {
         return post("/api/machines",
-                new MachineDtos.RegisterMachineRequest("monitor-host", 22, "root"),
+                new MachineDtos.RegisterMachineRequest(host, 22, "root"),
                 s.token(), MachineDtos.MachineView.class).id();
     }
 

@@ -64,27 +64,22 @@ public final class MonitorDtos {
     /**
      * One machine's monitor surface: its identity/status plus its {@code MONITOR}
      * actions partitioned into {@code hostActions} (host panel) and {@code appActions}
-     * (per-app cards), per the spec-022 host-vs-app convention.
+     * (the raw fan-out probes), per the spec-022 host-vs-app convention. {@code apps}
+     * is the spec-029 fleet rollup: one {@link MonitorAppView} per discovery-pre-filled
+     * {@code (app-name, port)} item, keyed by {@code (machine, app-name)}, unifying an
+     * app's fan-out {@code checks} and its matched {@code ops} onto one card.
      */
     public record MonitorMachineView(String machineId, String host, int port, String loginUser,
                                      MachineStatus status, List<String> tags,
                                      List<MonitorActionView> hostActions,
                                      List<MonitorActionView> appActions,
-                                     List<AppOpView> appOps) {
+                                     List<AppOpView> appOps,
+                                     List<MonitorAppView> apps) {
         public static MonitorMachineView of(MachineMonitors m) {
             Machine machine = m.machine();
             TreeSet<String> tagNames = new TreeSet<>();
             for (Tag tag : machine.getTags()) {
                 tagNames.add(tag.getName());
-            }
-            List<MonitorActionView> host = new ArrayList<>();
-            List<MonitorActionView> app = new ArrayList<>();
-            for (MonitorRecipe r : m.recipes()) {
-                for (Action action : r.actions()) {
-                    MonitorActionView view = MonitorActionView.of(
-                            action, r.recipe(), machine.getId(), r.appPortList());
-                    (view.hasAppParam() ? app : host).add(view);
-                }
             }
             // App-ops (spec-026): approved actions with a reserved `app-name` param,
             // each carrying the apps it targets so the client can key them to app cards.
@@ -92,8 +87,35 @@ public final class MonitorDtos {
             for (OpsAction op : m.appOps()) {
                 appOps.add(AppOpView.of(op.action(), op.recipe(), machine.getId()));
             }
+            List<MonitorActionView> host = new ArrayList<>();
+            List<MonitorActionView> app = new ArrayList<>();
+            List<MonitorAppView> apps = new ArrayList<>();
+            for (MonitorRecipe r : m.recipes()) {
+                List<MonitorActionView> recipeChecks = new ArrayList<>();
+                for (Action action : r.actions()) {
+                    MonitorActionView view = MonitorActionView.of(
+                            action, r.recipe(), machine.getId(), r.appPortList());
+                    (view.hasAppParam() ? app : host).add(view);
+                    if (view.hasAppParam()) {
+                        recipeChecks.add(view);
+                    }
+                }
+                // The fleet per-app rollup (spec-029): an app-monitor recipe carries a
+                // discovery-pre-filled (app-name, port) list; each item becomes one
+                // MonitorAppView keyed by (machine, app-name), sharing the recipe's fan-out
+                // probe actions as its `checks` and correlated to the machine's app-ops by
+                // app-name. Live metrics (up/rss/mem%) stay null here — the browser fills
+                // them from the client-driven poll (024); the server only assembles identity.
+                if (!r.appPortList().isEmpty()) {
+                    String framework = frameworkOf(r.recipe().getName());
+                    for (AppPort item : r.appPortList()) {
+                        apps.add(MonitorAppView.of(machine.getId(), item, framework,
+                                recipeChecks, opsForApp(appOps, item.appName())));
+                    }
+                }
+            }
             return new MonitorMachineView(machine.getId(), machine.getHost(), machine.getPort(),
-                    machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames), host, app, appOps);
+                    machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames), host, app, appOps, apps);
         }
     }
 
@@ -136,14 +158,103 @@ public final class MonitorDtos {
      * ops; it is a pure function of the view, so it is unit-testable without the wire.
      */
     public static List<AppOpView> opsForApp(MonitorMachineView machine, String appName) {
+        return opsForApp(machine.appOps(), appName);
+    }
+
+    /** {@link #opsForApp(MonitorMachineView, String)} over a raw ops list (assembly-time). */
+    private static List<AppOpView> opsForApp(List<AppOpView> appOps, String appName) {
         List<AppOpView> matches = new ArrayList<>();
-        for (AppOpView op : machine.appOps()) {
+        for (AppOpView op : appOps) {
             if (op.targetApps().contains(appName)) {
                 matches.add(op);
             }
         }
         return matches;
     }
+
+    /**
+     * The per-app fleet rollup (spec-029) — the unit the fleet dashboard renders. Keyed
+     * by {@code (machineId, appName)}: an app's {@code framework} badge and its
+     * {@code runtime}/{@code port} (from the discovery pre-fill), its fan-out
+     * {@code checks} (the app-monitor probe actions the client polls), and its matched
+     * {@code ops} (spec-026, correlated by {@code app-name}) — checks and ops on one card.
+     *
+     * <p>The live metrics are the client's to fill from the browser-driven poll (024,
+     * no server sampler — see the spec's Known Gaps): {@code up} (rolled up from the
+     * checks), {@code rssMb} (summed {@code VmRSS} from the process probe) and
+     * {@code hostMemTotalMb} (parsed from the host {@code free -m}, see
+     * {@link #parseHostMemTotalMb}). When both memory figures are known the headline
+     * {@code memPctOfHost = round(rssMb / hostMemTotalMb * 100)} (spec-029 §5) — the one
+     * cross-machine metric — is derived by {@link #memPctOfHost}. Server-side assembly
+     * leaves all four {@code null}; a client that has polled recomputes them.
+     */
+    public record MonitorAppView(String machineId, String appName, String framework, String runtime,
+                                 int port, Boolean up, Integer rssMb, Integer hostMemTotalMb,
+                                 Integer memPctOfHost, List<MonitorActionView> checks, List<AppOpView> ops) {
+        public static MonitorAppView of(String machineId, AppPort app, String framework,
+                                        List<MonitorActionView> checks, List<AppOpView> ops) {
+            return new MonitorAppView(machineId, app.appName(), framework, app.runtime(), app.port(),
+                    null, null, null, null, List.copyOf(checks), List.copyOf(ops));
+        }
+    }
+
+    /**
+     * The headline cross-machine metric (spec-029 §5): an app's resident memory as a
+     * whole-percent of its host's total RAM, {@code round(rssMb / hostMemTotalMb * 100)}.
+     * {@code null} when either figure is missing (not yet polled) or the host total is
+     * non-positive (a divide-by-zero guard) — the client renders that as "no data".
+     */
+    public static Integer memPctOfHost(Integer rssMb, Integer hostMemTotalMb) {
+        if (rssMb == null || hostMemTotalMb == null || hostMemTotalMb <= 0) {
+            return null;
+        }
+        return (int) Math.round((double) rssMb / hostMemTotalMb * 100.0);
+    }
+
+    /**
+     * Classifies an app-monitor recipe's framework family from its recipe name
+     * (spec-025 naming): {@code springboot}, {@code fastapi}, the actuator-less
+     * {@code http} family, else {@code generic}. The badge the fleet card shows; the
+     * {@code http} family is tagged "actuator-less" by the UI.
+     */
+    public static String frameworkOf(String recipeName) {
+        String s = recipeName == null ? "" : recipeName.toLowerCase(java.util.Locale.ROOT);
+        if (s.contains("springboot") || s.contains("spring boot") || s.contains("actuator")) {
+            return "springboot";
+        }
+        if (s.contains("fastapi") || s.contains("uvicorn") || s.contains("gunicorn")) {
+            return "fastapi";
+        }
+        if (s.contains("http")) {
+            return "http";
+        }
+        return "generic";
+    }
+
+    /**
+     * Parses the host's total memory in MB from {@code free -m} output (spec-023's
+     * {@code monitor machine} host-vitals probe) — the {@code Mem:} row's first figure.
+     * The denominator for {@link #memPctOfHost}. Tolerant: a null/blank/unparseable
+     * value (or a non-positive total) yields {@code null} so the rollup degrades to
+     * "no data" rather than throwing.
+     */
+    public static Integer parseHostMemTotalMb(String freeOutput) {
+        if (freeOutput == null || freeOutput.isBlank()) {
+            return null;
+        }
+        for (String line : freeOutput.split("\\r?\\n")) {
+            java.util.regex.Matcher m = MEM_TOTAL.matcher(line);
+            if (m.find()) {
+                int total = Integer.parseInt(m.group(1));
+                return total > 0 ? total : null;
+            }
+        }
+        return null;
+    }
+
+    /** {@code free -m}'s "Mem: <total> <used> ..." row; group 1 is the total in MB. */
+    private static final java.util.regex.Pattern MEM_TOTAL =
+            java.util.regex.Pattern.compile("^\\s*Mem:\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
      * One {@code MONITOR} action, enriched for grouping and inline running:
