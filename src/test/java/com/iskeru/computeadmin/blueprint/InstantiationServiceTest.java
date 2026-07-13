@@ -25,6 +25,8 @@ import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionService.ArgTokenInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.ParamDefInput;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
+import com.iskeru.computeadmin.ssh.StubSshExecutor;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,7 +55,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({InstantiationService.class, BlueprintService.class, RecipeService.class,
-        ActionService.class, ApprovalService.class, MachineService.class})
+        ActionService.class, ApprovalService.class, ScriptPinService.class,
+        StubSshExecutor.class, MachineService.class})
 class InstantiationServiceTest {
 
     @Autowired

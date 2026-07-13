@@ -80,6 +80,16 @@ class MinaSshExecutorTest {
     }
 
     @Test
+    void assembleCommand_Sha256sumProbeWithSpacedPath_QuotesPathAsOneArgument() {
+        // The spec-015 content-pinning probe: `sha256sum <path>`. A path with spaces must
+        // stay one literal argument so the digest is of that file, not two mangled ones.
+        String command = MinaSshExecutor.assembleCommand(
+                List.of("sha256sum", "/path with space/run.sh"), false);
+
+        assertThat(command).isEqualTo("'sha256sum' '/path with space/run.sh'");
+    }
+
+    @Test
     void assembleCommand_ValueWithSingleQuote_IsPosixEscaped() {
         String command = MinaSshExecutor.assembleCommand(
                 List.of("echo", "it's a test"), false);

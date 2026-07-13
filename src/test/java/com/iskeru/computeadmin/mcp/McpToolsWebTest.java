@@ -65,6 +65,13 @@ class McpToolsWebTest {
             return new SshExecutor() {
                 @Override
                 public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
+                    // A CUSTOM action is content-pinned at approval and re-verified at run
+                    // (spec-015): answer the sha256sum probe with a well-formed, stable
+                    // digest so approve() pins and run() re-verifies to the same value.
+                    if (!argv.isEmpty() && "sha256sum".equals(argv.get(0))) {
+                        return new ExecResult(0,
+                                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  script\n", "");
+                    }
                     return new ExecResult(0, "hello from mcp run\n", "");
                 }
 

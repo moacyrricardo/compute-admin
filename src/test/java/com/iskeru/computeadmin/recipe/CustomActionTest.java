@@ -23,6 +23,8 @@ import com.iskeru.computeadmin.recipe.service.ParamValidationException;
 import com.iskeru.computeadmin.recipe.service.RecipeNotFoundException;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
+import com.iskeru.computeadmin.ssh.StubSshExecutor;
 import jakarta.ws.rs.BadRequestException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,7 +59,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({ActionService.class, RecipeService.class, MachineService.class,
-        ApprovalService.class, ParamBinder.class})
+        ApprovalService.class, ScriptPinService.class, StubSshExecutor.class, ParamBinder.class})
 class CustomActionTest {
 
     private static final String SCRIPT = "/home/ec2-user/app/minhabufunfa/run.sh";

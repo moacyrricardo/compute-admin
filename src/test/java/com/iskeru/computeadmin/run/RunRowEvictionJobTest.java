@@ -17,6 +17,8 @@ import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionService.AddActionInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.ArgTokenInput;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
+import com.iskeru.computeadmin.ssh.StubSshExecutor;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
@@ -56,7 +58,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @TestPropertySource(properties = "ca.run.rows-per-action-max=2")
 @Import({RunRowEvictionJob.class, MachineService.class, RecipeService.class,
-        ActionService.class, ApprovalService.class, ParamBinder.class})
+        ActionService.class, ApprovalService.class, ScriptPinService.class,
+        StubSshExecutor.class, ParamBinder.class})
 class RunRowEvictionJobTest {
 
     @Autowired

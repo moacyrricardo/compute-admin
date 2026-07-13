@@ -17,6 +17,7 @@ import com.iskeru.computeadmin.recipe.repository.ActionRepository;
 import com.iskeru.computeadmin.recipe.repository.RecipeRepository;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.SshExecutor;
@@ -50,7 +51,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({DiscoveryService.class, RecipeService.class, ActionService.class, ApprovalService.class,
-        MachineService.class, AppMonitorDiscoverer.class, AppMonitorReconcileTest.FakeSshConfig.class})
+        ScriptPinService.class, MachineService.class, AppMonitorDiscoverer.class,
+        AppMonitorReconcileTest.FakeSshConfig.class})
 class AppMonitorReconcileTest {
 
     /** Mutable ss output so a re-discovery can add a second app between calls. */

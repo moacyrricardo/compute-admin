@@ -25,6 +25,7 @@ import com.iskeru.computeadmin.recipe.service.ParamBinder;
 import com.iskeru.computeadmin.recipe.service.ParamValidationException;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
 import com.iskeru.computeadmin.run.model.Run;
 import com.iskeru.computeadmin.run.model.RunStatus;
 import com.iskeru.computeadmin.run.repository.RunRepository;
@@ -32,6 +33,7 @@ import com.iskeru.computeadmin.run.service.ActionModifiedException;
 import com.iskeru.computeadmin.run.service.RunNotFoundException;
 import com.iskeru.computeadmin.run.service.RunOutputHub;
 import com.iskeru.computeadmin.run.service.RunService;
+import com.iskeru.computeadmin.run.service.ScriptModifiedException;
 import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.OutputSink;
 import com.iskeru.computeadmin.ssh.SshExecutor;
@@ -83,7 +85,7 @@ import static org.awaitility.Awaitility.await;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({RunService.class, RunOutputHub.class, MachineService.class, ActionService.class,
-        RecipeService.class, ApprovalService.class, ParamBinder.class,
+        RecipeService.class, ApprovalService.class, ParamBinder.class, ScriptPinService.class,
         RunServiceTest.TestBeans.class})
 class RunServiceTest {
 
@@ -129,9 +131,20 @@ class RunServiceTest {
         final Map<String, CountDownLatch> latches = new ConcurrentHashMap<>();
         final Set<String> cancelled = ConcurrentHashMap.newKeySet();
 
+        /**
+         * The digest a {@code sha256sum} probe reports (spec-015). A pinned CUSTOM action
+         * is content-hashed at approval and re-verified at run against this value; a test
+         * changes it between approve and run to simulate a post-approval byte-swap.
+         */
+        volatile String scriptHash = "1111111111111111111111111111111111111111111111111111111111111111";
+
         @Override
         public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
             argvCalls.add(List.copyOf(argv));
+            if (!argv.isEmpty() && "sha256sum".equals(argv.get(0))) {
+                String path = argv.size() > 1 ? argv.get(1) : "";
+                return new ExecResult(0, scriptHash + "  " + path + "\n", "");
+            }
             return new ExecResult(0, "ok\n", "");
         }
 
@@ -215,6 +228,7 @@ class RunServiceTest {
         ssh.blockUntilCancelled = false;
         ssh.latches.clear();
         ssh.cancelled.clear();
+        ssh.scriptHash = "1111111111111111111111111111111111111111111111111111111111111111";
     }
 
     @Test
@@ -547,6 +561,56 @@ class RunServiceTest {
         assertThat(ssh.argvCalls.get(0)).containsSubsequence("systemctl", "restart", "nginx");
     }
 
+    // --- content-pinning of CUSTOM actions (spec-015) -----------------------
+
+    // NOT_SUPPORTED so the service's own transaction commits and the after-commit dispatch
+    // fires: the run-time re-probe matches the pinned hash, so the run proceeds to DONE.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_ScriptUnchanged_Runs() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedCustomAction("/opt/app/run.sh"));
+        ssh.argvCalls.clear(); // drop the approve-time probe; capture only the run phase.
+
+        Run queued = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of()));
+
+        Run finished = awaitTerminal(queued.getId());
+        assertThat(finished.getStatus()).isEqualTo(RunStatus.DONE);
+        assertThat(finished.getExitCode()).isZero();
+        // The run re-probed the script (same hash) and then dispatched the script itself.
+        assertThat(ssh.argvCalls).contains(List.of("sha256sum", "/opt/app/run.sh"));
+        assertThat(ssh.argvCalls).contains(List.of("/opt/app/run.sh"));
+    }
+
+    @Test
+    void run_ScriptContentDrifted_Throws409() {
+        AppUser user = saveUser();
+        Seed seed = asUser(user, () -> seedCustomAction("/opt/app/run.sh"));
+        // The on-box script is swapped after approval: sha256sum now reports a different hash.
+        ssh.scriptHash = "2222222222222222222222222222222222222222222222222222222222222222";
+        ssh.argvCalls.clear();
+
+        assertThatThrownBy(() -> asUser(user,
+                () -> runService.run(seed.machineId(), seed.actionId(), Map.of())))
+                .isInstanceOf(ScriptModifiedException.class);
+
+        // The re-probe happened, but the drifted script was never dispatched.
+        assertThat(ssh.argvCalls).containsExactly(List.of("sha256sum", "/opt/app/run.sh"));
+    }
+
+    @Test
+    void run_NonPinnedAction_SkipsProbe() {
+        AppUser user = saveUser();
+        // A non-CUSTOM approved action carries no approvedScriptHash, so the content gate
+        // is skipped entirely — no sha256sum probe is attempted at run time.
+        Seed seed = asUser(user, () -> seedAction(true));
+        ssh.argvCalls.clear();
+
+        asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("svc", "nginx")));
+
+        assertThat(ssh.argvCalls).noneMatch(argv -> !argv.isEmpty() && "sha256sum".equals(argv.get(0)));
+    }
+
     // --- MONITOR classification grants nothing (the gate is unchanged) ------
 
     @Test
@@ -637,6 +701,24 @@ class RunServiceTest {
             approvalService.submitForApproval(action.getId());
             approvalService.approve(action.getId());
         }
+        return new Seed(machine.getId(), action.getId());
+    }
+
+    /**
+     * A CUSTOM recipe/action wrapping an on-box script (spec-015): the leading LITERAL
+     * token is the absolute script path, no params. Approved when {@code approve}, so it
+     * is content-pinned via the recording SSH fake's {@code sha256sum} response.
+     */
+    private Seed seedCustomAction(String scriptPath) {
+        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Recipe recipe = recipeService.create(new CreateRecipeInput(
+                machine.getId(), "custom", "custom commands", RecipeType.CUSTOM));
+        Action action = actionService.addAction(new AddActionInput(
+                recipe.getId(), "run script", "runs the wrapped script", false,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, scriptPath)),
+                List.of()));
+        approvalService.submitForApproval(action.getId());
+        approvalService.approve(action.getId());
         return new Seed(machine.getId(), action.getId());
     }
 

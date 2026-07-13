@@ -25,6 +25,7 @@ import com.iskeru.computeadmin.recipe.repository.ActionRepository;
 import com.iskeru.computeadmin.recipe.repository.RecipeRepository;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.machine.repository.MachineRepository;
 import com.iskeru.computeadmin.ssh.ExecResult;
@@ -64,8 +65,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({DiscoveryService.class, RecipeService.class, ActionService.class, ApprovalService.class,
-        MachineService.class, NginxDiscoverer.class, DockerDiscoverer.class, DatabaseDiscoverer.class,
-        CronDiscoverer.class, MonitorMachineDiscoverer.class, DiscoveryServiceTest.FakeSshConfig.class})
+        ScriptPinService.class, MachineService.class, NginxDiscoverer.class, DockerDiscoverer.class,
+        DatabaseDiscoverer.class, CronDiscoverer.class, MonitorMachineDiscoverer.class,
+        DiscoveryServiceTest.FakeSshConfig.class})
 class DiscoveryServiceTest {
 
     /** Verbs that would mean an action template — not a probe — was executed. */
