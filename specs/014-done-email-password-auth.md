@@ -117,7 +117,7 @@ unchanged; `authHeaders()` unchanged). Surface 401/409 via the existing toast.
 - README.md: Stack bullet "Google sign-in for the UI" → "Email+password sign-in";
   "See ARCH.md spec 011" → "specs 011 & 014".
 - A WARNING banner on `specs/011-*.md` (added with this spec) points here; the
-  catalog `specs/README.md` gets a 014 row and an 011 "auth superseded" note.
+  catalog `specs/catalog.md` gets a 014 row and an 011 "auth superseded" note.
 - Cosmetic Javadoc: `common/AuthContext.java` ("Google JWT") and
   `mcp/BeginSetupTool.java` ("Google sign-in").
 

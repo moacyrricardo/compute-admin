@@ -53,7 +53,7 @@ enforces **no per-machine name uniqueness** — it validates only that the name 
 non-blank and the machine is owned. So a second `POST /api/machines/{id}/discover`
 creates a *second* `docker` recipe, a second `nginx` recipe, and a fresh copy of
 every action, each re-submitted to `PENDING_APPROVAL`. This is catalog backlog
-item **H2** ([`specs/README.md`](./README.md) deferred-hardening table) and was
+item **H2** ([`specs/catalog.md`](./catalog.md) deferred-hardening table) and was
 called out under spec-006's "Deferred (new architectural concerns)".
 
 For the built-in one-shot discoverers this is annoying; for **monitoring** it is
@@ -196,4 +196,4 @@ adopt." No new persisted entity; the outcome is computed per discover call.
 **Build first** — it is the prerequisite for 022–026. Touches `recipe`
 (finder/helper + migration) and `discovery` (reconciliation). Independent of the
 monitoring model; resolves catalog backlog **H2**. On merge, strike H2 through in
-[`specs/README.md`](./README.md)'s deferred-hardening table with a pointer here.
+[`specs/catalog.md`](./catalog.md)'s deferred-hardening table with a pointer here.

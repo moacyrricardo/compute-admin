@@ -13,7 +13,7 @@ Two paths need the same shape: run the **slow, network-bound** phase (SSH probes
 with **no DB transaction open**, then persist the results in **one short
 transaction**. Holding a JPA transaction (and its pooled connection) open across
 SSH round-trips is exactly the resource-hygiene smell spec-013 set out to remove
-(H3 discovery, H6 connectivity; see [README.md](./README.md) backlog and
+(H3 discovery, H6 connectivity; see [catalog.md](./catalog.md) backlog and
 [013](./013-done-runtime-resource-hygiene.md)).
 
 **How 013 solved it — programmatic `TransactionTemplate` (option A, as-built).**
