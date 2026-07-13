@@ -1,6 +1,6 @@
 # 039 — Native consumer CPU axis
 
-> **Status: todo.** Branch `moacyrricardo/spec-039-native-cpu-axis`, stacked on
+> **Status: done.** Branch `moacyrricardo/spec-039-native-cpu-axis`, stacked on
 > `moacyrricardo/spec-038-compose-project-grouping` (merge after spec-038). No Flyway
 > migration. Linear blocked (no ticket).
 
@@ -94,3 +94,23 @@ native cpu probe and the `cores` host vital already exist), **no Flyway migratio
   bound are the caveats inherited from spec-032's probe, documented, not solved, in v1.
 - **`cores` availability** — if the `cores`/`nproc` host vital is unapproved or missing,
   the native CPU axis degrades to `—` (exactly as docker's does); RAM is unaffected.
+
+## Divergence from the spec (as built)
+
+Built faithfully to the four decisions; the notes below are the only deltas:
+
+- **Doc-comment refresh.** Beyond the wiring, `applyConsumerReading`'s Javadoc and the
+  `pollConsumers` section comment were updated to state that CPU is now filled
+  client-side (they previously said "only the RAM axis is filled" / "fill each
+  consumer's RAM axis") — a comment-accuracy touch, no behaviour change.
+- **Render check extended in place.** The spec-037 headless check
+  (`src/test/js/docker-consumer-metrics.render-check.js`) gained a spec-039 block rather
+  than a sibling file: it exposes `applyConsumerReading` / `parseAppCpu`, asserts
+  `parseAppCpu` sums pcpu (80+20=100) and returns `null` for the no-listener/empty
+  sentinels, and drives a native consumer to a numeric CPU axis (100 pcpu ÷ 4 cores =
+  25%) on the card + legend, staying `—` for an absent reading or unknown `cores`.
+  (Not wired into `mvn`; run with `node src/test/js/docker-consumer-metrics.render-check.js`.)
+- **Verification.** `node --check src/main/resources/static/app.js` clean; the headless
+  render check passes (docker + spec-038 + spec-039 blocks); the full `mvn test` suite is
+  green — **249 tests, 0 failures, 0 errors, 0 skipped** (incl. `GateArchTest` /
+  `MachineEventArchTest`). Gate + `mcp/` + `*ArchTest`s untouched.
