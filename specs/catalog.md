@@ -43,6 +43,8 @@ merges and renames it).
 | 027 | Signal-driven machine unreachability | ⚪ todo | **concern** — the going-**OFFLINE**/UNREACHABLE counterpart to 019's instant going-**ONLINE** event: flip faster than the 5-min cron **without flapping** (leaning: a connect-failure triggers an immediate authoritative confirmation probe, not a direct flip). Builds on 019 (PR #30) |
 | 028 | Machine name & MCP identity hardening | ⚪ todo | **security** (ARCH **S9**): MCP identifies machines by `id`+user-provided `name`, hides `host`/`port`/`loginUser`; adds a required per-owner-unique **name** at registration; splits the MCP view (`id/name/tags/status`) from the full UI view; `register_machine` still takes host as input but stops echoing it |
 | 029 | Fleet monitoring dashboard | ✅ done | fleet view — per-machine sections, tag + app-name filters (filtered-out = unpolled), a synthetic `no-apps` host-only view, per-app **mem-% of host**, unified per-app cards (checks + ops), new read `GET /api/runs/{id}/children`; folds in the spec-025 actuator-liveness → `http app monitor` fallback |
+| 030 | Docker container monitoring | ⚪ todo | **concern** (options open) — the fleet Monitor (029) finds **none** of a box's containers because host `ss -ltnp` misses bridge-networked/portless/datastore containers behind `docker-proxy`/DNAT; enumerates options for Docker-native discovery (`docker ps`/`stats`/`inspect`) + two open doubts: gate discovery behind `docker ps`-allowed (recipe-depends-on-recipe), and how a Spring Boot **in** Docker should be monitored (container vs actuator vs unified lens) |
+| 031 | Deferred follow-ups triage | ⚪ todo | **concern** (options open) — consolidates every deferred implementation note + spec-eval finding across built specs and merged PRs (#38/#39) into one worklist; each item re-asked **keep / drop / already-addressed**. Overlaps but does not replace the H-backlog below (see **H8**) |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
@@ -88,7 +90,7 @@ rate-limiting); the items here are correctness/robustness follow-ups.
 | H5 | Custom-script **content-pinning**: hash the script at approval, verify before each run (path-not-contents trust; escalation risk with sudo) — **promoted to spec 015** | 007 | medium |
 | H6 | `ConnectivityCheckJob` probes the whole fleet inside one `@Transactional`; `MinaSshExecutor` builds a fresh SSH client per `exec()` — move to bounded concurrency + a pooled client | 003 | medium |
 | H7 | `ActionSnapshot` canonical serialization uses unescaped delimiters (theoretical hash-collision surface; currently moot) | 004 | low |
-| H8 | Dead server-side helpers duplicate client logic — `MonitorDtos.opsForApp` (026) and `MonitorDtos.memPctOfHost`/`parseHostMemTotalMb` (029) are unused in production (metrics computed client-side) and only test-called; drop them or wire them so mem-% has a single source of truth (surfaced by spec-eval on PRs #38/#39) | 026/029 | low |
+| H8 | Dead server-side helpers duplicate client logic — `MonitorDtos.opsForApp` (026) and `MonitorDtos.memPctOfHost`/`parseHostMemTotalMb` (029) are unused in production (metrics computed client-side) and only test-called; drop them or wire them so mem-% has a single source of truth (surfaced by spec-eval on PRs #38/#39; also carried as an open item in concern **031**) | 026/029 | low |
 
 **Promoted:** **H1 + H3 + H6 → spec 013** (runtime resource hygiene) — grouped by
 their shared root cause (holding a resource across network I/O); ✅ **shipped on
@@ -111,13 +113,23 @@ thread-confined and the MCP SDK dispatches tool handlers off the request thread,
 `immediateExecution(true)` (tools run on the token-bound request thread) plus a test
 asserting the user resolves inside a tool call.
 
-## Proposed next
+## Open concerns
 
-**Spec 030 — container monitoring (proposed).** The current app-monitor path finds
-apps via the host's `ss -ltnp` (open listening ports → PID → cmdline). That
-structurally misses bridge-networked containers, portless workers, and datastores
-that publish no host-visible listening socket. A future spec would add
-**Docker-native discovery** (`docker ps` / `docker stats` / `docker inspect`) to
-monitor those, building on the existing `DockerDiscoverer`, the spec-022 monitoring
-conventions (`appName`/`APP_PORT_LIST`, fan-out run mode, `RecipeType.MONITOR`), and
-the 029 fleet per-app card.
+Two authored concerns (options open, no decision yet) sit ahead of the next build:
+
+- **[030](./030-todo-docker-container-monitoring.md) — Docker container monitoring.**
+  The fleet Monitor (029) finds apps via the host's `ss -ltnp` (listening port → PID
+  → cmdline), which structurally misses bridge-networked containers, portless workers,
+  and datastores behind `docker-proxy`/DNAT. Lays out options for **Docker-native
+  discovery** (`docker ps` / `docker stats` / `docker inspect`) on top of the existing
+  `DockerDiscoverer` and the spec-022 conventions (`appName`/`APP_PORT_LIST`, fan-out
+  run mode, `RecipeType.MONITOR`), plus two open doubts to resolve before it becomes a
+  spec: (1) gate Docker discovery behind `docker ps` being approved first
+  (recipe-depends-on-recipe), and (2) the right lens for a Spring Boot running **in**
+  Docker (container vs actuator vs unified).
+
+- **[031](./031-todo-deferred-followups-triage.md) — Deferred follow-ups triage.**
+  A single worklist of every deferred note and spec-eval finding across the built
+  specs and merged PRs, each re-asked **keep / drop / already-addressed**. It is a
+  triage index, not a work spec: resolving it spins the *keep* items into their own
+  specs (or folds them into the H-backlog above).
