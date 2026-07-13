@@ -326,8 +326,19 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         if (name.find()) {
             return name.group(1);
         }
-        Matcher jar = JAR.matcher(cmdline);
-        return jar.find() ? jar.group(1) : null;
+        // The executable jar is the token right AFTER `-jar` — not a `-cp`/`-classpath`
+        // entry or a `-javaagent:`/`-agentpath:` jar (New Relic, OpenTelemetry, etc.),
+        // which precede the main jar/class and would otherwise be picked as the app name.
+        String[] tokens = cmdline.split("\\s+");
+        for (int i = 0; i < tokens.length - 1; i++) {
+            if (tokens[i].equals("-jar")) {
+                Matcher jar = JAR.matcher(tokens[i + 1]);
+                if (jar.find()) {
+                    return jar.group(1);
+                }
+            }
+        }
+        return null; // no executable jar (e.g. started via -cp + main class) → app-<port>
     }
 
     private String fastApiName(String cmdline) {
