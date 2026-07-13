@@ -36,4 +36,16 @@ public final class RunDtos {
                     run.getStartedAt(), run.getFinishedAt());
         }
     }
+
+    /**
+     * A fan-out child's minimal handle (spec-029): its id, the {@code appLabel} that
+     * names the {@code (app-name, port)} item it ran, and its lifecycle status. The
+     * fleet poll lists a parent's children to subscribe to each child's output stream
+     * and attribute the per-app probe result to the right app card.
+     */
+    public record ChildRunView(String id, String appLabel, RunStatus status) {
+        public static ChildRunView of(Run run) {
+            return new ChildRunView(run.getId(), run.getAppLabel(), run.getStatus());
+        }
+    }
 }

@@ -557,7 +557,24 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 }
 .fw-badge--springboot { color: var(--s-ok); border-color: var(--s-ok); }
 .fw-badge--fastapi    { color: var(--s-info); border-color: var(--s-info); }
+.fw-badge--http       { color: var(--s-warn); border-color: var(--s-warn); }
 .fw-badge--generic    { color: var(--text-dim); }
+
+/* Fleet per-app card (spec-029): the app-name doubles as a filter toggle. */
+.app-name-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.app-name-toggle:hover { color: var(--accent); text-decoration: underline; }
+.app-mem { min-width: 0; }
+.app-checks { min-width: 0; }
 
 .pill {
   display: inline-flex;

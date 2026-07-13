@@ -1316,14 +1316,6 @@
     return mib + " MiB";
   }
 
-  /** Classify a MONITOR action's framework from its recipe/action name (025 badges). */
-  function frameworkOf(action) {
-    var s = ((action.recipeName || "") + " " + (action.name || "")).toLowerCase();
-    if (s.indexOf("springboot") >= 0 || s.indexOf("spring boot") >= 0 || s.indexOf("actuator") >= 0) return "springboot";
-    if (s.indexOf("fastapi") >= 0 || s.indexOf("uvicorn") >= 0 || s.indexOf("gunicorn") >= 0) return "fastapi";
-    return "generic";
-  }
-
   function metricKind(action) {
     var n = (action.name || "").toLowerCase();
     if (n.indexOf("cpu") >= 0 || n.indexOf("load") >= 0) return "cpu";
@@ -1392,14 +1384,52 @@
       return api("GET", "/monitor").then(function (dash) {
         var machines = (dash && dash.machines) || [];
 
-        // ---- poll state --------------------------------------------------
+        // ---- filter state (client-side; spec-029) ------------------------
+        // Two dimensions: machine tags (018) and app-names (022). Both are pure client
+        // filters and DEFINE THE POLL SET — a filtered-out machine/app is never polled.
+        var selectedTags = {};
+        var selectedApps = {};   // app-name → true; plus the synthetic NO_APPS token
         var cadence = "single";
-        var pollTimer = null;
-        var heartbeatTimer = null;
-        var lastUpdated = null;
-        var cycleInFlight = false;
+        var hostMemTotal = {};    // machineId → total MB (the per-app mem% denominator)
+
+        var allTags = uniqSorted(flatMap(machines, function (m) { return m.tags || []; }));
+        var allApps = uniqSorted(flatMap(machines, function (m) {
+          return (m.apps || []).map(function (a) { return a.appName; });
+        }));
+        var anyHostOnly = machines.some(function (m) { return !((m.apps || []).length); });
+
+        function selTags() { return allTags.filter(function (t) { return selectedTags[t]; }); }
+        function selApps() { return allApps.filter(function (a) { return selectedApps[a]; }); }
+        function noAppsOn() { return !!selectedApps[NO_APPS]; }
+        function appFilterActive() { return selApps().length > 0 || noAppsOn(); }
+        function tagMatch(m) {
+          var s = selTags(); if (!s.length) return true;
+          var mine = m.tags || [];
+          return s.some(function (t) { return mine.indexOf(t) >= 0; });
+        }
+        // A machine is visible when it matches the tag filter AND (no app filter ⇒ all;
+        // else it runs a selected app, or is app-less when `no-apps` is pinned). With an
+        // app pinned, machines that don't run it disappear entirely (broad → deep).
+        function machineVisible(m) {
+          if (!tagMatch(m)) return false;
+          if (!appFilterActive()) return true;
+          if (noAppsOn() && !((m.apps || []).length)) return true;
+          var s = selApps();
+          return (m.apps || []).some(function (a) { return s.indexOf(a.appName) >= 0; });
+        }
+        function visibleAppsFor(m) {
+          var apps = m.apps || [];
+          if (!appFilterActive()) return apps;
+          var s = selApps();
+          return apps.filter(function (a) { return s.indexOf(a.appName) >= 0; });
+        }
+
+        // ---- poll state --------------------------------------------------
+        var pollTimer = null, heartbeatTimer = null, lastUpdated = null, cycleInFlight = false;
+        var sections = [];
 
         var updatedLabel = h("span", { class: "small dim", text: "not yet updated" });
+        var counterLabel = h("span", { class: "small dim mono" });
         var runNowBtn = h("button", { class: "btn btn--sm btn--primary" }, "Run now");
         var cadenceSel = h("select", { class: "mono", "aria-label": "Poll cadence" },
           MONITOR_CADENCES.map(function (c) { return h("option", { value: c.key, text: c.label }); }));
@@ -1413,59 +1443,105 @@
 
         function tickHeartbeat() {
           if (!lastUpdated) { updatedLabel.textContent = "not yet updated"; return; }
-          var secs = Math.round((Date.now() - lastUpdated) / 1000);
-          updatedLabel.textContent = "updated " + secs + "s ago";
+          updatedLabel.textContent = "updated " + Math.round((Date.now() - lastUpdated) / 1000) + "s ago";
         }
-
         function applyCadence() {
           stopTimers();
           heartbeatTimer = setInterval(tickHeartbeat, 1000);
           var chosen = MONITOR_CADENCES.filter(function (c) { return c.key === cadence; })[0];
-          if (chosen && chosen.ms > 0) {
-            pollTimer = setInterval(cycle, chosen.ms);
+          if (chosen && chosen.ms > 0) pollTimer = setInterval(cycle, chosen.ms);
+        }
+        cadenceSel.addEventListener("change", function (e) { cadence = e.target.value; applyCadence(); });
+        runNowBtn.addEventListener("click", function () { cycle(); });
+
+        var tagBar = h("div", { class: "filter-chips" });
+        var appBar = h("div", { class: "filter-chips" });
+        var body = h("div", { class: "monitor-machines" });
+
+        // Clicking a card's app-name is the second entry point to the app filter.
+        function toggleApp(name) { selectedApps[name] = !selectedApps[name]; renderChips(); rebuild(); cycle(); }
+        function toggleTag(name) { selectedTags[name] = !selectedTags[name]; renderChips(); rebuild(); cycle(); }
+
+        function chipBtn(label, on, title, onClick) {
+          return h("button", { type: "button",
+            class: "tag tag--filter" + (on ? " tag--on" : ""),
+            "aria-pressed": on ? "true" : "false", title: title || label, text: label, onclick: onClick });
+        }
+
+        function renderChips() {
+          clear(tagBar); clear(appBar);
+          if (allTags.length) {
+            tagBar.appendChild(h("span", { class: "small dim", text: "Tags" }));
+            allTags.forEach(function (t) {
+              tagBar.appendChild(chipBtn(t, !!selectedTags[t], "Filter to machines tagged " + t,
+                function () { toggleTag(t); }));
+            });
+          }
+          if (allApps.length || anyHostOnly) {
+            appBar.appendChild(h("span", { class: "small dim", text: "Apps" }));
+            allApps.forEach(function (a) {
+              appBar.appendChild(chipBtn(a, !!selectedApps[a], "Compare " + a + " across the fleet",
+                function () { toggleApp(a); }));
+            });
+            if (anyHostOnly) {
+              appBar.appendChild(chipBtn("no-apps", !!selectedApps[NO_APPS],
+                "Host-only machines (no discovered apps)", function () { toggleApp(NO_APPS); }));
+            }
           }
         }
 
-        cadenceSel.addEventListener("change", function (e) {
-          cadence = e.target.value;
-          applyCadence();
-        });
-        runNowBtn.addEventListener("click", function () { cycle(); });
+        function updateCounter() {
+          var vm = machines.filter(machineVisible);
+          var apps = 0;
+          vm.forEach(function (mch) { apps += visibleAppsFor(mch).length; });
+          counterLabel.textContent = "polling " + vm.length + (vm.length === 1 ? " machine · " : " machines · ")
+            + apps + (apps === 1 ? " app" : " apps");
+        }
 
-        // ---- per-machine host panels + app cards -------------------------
-        var panels = machines.map(function (mch) { return buildMachineBlock(mch); });
+        function rebuild() {
+          clear(body);
+          sections = [];
+          var vm = machines.filter(machineVisible);
+          if (!vm.length) {
+            body.appendChild(empty(machines.length
+              ? "No machines match the current filters."
+              : "No machines yet. Register one and run discovery to propose the monitor recipes."));
+            updateCounter();
+            return;
+          }
+          vm.forEach(function (mch) {
+            var sec = buildMachineSection(mch, visibleAppsFor(mch), hostMemTotal, toggleApp);
+            sections.push(sec);
+            body.appendChild(sec.node);
+          });
+          updateCounter();
+        }
 
+        // The poll loop touches ONLY the currently-rendered (visible) sections.
         function cycle() {
           if (cycleInFlight) return;
-          cycleInFlight = true;
-          runNowBtn.disabled = true;
-          var jobs = panels.map(function (p) { return p.refresh(); });
-          Promise.all(jobs).then(function () {
-            lastUpdated = Date.now();
-            tickHeartbeat();
-          }).catch(function () { /* per-panel errors are shown in-panel */ })
+          cycleInFlight = true; runNowBtn.disabled = true;
+          Promise.all(sections.map(function (s) { return s.refresh(); }))
+            .then(function () { lastUpdated = Date.now(); tickHeartbeat(); })
+            .catch(function () { /* per-section errors are shown in-section */ })
             .then(function () { cycleInFlight = false; runNowBtn.disabled = false; });
         }
 
         var head = h("div", { class: "page-head" },
           h("div", null,
             h("h1", { text: "Monitor" }),
-            h("p", { class: "sub", text: "Live host vitals and per-app health, polled from your browser. Approval stays UI-only — polling re-runs already-approved actions." })),
+            h("p", { class: "sub", text: "Fleet health, polled from your browser. Filter by tag or app-name; whatever is filtered out is not polled. Approval stays UI-only — polling re-runs already-approved actions." })),
           h("div", { class: "row monitor-controls" },
             h("label", { class: "small dim", text: "Cadence" }),
-            cadenceSel,
-            runNowBtn,
-            updatedLabel));
+            cadenceSel, runNowBtn, counterLabel, updatedLabel));
 
-        var body = machines.length
-          ? h("div", { class: "monitor-machines" }, panels.map(function (p) { return p.node; }))
-          : empty("No machines yet. Register one and run discovery to propose the monitor recipes.");
-
-        // First reading + heartbeat (default cadence = single → one cycle, no interval).
+        renderChips();
+        rebuild();
+        // Default: all machines, poll = Single → one cheap one-shot, no standing load.
         applyCadence();
         cycle();
 
-        return h("div", null, head, body);
+        return h("div", null, head, tagBar, appBar, body);
       });
     });
   }
@@ -1494,45 +1570,108 @@
       op.name, h("span", { class: "run-chip-go", text: "run…" }));
   }
 
-  /**
-   * The per-machine "App operations" section: one card per app the machine's approved
-   * ops actions can target, each listing those ops as pre-filled run chips. Returns null
-   * when the machine has no app-ops (so the section is omitted entirely).
-   */
-  function buildAppOpsSection(mch) {
-    var ops = mch.appOps || [];
-    if (!ops.length) return null;
-    var seen = {};
-    var appNames = [];
-    ops.forEach(function (op) {
-      (op.targetApps || []).forEach(function (a) {
-        if (!seen[a]) { seen[a] = true; appNames.push(a); }
+  // ---- fleet poll helpers (spec-029) ---------------------------------------
+  // Per-app metrics (up / rss / mem%) are client-computed from live probe runs: a
+  // fan-out probe is POSTed for the visible apps, its children are listed
+  // (GET /runs/{id}/children), and each child's output is streamed and attributed to
+  // its app by appLabel. No server sampler — closing the tab stops all probing (024).
+
+  // Synthetic app-filter token selecting host-only machines. A NUL prefix keeps it
+  // disjoint from any real app-name (which the fixed charset forbids NUL in).
+  var NO_APPS = " no-apps";
+
+  function uniqSorted(list) {
+    var seen = {}, out = [];
+    list.forEach(function (x) { if (x != null && !seen[x]) { seen[x] = true; out.push(x); } });
+    out.sort();
+    return out;
+  }
+  function flatMap(list, fn) {
+    var out = [];
+    list.forEach(function (x) { fn(x).forEach(function (y) { out.push(y); }); });
+    return out;
+  }
+
+  /** The name of an action's APP_PORT_LIST (fan-out) param, or null if it is scalar. */
+  function appPortListParamName(action) {
+    var defs = action.paramDefs || [];
+    for (var i = 0; i < defs.length; i++) {
+      if (defs[i].kind === "APP_PORT_LIST") return defs[i].name;
+    }
+    return null;
+  }
+
+  /** Subscribe to one run's stream, resolving with its accumulated stdout + exit code. */
+  function collectRun(runId) {
+    return new Promise(function (resolve) {
+      var out = "", exit = null;
+      streamRunOutput(runId, {
+        onChunk: function (stream, data) {
+          if (stream === "exit") { exit = parseInt(data, 10); return; }
+          if (stream === "stdout" || stream === "stderr") out += data + "\n";
+        },
+        onDone: function () { resolve({ stdout: out, exit: exit }); }
       });
     });
-    appNames.sort();
-    if (!appNames.length) return null;
-    return h("div", { class: "app-ops" },
-      h("h3", { class: "mt-4", text: "App operations" }),
-      h("div", { class: "app-cards" }, appNames.map(function (appName) {
-        var matched = opsForApp(mch, appName);
-        return h("div", { class: "app-card" },
-          h("div", { class: "row-between" },
-            h("strong", { text: appName }),
-            h("span", { class: "tag", text: matched.length + (matched.length === 1 ? " op" : " ops") })),
-          h("div", { class: "run-chip-row mt-3" }, matched.map(function (op) {
-            return opsRunChip(op, appName);
-          })));
-      })));
   }
 
   /**
-   * Build one machine's block: a host panel (bars filled from the host monitor
-   * actions each cycle) and the per-app cards. Returns { node, refresh } where
-   * refresh() re-runs this machine's approved monitor actions and updates the DOM.
+   * Run one fan-out probe over `apps` ([{appName, port}]) and collect each app's output.
+   * POSTs the run (gate-safe: the server re-checks approval + live-hash + params), lists
+   * the fan-out children, then streams each child keyed by its appLabel. Resolves with a
+   * map appName → { stdout, exit }.
    */
-  function buildMachineBlock(mch) {
+  function runProbeForApps(machineId, checkAction, apps) {
+    var paramName = appPortListParamName(checkAction);
+    if (!paramName || !apps.length) return Promise.resolve({});
+    var value = JSON.stringify(apps.map(function (a) { return { appName: a.appName, port: a.port }; }));
+    var params = {}; params[paramName] = value;
+    return api("POST", "/runs", { machineId: machineId, actionId: checkAction.id, params: params })
+      .then(function (parent) {
+        return api("GET", "/runs/" + encodeURIComponent(parent.id) + "/children")
+          .then(function (children) {
+            var byApp = {};
+            return Promise.all((children || []).map(function (c) {
+              return collectRun(c.id).then(function (r) { byApp[c.appLabel] = r; });
+            })).then(function () { return byApp; });
+          });
+      }).catch(function () { return {}; });
+  }
+
+  /** Classify a check by name: liveness/health, process (VmRSS), or other. */
+  function checkKind(action) {
+    var n = (action.name || "").toLowerCase();
+    if (n.indexOf("process") >= 0 || n.indexOf("proc") >= 0) return "process";
+    if (n.indexOf("health") >= 0 || n.indexOf("live") >= 0 || n.indexOf("ping") >= 0
+        || n.indexOf("readiness") >= 0) return "liveness";
+    return "other";
+  }
+
+  /** Sum VmRSS (kB) from a process-probe stdout into whole MB, or null if absent. */
+  function parseRssMb(text) {
+    if (!text) return null;
+    var total = 0, seen = false;
+    text.split(/\r?\n/).forEach(function (ln) {
+      var m = ln.match(/VmRSS:\s+(\d+)\s*kB/i);
+      if (m) { total += parseInt(m[1], 10); seen = true; }
+    });
+    return seen ? Math.round(total / 1024) : null;
+  }
+
+  /** round(rssMb / hostTotalMb * 100), null-safe — mirrors MonitorDtos.memPctOfHost. */
+  function clientMemPct(rssMb, hostTotalMb) {
+    if (rssMb == null || hostTotalMb == null || hostTotalMb <= 0) return null;
+    return Math.round(rssMb / hostTotalMb * 100);
+  }
+
+  /**
+   * One machine's fleet section (spec-029): a compact host-vitals header + a per-app
+   * card grid for the machine's `visibleApps`. refresh() re-runs the machine's approved
+   * host probes (for the vitals AND the host-mem denominator) then the visible apps'
+   * fan-out checks, and updates each card's live rollup. Returns { node, refresh }.
+   */
+  function buildMachineSection(mch, visibleApps, hostMemTotal, onToggleApp) {
     var hostActions = mch.hostActions || [];
-    var appActions = mch.appActions || [];
 
     var hostPanel = h("div", { class: "host-panel" });
     var rawWrap = h("div", { class: "host-raw" });
@@ -1600,97 +1739,194 @@
       }
     }
 
-    // App cards: grouped by app-probe action (per-app instances arrive once the
-    // app-monitor recipes + fan-out labelling land, 025). Each card is gate-safe.
-    var appGrid = appActions.length
-      ? h("div", { class: "app-cards" }, appActions.map(function (a) { return appCard(a); }))
-      : null;
+    var cards = visibleApps.map(function (app) { return appCard(mch, app, onToggleApp); });
+    var appGrid = cards.length
+      ? h("div", { class: "app-cards" }, cards.map(function (c) { return c.node; }))
+      : ((mch.apps || []).length ? null
+        : h("p", { class: "small dim", text: "No discovered apps on this host." }));
 
     renderHost({});
 
-    // App-ops (spec-026): a card per app the machine's approved ops actions can target,
-    // each listing those ops as pre-filled run chips. The apps come from the ops' own
-    // `app-name` ALLOWED_SET (server-provided targetApps), so an app surfaces here as
-    // soon as an approved restart/tail-logs/redeploy names it — no runtime poll needed.
-    var opsSection = buildAppOpsSection(mch);
-
-    var statusChip = chip(mch.status);
     var node = h("section", { class: "section monitor-machine" },
       h("div", { class: "row-between" },
         h("div", { class: "grow" },
           h("h2", { text: mch.host }),
           h("p", { class: "small dim mono", text: mch.loginUser + "@" + mch.host + ":" + mch.port })),
-        statusChip),
+        chip(mch.status)),
       hostPanel,
       rawWrap,
-      appGrid ? h("h3", { class: "mt-4", text: "Apps" }) : null,
-      appGrid,
-      opsSection);
+      cards.length ? h("h3", { class: "mt-4", text: "Apps" }) : null,
+      appGrid);
 
-    function refresh() {
-      // Only APPROVED, param-free host actions are poll-runnable (app probes need a
-      // runtime app list; they light up via 025). Collect each reading, then render.
+    // Host poll: approved, param-free host actions → vitals + the host total memory
+    // (parseMem's total) that the per-app mem% divides by.
+    function pollHost() {
       var runnable = hostActions.filter(function (a) {
         return a.approvalState === "APPROVED" && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
       });
       if (!runnable.length) { renderHost({}); return Promise.resolve(); }
       var readings = {};
       return Promise.all(runnable.map(function (a) {
-        return runAndCollect(mch.machineId, a.id, {}).then(function (r) {
-          readings[a.id] = r;
-        }).catch(function () { readings[a.id] = { stdout: "" }; });
-      })).then(function () { renderHost(readings); });
+        return runAndCollect(mch.machineId, a.id, {}).then(function (r) { readings[a.id] = r; })
+          .catch(function () { readings[a.id] = { stdout: "" }; });
+      })).then(function () {
+        renderHost(readings);
+        runnable.forEach(function (a) {
+          if (metricKind(a) === "memory") {
+            var mem = parseMem(readings[a.id] && readings[a.id].stdout);
+            if (mem && mem.mem && mem.mem.total) hostMemTotal[mch.machineId] = mem.mem.total;
+          }
+        });
+      });
     }
+
+    // App poll: group visible apps by their (shared) fan-out check actions so each check
+    // runs ONCE over all the apps that declare it, then distribute each app's result.
+    function pollApps() {
+      if (!cards.length) return Promise.resolve();
+      var groups = {}; // checkId → { action, apps:[{appName,port}], seen:{} }
+      visibleApps.forEach(function (app) {
+        (app.checks || []).forEach(function (chk) {
+          if (chk.approvalState !== "APPROVED" || chk.changedSinceApproval) return;
+          if (!appPortListParamName(chk)) return;
+          var g = groups[chk.id] || (groups[chk.id] = { action: chk, apps: [], seen: {} });
+          if (!g.seen[app.appName]) { g.seen[app.appName] = true; g.apps.push({ appName: app.appName, port: app.port }); }
+        });
+      });
+      var checkIds = Object.keys(groups);
+      if (!checkIds.length) { cards.forEach(function (c) { c.applyReading(null); }); return Promise.resolve(); }
+      var outputs = {}; // checkId → (appName → {stdout,exit})
+      return Promise.all(checkIds.map(function (id) {
+        return runProbeForApps(mch.machineId, groups[id].action, groups[id].apps)
+          .then(function (byApp) { outputs[id] = byApp; });
+      })).then(function () {
+        cards.forEach(function (c) { c.applyReading({ outputs: outputs, hostTotal: hostMemTotal[mch.machineId] }); });
+      });
+    }
+
+    // Host first so the mem% denominator is set before the app rollup reads it.
+    function refresh() { return pollHost().then(pollApps); }
 
     return { node: node, refresh: refresh };
   }
 
-  /** One per-app card: framework badge, UP/DOWN pill, KPIs, run-chip row, drawer. */
-  function appCard(action) {
-    var framework = frameworkOf(action);
-    var pill = h("span", { class: "pill pill--unknown", text: "no data" });
+  /**
+   * One unified per-app card (spec-029): framework badge (with an "actuator-less" note
+   * for the http family), UP/DOWN rollup, a mem-%-of-host bar, its checks, and its
+   * matched ops — checks and ops on one card. The app-name is a filter toggle.
+   * applyReading(reading) fills the live rollup from the poll (null → "no data").
+   */
+  function appCard(machine, app, onToggleApp) {
+    var framework = app.framework || "generic";
     var badge = h("span", { class: "fw-badge fw-badge--" + framework, text: framework });
+    var actuatorless = framework === "http"
+      ? h("span", { class: "tag", title: "No actuator responded; liveness via GET /", text: "actuator-less" })
+      : null;
+    var pill = h("span", { class: "pill pill--unknown", text: "no data" });
+
+    var nameBtn = h("button", { type: "button", class: "app-name-toggle",
+      title: "Filter the fleet to " + app.appName, text: app.appName });
+    nameBtn.addEventListener("click", function () { onToggleApp(app.appName); });
+
+    var memWrap = h("div", { class: "app-mem mt-2" });
+    var checksWrap = h("div", { class: "app-checks mt-2" });
+
+    var ops = app.ops || [];
+    var opsRow = ops.length
+      ? h("div", { class: "run-chip-row mt-3" }, ops.map(function (op) { return opsRunChip(op, app.appName); }))
+      : null;
 
     var card = h("div", { class: "app-card" },
       h("div", { class: "row-between" },
         h("div", { class: "grow" },
-          h("strong", { text: action.name }),
-          h("div", { class: "row mt-2" }, badge, pill)),
-        chip(action.approvalState)),
-      h("div", { class: "app-kpis small dim mt-2", text: "Probe " + (action.recipeName || "") }),
-      h("div", { class: "run-chip-row mt-3" }, runChip(action)));
+          nameBtn,
+          h("div", { class: "row mt-2" }, badge, actuatorless, pill)),
+        h("span", { class: "tag mono", text: (app.runtime || "process") + " :" + app.port })),
+      memWrap,
+      checksWrap,
+      opsRow);
     card.addEventListener("click", function (e) {
-      if (e.target.closest(".run-chip")) return; // let chips act on their own
-      openAppDrawer(action);
+      if (e.target.closest(".run-chip") || e.target.closest(".app-name-toggle")) return;
+      openAppDrawer(machine, app);
     });
-    return card;
+
+    function applyReading(reading) {
+      var livenessUp = null, processUp = null, rssMb = null, checkRows = [];
+      (app.checks || []).forEach(function (chk) {
+        var res = reading && reading.outputs && reading.outputs[chk.id] && reading.outputs[chk.id][app.appName];
+        var kind = checkKind(chk);
+        var state = "na";
+        if (res) {
+          if (kind === "process") {
+            var rss = parseRssMb(res.stdout);
+            if (rss != null) rssMb = (rssMb == null ? 0 : rssMb) + rss;
+            var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
+            processUp = listener;
+            state = listener ? "up" : "down";
+          } else if (kind === "liveness") {
+            livenessUp = res.exit === 0;
+            state = livenessUp ? "up" : "down";
+          } else {
+            state = res.exit === 0 ? "up" : "down";
+          }
+        }
+        checkRows.push({ name: chk.name, state: state });
+      });
+      var up = livenessUp != null ? livenessUp : processUp;
+
+      var newPill = up == null
+        ? h("span", { class: "pill pill--unknown", text: "no data" })
+        : h("span", { class: "pill pill--" + (up ? "up" : "down"), text: up ? "UP" : "DOWN" });
+      pill.parentNode.replaceChild(newPill, pill);
+      pill = newPill;
+
+      clear(memWrap);
+      var hostTotal = reading && reading.hostTotal;
+      var pct = clientMemPct(rssMb, hostTotal);
+      if (pct != null) {
+        memWrap.appendChild(meter("Mem % of host", pct, mibText(rssMb) + " / " + mibText(hostTotal)));
+      } else if (rssMb != null) {
+        memWrap.appendChild(meter("Mem % of host", null, mibText(rssMb) + " RSS · host total unknown"));
+      } else {
+        memWrap.appendChild(h("div", { class: "meter-sub mono", text: "mem % of host — no data" }));
+      }
+
+      clear(checksWrap);
+      if (checkRows.length) {
+        checksWrap.appendChild(h("div", { class: "run-chip-row" }, checkRows.map(function (r) {
+          var cls = r.state === "up" ? "chip chip--ok" : r.state === "down" ? "chip chip--bad" : "chip chip--neutral";
+          return h("span", { class: cls, title: r.name + " (" + humanize(r.state) + ")", text: r.name });
+        })));
+      }
+    }
+
+    applyReading(null);
+    return { node: card, applyReading: applyReading };
   }
 
-  /** The per-app detail drawer: runtime (placeholder), probed template, related run. */
-  function openAppDrawer(action) {
-    var framework = frameworkOf(action);
-    var tokens = (action.argTokens || []).slice().sort(function (a, b) { return a.position - b.position; });
-    var cmd = h("code", { class: "command command--scroll" },
-      tokens.map(function (t, i) {
-        var sep = i > 0 ? " " : "";
-        return t.kind === "PARAM"
-          ? [sep, h("span", { class: "tok-param", text: "{" + t.value + "}" })]
-          : sep + t.value;
-      }));
+  /** The per-app detail drawer (spec-029): its runtime facts, checks, and ops. */
+  function openAppDrawer(machine, app) {
+    var framework = app.framework || "generic";
+    var checks = app.checks || [];
+    var ops = app.ops || [];
 
-    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": action.name },
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": app.appName },
       h("div", { class: "row-between" },
-        h("h2", { text: action.name }),
+        h("h2", { text: app.appName }),
         h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
       h("div", { class: "row mt-2" },
         h("span", { class: "fw-badge fw-badge--" + framework, text: framework }),
-        chip(action.approvalState)),
-      h("h3", { class: "mt-4", text: "Runtime" }),
-      h("p", { class: "small dim", text: "Runtime facts (version, server, base image) populate from the app monitor probes once they run (spec-025)." }),
-      h("h3", { class: "mt-4", text: "Probed command" }),
-      h("div", { class: "mt-2" }, cmd),
-      h("h3", { class: "mt-4", text: "Related actions" }),
-      h("div", { class: "run-chip-row mt-2" }, runChip(action)));
+        h("span", { class: "tag mono", text: (app.runtime || "process") + " :" + app.port }),
+        framework === "http" ? h("span", { class: "tag", text: "actuator-less" }) : null),
+      h("p", { class: "small dim mt-2", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
+      h("h3", { class: "mt-4", text: "Checks" }),
+      checks.length
+        ? h("div", { class: "run-chip-row mt-2" }, checks.map(function (c) { return runChip(c); }))
+        : h("p", { class: "small dim", text: "No probes discovered for this app." }),
+      h("h3", { class: "mt-4", text: "Operations" }),
+      ops.length
+        ? h("div", { class: "run-chip-row mt-2" }, ops.map(function (op) { return opsRunChip(op, app.appName); }))
+        : h("p", { class: "small dim", text: "No approved ops target this app." }));
 
     var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
       if (e.target === backdrop) closeDrawer();

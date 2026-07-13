@@ -74,6 +74,18 @@ public class RunRS {
         return RunDtos.RunView.of(runService.cancel(id));
     }
 
+    /**
+     * A fan-out parent's children (spec-029): each {@code (app-name, port)} item's child
+     * run with its {@code appLabel} and status, so the fleet poll can attribute per-app
+     * probe output to the right card. Owner-scoped in the service (404 if not owned); a
+     * scalar run yields an empty list.
+     */
+    @GET
+    @Path("/{id}/children")
+    public java.util.List<RunDtos.ChildRunView> children(@PathParam("id") String id) {
+        return runService.childRuns(id).stream().map(RunDtos.ChildRunView::of).toList();
+    }
+
     @GET
     @Path("/{id}/output")
     @Produces(MediaType.SERVER_SENT_EVENTS)
