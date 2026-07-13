@@ -1,5 +1,43 @@
 # 034 — Fleet monitor UI/UX redesign
 
+_Status: done · branch `moacyrricardo/spec-034-fleet-monitor-ui-redesign` (stacked on
+spec-032's branch) · Linear blocked (no ticket)._
+
+## Divergence from the spec
+
+Implemented faithfully to the mock and the seven decisions, with these notes:
+
+- **UI + client-side only; no server read-side change was needed.** The scope allowed
+  "MonitorService/DTO read side as needed", but the 032 `MonitorConsumerView` already
+  carries the classification, axes, and services the redesign renders. The client joins
+  each consumer to the 029 `MonitorAppView` rollup **by name** for the probe metadata the
+  lean 032 contract intentionally omits (framework, port, fan-out checks, app-ops). So
+  "retire the MonitorAppView path" means its **rendering** is retired (no more app-cards /
+  app-drawer / host-vitals meters); the rollup survives only as a client-side metadata
+  source keyed to the consumer. This keeps the change contained to `static/` and leaves
+  every server test untouched.
+- **Host-vitals meters retired.** The host panel is now the three per-consumer segmented
+  bars, so the old host CPU/Memory/Disk/Swap meters are gone; only the host **memory**
+  probe is still polled — for the RAM-%-of-host denominator. `parseCpu`/`parseDisk` and the
+  now-orphaned `runChip` helper were removed as part of the switch. Host CPU/disk surface
+  again through the `SYSTEM` bucket once spec-033 lands.
+- **RAM is the only axis filled client-side** (summed VmRSS / host total). Built against
+  032 alone, CPU and disk stay `—` for native consumers — there is no honest client-side
+  number for them yet — exactly the expected honest degradation. Docker consumers and the
+  docker/system buckets don't appear until spec-033 populates them; the bucket **Show**
+  chips and the Databases bands are rendered from the contract fields
+  (`bucket`/`role`/`dedication`/`owner`/`usedBy`) so they light up automatically when 033
+  arrives, and read as empty (honest) against 032.
+- **`no-apps` is now a display collapse**, not a poll reduction: it hides the consumer
+  cards while keeping the machine's segmented rollup bars (which *are* the consumer
+  aggregate, so they still need the poll). The tag and app-name filters remain true
+  poll-set filters (filtered-out is never polled); the lens and bucket toggles are pure
+  re-renders of already-polled data.
+- **Verification.** No JS unit-test harness exists in-repo, so the render paths (apps lens,
+  databases lens, drawer, bucket toggles) were exercised headless in a Node DOM stub
+  against a synthetic 032 payload with zero runtime errors; the full `mvn test` suite
+  (241 tests, incl. the ArchTests / `GateArchTest`) stayed green.
+
 > Builds on the consumer contract in
 > [032](./032-todo-monitoring-axes-foundations.md) and evolves the fleet dashboard of
 > [029](./029-done-fleet-monitoring.md). Renders richer once
