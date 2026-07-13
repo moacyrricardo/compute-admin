@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.discovery.AppPortItem;
+import com.iskeru.computeadmin.discovery.DockerConsumer;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
@@ -25,6 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Orchestrates recipe discovery: resolve one of the current user's machines, run
@@ -157,10 +159,15 @@ public class DiscoveryService {
             // Refresh the discovery-pre-filled (app-name, port) list in place (spec-025).
             // It is a runtime value, not part of any action's content hash (spec-022), so
             // reconciling the apps never re-opens an approval — re-discovery just picks up
-            // a new/removed app on the same recipe (no duplicate card).
+            // a new/removed app on the same recipe (no duplicate card). A docker compose
+            // monitor (spec-033) instead refreshes its classified consumers into the same
+            // un-audited column (no new schema); the two channels are mutually exclusive.
             if (!proposal.appPortList().isEmpty()) {
                 recipe = recipeService.refreshDiscoveredAppPortList(
                         recipe.getId(), toJson(proposal.appPortList()));
+            } else if (!proposal.dockerConsumers().isEmpty()) {
+                recipe = recipeService.refreshDiscoveredAppPortList(
+                        recipe.getId(), toDockerConsumersJson(proposal.dockerConsumers()));
             }
             discovered.add(new DiscoveredRecipe(recipe, actions));
         }
@@ -221,6 +228,19 @@ public class DiscoveryService {
         } catch (JsonProcessingException e) {
             // Fixed record shape; a serialisation failure here is a programming error.
             throw new IllegalStateException("Could not serialise app-port list", e);
+        }
+    }
+
+    /**
+     * Serialises the docker consumers (spec-033) into the recipe's {@code appPortList}
+     * column as {@code {"dockerConsumers":[…]}} — an object, so the monitor read tells it
+     * apart from the native {@code [{"appName","port"}]} array by shape (no new schema).
+     */
+    private String toDockerConsumersJson(List<DockerConsumer> consumers) {
+        try {
+            return json.writeValueAsString(Map.of("dockerConsumers", consumers));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Could not serialise docker consumers", e);
         }
     }
 }
