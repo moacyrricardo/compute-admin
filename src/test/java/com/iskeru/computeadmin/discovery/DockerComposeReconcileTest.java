@@ -10,6 +10,7 @@ import com.iskeru.computeadmin.discovery.service.DockerComposeDiscoverer;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.machine.service.MachineService.RegisterMachineInput;
+import com.iskeru.computeadmin.monitor.api.MonitorDtos.ConsumerServiceView;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorConsumerView;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorMachineView;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
@@ -118,26 +119,33 @@ class DockerComposeReconcileTest {
 
             // The compose project persisted as one (machine, MONITOR, "orders") recipe,
             // its consumers stored on the un-audited appPortList column (no new schema).
+            // spec-038: the project's postgres rides as a role=DATABASE SERVICE (not a
+            // separate DEDICATED consumer), so its container name is in the persisted JSON.
             assertThat(recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
                     machine.getId(), alice.getId(), RecipeType.MONITOR, "orders").orElseThrow()
-                    .getAppPortList()).contains("dockerConsumers").contains("DEDICATED");
+                    .getAppPortList()).contains("dockerConsumers").contains("orders-db-1");
 
             return MonitorMachineView.of(monitorService.listMonitors().get(0));
         });
 
-        // The monitor read surfaces the docker consumers with source=DOCKER + classification.
+        // The monitor read surfaces the docker consumers with source=DOCKER. spec-038: the
+        // project is ONE consumer whose services carry its datastore — orders-db-1 is NOT a
+        // top-level consumer; only "orders" (the project) and "cache" (standalone) surface.
         assertThat(view.consumers()).extracting(MonitorConsumerView::name)
-                .contains("orders", "orders-db-1", "cache");
+                .containsExactlyInAnyOrder("orders", "cache");
         assertThat(view.consumers()).allSatisfy(c ->
                 assertThat(c.source()).isEqualTo(ConsumerSource.DOCKER));
 
-        MonitorConsumerView db = consumer(view, "orders-db-1");
-        assertThat(db.role()).isEqualTo(ConsumerRole.DATABASE);
-        assertThat(db.dedication()).isEqualTo(Dedication.DEDICATED);
-        assertThat(db.owner()).isEqualTo("orders");
+        MonitorConsumerView orders = consumer(view, "orders");
+        assertThat(orders.role()).isEqualTo(ConsumerRole.APP);
+        // The project carries all its services — app AND datastore — each tagged with role.
+        assertThat(orders.services()).extracting(ConsumerServiceView::name)
+                .containsExactly("orders-web-1", "orders-db-1");
+        assertThat(service(orders, "orders-web-1").role()).isEqualTo(ConsumerRole.APP);
+        assertThat(service(orders, "orders-db-1").role()).isEqualTo(ConsumerRole.DATABASE);
 
+        // The standalone redis stays its own SHARED datastore consumer (unchanged).
         assertThat(consumer(view, "cache").dedication()).isEqualTo(Dedication.SHARED);
-        assertThat(consumer(view, "orders").role()).isEqualTo(ConsumerRole.APP);
     }
 
     @Test
@@ -156,6 +164,10 @@ class DockerComposeReconcileTest {
 
     private static MonitorConsumerView consumer(MonitorMachineView view, String name) {
         return view.consumers().stream().filter(c -> c.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    private static ConsumerServiceView service(MonitorConsumerView consumer, String name) {
+        return consumer.services().stream().filter(s -> s.name().equals(name)).findFirst().orElseThrow();
     }
 
     private static ExecResult respond(List<String> argv) {

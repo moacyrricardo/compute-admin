@@ -65,7 +65,7 @@ class DockerComposeDiscovererTest {
     }
 
     @Test
-    void discover_GroupsComposeProject_ClassifiesDedicatedDb() {
+    void discover_GroupsComposeProject_IsOneConsumerWithDatastoreServices() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
 
         List<ProposedRecipe> recipes = discoverer(true).discover(machine(), ssh);
@@ -76,16 +76,21 @@ class DockerComposeDiscovererTest {
         assertThat(orders.actions()).extracting(ProposedAction::name)
                 .containsExactly("docker stats", "docker disk", "docker volumes");
 
-        // The project is an APP consumer whose services are its app containers only;
-        // its postgres is a separate DATABASE consumer, DEDICATED and owned by the project.
+        // spec-038: a compose project is ONE consumer carrying ALL its services — app AND
+        // datastore — each tagged with its role; there is NO separate dedicated consumer.
+        assertThat(orders.dockerConsumers()).extracting(DockerConsumer::name).containsExactly("orders");
         DockerConsumer app = consumer(orders, "orders");
         assertThat(app.role()).isEqualTo(ConsumerRole.APP);
-        assertThat(app.services()).extracting(DockerConsumer.DockerService::name).containsExactly("orders-web-1");
+        assertThat(app.dedication()).isNull();
+        assertThat(app.services()).extracting(DockerConsumer.DockerService::name)
+                .containsExactly("orders-web-1", "orders-db-1");
 
-        DockerConsumer db = consumer(orders, "orders-db-1");
+        // The postgres container is a role=DATABASE SERVICE of the project — dedicated to
+        // it by virtue of that role + parent project (the Databases lens derives from it).
+        DockerConsumer.DockerService web = service(app, "orders-web-1");
+        assertThat(web.role()).isEqualTo(ConsumerRole.APP);
+        DockerConsumer.DockerService db = service(app, "orders-db-1");
         assertThat(db.role()).isEqualTo(ConsumerRole.DATABASE);
-        assertThat(db.dedication()).isEqualTo(Dedication.DEDICATED);
-        assertThat(db.owner()).isEqualTo("orders");
     }
 
     @Test
@@ -133,6 +138,11 @@ class DockerComposeDiscovererTest {
     private static DockerConsumer consumer(ProposedRecipe recipe, String name) {
         return recipe.dockerConsumers().stream()
                 .filter(c -> c.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    private static DockerConsumer.DockerService service(DockerConsumer consumer, String name) {
+        return consumer.services().stream()
+                .filter(s -> s.name().equals(name)).findFirst().orElseThrow();
     }
 
     private static Machine machine() {

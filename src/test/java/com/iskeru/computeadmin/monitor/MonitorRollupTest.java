@@ -155,8 +155,9 @@ class MonitorRollupTest {
         Machine machine = machine("m1");
 
         // A native springboot monitor pre-fills "orders"; a docker compose monitor also
-        // classifies a project "orders" (+ its dedicated postgres), a standalone shared
-        // redis, and the DOCKER bucket. The name collision on "orders" must resolve to one.
+        // classifies a project "orders" (with its dedicated postgres as a role=DATABASE
+        // SERVICE, spec-038), a standalone shared redis, and the DOCKER bucket. The name
+        // collision on "orders" must resolve to one.
         Recipe nativeRecipe = recipe("springboot monitor", RecipeType.MONITOR);
         MonitorRecipe nativeMonitor = new MonitorRecipe(nativeRecipe,
                 List.of(appProbe(nativeRecipe, "health")),
@@ -165,10 +166,8 @@ class MonitorRollupTest {
         Recipe dockerRecipe = recipe("orders", RecipeType.MONITOR);
         List<DockerConsumerData> consumers = List.of(
                 new DockerConsumerData("orders", ConsumerRole.APP, null, null, List.of(), null,
-                        List.of(new DockerServiceData("orders-web-1", "orders/web:latest", ConsumerRole.APP))),
-                new DockerConsumerData("orders-db-1", ConsumerRole.DATABASE, Dedication.DEDICATED, "orders",
-                        List.of(), null,
-                        List.of(new DockerServiceData("orders-db-1", "postgres:16", ConsumerRole.DATABASE))),
+                        List.of(new DockerServiceData("orders-web-1", "orders/web:latest", ConsumerRole.APP),
+                                new DockerServiceData("orders-db-1", "postgres:16", ConsumerRole.DATABASE))),
                 new DockerConsumerData("cache", ConsumerRole.DATABASE, Dedication.SHARED, null,
                         List.of(), null,
                         List.of(new DockerServiceData("cache", "redis:7", ConsumerRole.DATABASE))),
@@ -182,20 +181,21 @@ class MonitorRollupTest {
 
         MonitorMachineView view = MonitorMachineView.of(monitors);
 
-        // "orders" appears once — the docker consumer wins the dedup, source=DOCKER.
+        // "orders" appears once — the docker consumer wins the dedup, source=DOCKER. The
+        // project's postgres is a SERVICE of "orders", not a separate consumer (spec-038).
         assertThat(view.consumers()).extracting(MonitorConsumerView::name)
-                .containsExactly("orders", "orders-db-1", "cache", "docker");
+                .containsExactly("orders", "cache", "docker");
         MonitorConsumerView orders = consumer(view, "orders");
         assertThat(orders.role()).isEqualTo(ConsumerRole.APP);
         assertThat(orders.source()).isEqualTo(ConsumerSource.DOCKER);
-        assertThat(orders.services()).extracting(ConsumerServiceView::name).containsExactly("orders-web-1");
+        assertThat(orders.services()).extracting(ConsumerServiceView::name)
+                .containsExactly("orders-web-1", "orders-db-1");
         assertThat(orders.services()).allSatisfy(s ->
                 assertThat(s.source()).isEqualTo(ConsumerSource.DOCKER));
-
-        MonitorConsumerView db = consumer(view, "orders-db-1");
+        // The datastore rides inside the project as a role=DATABASE service.
+        ConsumerServiceView db = orders.services().stream()
+                .filter(s -> s.name().equals("orders-db-1")).findFirst().orElseThrow();
         assertThat(db.role()).isEqualTo(ConsumerRole.DATABASE);
-        assertThat(db.dedication()).isEqualTo(Dedication.DEDICATED);
-        assertThat(db.owner()).isEqualTo("orders");
 
         MonitorConsumerView cache = consumer(view, "cache");
         assertThat(cache.dedication()).isEqualTo(Dedication.SHARED);
