@@ -186,7 +186,7 @@ class MonitorWebTest {
 
     private String registerMachineHost(AuthDtos.Session s, String host) {
         return post("/api/machines",
-                new MachineDtos.RegisterMachineRequest(host, 22, "root"),
+                new MachineDtos.RegisterMachineRequest(host, host, 22, "root"),
                 s.token(), MachineDtos.MachineView.class).id();
     }
 

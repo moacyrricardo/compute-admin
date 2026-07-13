@@ -49,7 +49,7 @@ public class MachineRS {
             throw new BadRequestException("body is required");
         }
         int port = body.port() == null ? DEFAULT_PORT : body.port();
-        RegisterMachineInput input = new RegisterMachineInput(body.host(), port, body.loginUser());
+        RegisterMachineInput input = new RegisterMachineInput(body.name(), body.host(), port, body.loginUser());
         return MachineDtos.MachineView.of(machineService.register(input));
     }
 

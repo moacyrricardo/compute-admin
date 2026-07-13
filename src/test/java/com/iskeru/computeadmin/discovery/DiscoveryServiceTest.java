@@ -140,7 +140,7 @@ class DiscoveryServiceTest {
     @Test
     void discover_PersistsProposalsAsPendingApprovalAndNeverApproves() {
         List<DiscoveredRecipe> discovered = asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             return discoveryService.discover(machine.getId());
         });
 
@@ -168,7 +168,7 @@ class DiscoveryServiceTest {
         FakeSshExecutor fake = (FakeSshExecutor) ssh;
 
         asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             return discoveryService.discover(machine.getId());
         });
 
@@ -183,7 +183,7 @@ class DiscoveryServiceTest {
     void discover_OnAnotherUsersMachine_Is404() {
         AppUser bob = saveUser("bob@example.com");
         String aliceMachineId = asUser(alice, () ->
-                machineService.register(new RegisterMachineInput("host", 22, "deploy")).getId());
+                machineService.register(new RegisterMachineInput("host", "host", 22, "deploy")).getId());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         asUser(bob, () -> discoveryService.discover(aliceMachineId)))
@@ -193,7 +193,7 @@ class DiscoveryServiceTest {
     @Test
     void reDiscover_IsIdempotent_NoDuplicateRecipesOrActions() {
         String machineId = asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
             discoveryService.discover(machine.getId());
             return machine.getId();
@@ -214,7 +214,7 @@ class DiscoveryServiceTest {
     @Test
     void discover_ProposesUniversalMonitorMachine_PendingApprovalNotAutoApproved() {
         asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
 
             // The universal host monitor is proposed on every reachable box (spec-023):
@@ -240,7 +240,7 @@ class DiscoveryServiceTest {
     @Test
     void reDiscover_MonitorMachine_DoesNotDuplicateHostPanel() {
         String machineId = asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
             discoveryService.discover(machine.getId());
             return machine.getId();
@@ -259,7 +259,7 @@ class DiscoveryServiceTest {
     @Test
     void reDiscover_ApprovedIdentical_SurvivesUnchanged() {
         asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
 
             Recipe docker = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
@@ -280,7 +280,7 @@ class DiscoveryServiceTest {
     @Test
     void reDiscover_ApprovedDiffers_IsSurfacedNotDuplicated() {
         asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
 
             Recipe docker = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
@@ -310,7 +310,7 @@ class DiscoveryServiceTest {
     @Test
     void reDiscover_NotYetApprovedDiffers_IsRefreshedInPlace() {
         asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
 
             // Never approved; a new container appears before review.
@@ -351,7 +351,7 @@ class DiscoveryServiceTest {
         FakeSshExecutor fake = (FakeSshExecutor) ssh;
 
         List<DiscoveredRecipe> discovered = asUser(owner, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("probe-host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("probe-host", "probe-host", 22, "deploy"));
             return discoveryService.discover(machine.getId());
         });
         try {

@@ -165,7 +165,7 @@ class CustomActionTest {
         // First command creates the named CUSTOM recipe (recipeName path); the second
         // targets that same recipe by id (recipeId path). Both land in one recipe.
         Machine machine = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("host", 22, "root")));
+                new RegisterMachineInput("host", "host", 22, "root")));
         String machineId = machine.getId();
 
         Action first = asUser(alice, () -> actionService.addCustomAction(new CustomActionInput(
@@ -184,7 +184,7 @@ class CustomActionTest {
     @Test
     void addCustomAction_ByName_ReusesExistingCustomRecipeRatherThanDuplicating() {
         Machine machine = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("host", 22, "root")));
+                new RegisterMachineInput("host", "host", 22, "root")));
         String machineId = machine.getId();
 
         Action first = asUser(alice, () -> actionService.addCustomAction(new CustomActionInput(
@@ -199,7 +199,7 @@ class CustomActionTest {
     @Test
     void addCustomAction_ToNonCustomRecipe_IsRejected() {
         Machine machine = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("host", 22, "root")));
+                new RegisterMachineInput("host", "host", 22, "root")));
         String machineId = machine.getId();
         Recipe nginx = asUser(alice, () -> recipeService.create(
                 new CreateRecipeInput(machineId, "web", null, RecipeType.NGINX)));
@@ -213,7 +213,7 @@ class CustomActionTest {
     void addCustomAction_ToAnotherUsersRecipe_Is404() {
         AppUser bob = saveUser("bob@example.com");
         Machine bobMachine = asUser(bob, () -> machineService.register(
-                new RegisterMachineInput("bob-host", 22, "root")));
+                new RegisterMachineInput("bob-host", "bob-host", 22, "root")));
         Recipe bobRecipe = asUser(bob, () -> recipeService.create(
                 new CreateRecipeInput(bobMachine.getId(), RECIPE, null, RecipeType.CUSTOM)));
 
@@ -225,7 +225,7 @@ class CustomActionTest {
     }
 
     private Action addCustom(String scriptPath, List<ParamDefInput> paramDefs) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         return actionService.addCustomAction(new CustomActionInput(
                 machine.getId(), null, RECIPE, "run minhabufunfa", scriptPath, paramDefs, false));
     }

@@ -101,7 +101,7 @@ class AppMonitorReconcileTest {
     @Test
     void reDiscover_NewApp_RefreshesPreFilledListInPlace_NoDuplicateRecipe() throws Exception {
         String machineId = asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             discoveryService.discover(machine.getId());
 
             // First pass: one uvicorn app pre-filled on the fastapi recipe.

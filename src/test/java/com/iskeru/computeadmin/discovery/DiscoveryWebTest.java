@@ -121,7 +121,7 @@ class DiscoveryWebTest {
     private MachineDtos.MachineView registerMachine(String jwt) {
         return rest.postForObject(
                 "/api/machines",
-                new HttpEntity<>(new MachineDtos.RegisterMachineRequest("host", 22, "deploy"), bearer(jwt)),
+                new HttpEntity<>(new MachineDtos.RegisterMachineRequest("host", "host", 22, "deploy"), bearer(jwt)),
                 MachineDtos.MachineView.class);
     }
 

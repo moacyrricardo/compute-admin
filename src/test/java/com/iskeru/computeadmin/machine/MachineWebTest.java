@@ -65,7 +65,7 @@ class MachineWebTest {
 
         MachineDtos.MachineView created = rest.postForObject(
                 "/api/machines",
-                new HttpEntity<>(new MachineDtos.RegisterMachineRequest("web-host", 2222, "deploy"), bearer(owner.token())),
+                new HttpEntity<>(new MachineDtos.RegisterMachineRequest("web-host", "web-host", 2222, "deploy"), bearer(owner.token())),
                 MachineDtos.MachineView.class);
 
         assertThat(created.id()).isNotBlank();
@@ -86,7 +86,7 @@ class MachineWebTest {
 
         MachineDtos.MachineView aMachine = rest.postForObject(
                 "/api/machines",
-                new HttpEntity<>(new MachineDtos.RegisterMachineRequest("a-host", 22, "root"), bearer(a.token())),
+                new HttpEntity<>(new MachineDtos.RegisterMachineRequest("a-host", "a-host", 22, "root"), bearer(a.token())),
                 MachineDtos.MachineView.class);
 
         // B lists: A's machine is invisible.
@@ -103,7 +103,7 @@ class MachineWebTest {
     @Test
     void register_WithoutJwt_Is401() {
         ResponseEntity<String> response = rest.postForEntity(
-                "/api/machines", new MachineDtos.RegisterMachineRequest("nope", 22, "root"), String.class);
+                "/api/machines", new MachineDtos.RegisterMachineRequest("nope", "nope", 22, "root"), String.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 

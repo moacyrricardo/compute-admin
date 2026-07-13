@@ -66,7 +66,7 @@ class MachineServiceTest {
     @Test
     void register_ScopesMachineToCurrentUser() {
         Machine machine = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("host-a", 22, "root")));
+                new RegisterMachineInput("host-a", "host-a", 22, "root")));
 
         assertThat(machine.getId()).isNotBlank();
         assertThat(machine.getOwner().getId()).isEqualTo(alice.getId());
@@ -77,11 +77,11 @@ class MachineServiceTest {
     @Test
     void register_LoginUserGuess_AppliesProvisionalTag() {
         Machine aws = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("aws-host", 22, "ec2-user")));
+                new RegisterMachineInput("aws-host", "aws-host", 22, "ec2-user")));
         Machine ubuntu = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("ubuntu-host", 22, "ubuntu")));
+                new RegisterMachineInput("ubuntu-host", "ubuntu-host", 22, "ubuntu")));
         Machine plain = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("root-host", 22, "root")));
+                new RegisterMachineInput("root-host", "root-host", 22, "root")));
 
         assertThat(tagNames(aws)).containsExactly("aws");
         assertThat(tagNames(ubuntu)).containsExactly("ubuntu");
@@ -91,19 +91,21 @@ class MachineServiceTest {
 
     @Test
     void register_DuplicateHostPortLoginUser_ThrowsAlreadyRegistered() {
-        asUser(alice, () -> machineService.register(new RegisterMachineInput("host-a", 22, "root")));
+        asUser(alice, () -> machineService.register(new RegisterMachineInput("first", "host-a", 22, "root")));
 
+        // Distinct name, same host/port/login-user → the host/port/user key fires
+        // (name uniqueness is a separate pre-check, exercised elsewhere).
         assertThatThrownBy(() -> asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("  host-a  ", 22, "  root  "))))
+                new RegisterMachineInput("second", "  host-a  ", 22, "  root  "))))
                 .isInstanceOf(MachineAlreadyRegisteredException.class);
     }
 
     @Test
     void register_SameHostForAnotherUser_IsAllowed() {
-        asUser(alice, () -> machineService.register(new RegisterMachineInput("shared-host", 22, "root")));
+        asUser(alice, () -> machineService.register(new RegisterMachineInput("shared-host", "shared-host", 22, "root")));
 
         Machine bobMachine = asUser(bob, () -> machineService.register(
-                new RegisterMachineInput("shared-host", 22, "root")));
+                new RegisterMachineInput("shared-host", "shared-host", 22, "root")));
 
         assertThat(bobMachine.getId()).isNotBlank();
         assertThat(bobMachine.getOwner().getId()).isEqualTo(bob.getId());
@@ -112,9 +114,9 @@ class MachineServiceTest {
     @Test
     void tag_ReusesTheOwnersExistingTag() {
         Machine one = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("host-1", 22, "root")));
+                new RegisterMachineInput("host-1", "host-1", 22, "root")));
         Machine two = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("host-2", 22, "root")));
+                new RegisterMachineInput("host-2", "host-2", 22, "root")));
 
         asUser(alice, () -> machineService.tag(one.getId(), Set.of("prod")));
         asUser(alice, () -> machineService.tag(two.getId(), Set.of("prod")));
@@ -125,13 +127,13 @@ class MachineServiceTest {
     @Test
     void list_ByTag_ReturnsOnlyMatchingOwnedMachines() {
         Machine prod = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("prod-host", 22, "root")));
+                new RegisterMachineInput("prod-host", "prod-host", 22, "root")));
         asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("dev-host", 22, "root")));
+                new RegisterMachineInput("dev-host", "dev-host", 22, "root")));
         asUser(alice, () -> machineService.tag(prod.getId(), Set.of("prod")));
         // Bob owns a machine tagged the same — it must never leak into alice's filter.
         Machine bobProd = asUser(bob, () -> machineService.register(
-                new RegisterMachineInput("bob-prod", 22, "root")));
+                new RegisterMachineInput("bob-prod", "bob-prod", 22, "root")));
         asUser(bob, () -> machineService.tag(bobProd.getId(), Set.of("prod")));
 
         List<Machine> matched = asUser(alice, () -> machineService.list(List.of("prod")));
@@ -142,11 +144,11 @@ class MachineServiceTest {
     @Test
     void list_ByMultipleTags_IsOrAndDistinct() {
         Machine prod = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("prod-host", 22, "root")));
+                new RegisterMachineInput("prod-host", "prod-host", 22, "root")));
         Machine staging = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("staging-host", 22, "root")));
+                new RegisterMachineInput("staging-host", "staging-host", 22, "root")));
         asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("dev-host", 22, "root")));
+                new RegisterMachineInput("dev-host", "dev-host", 22, "root")));
         // prod carries both requested tags → must appear exactly once (distinct).
         asUser(alice, () -> machineService.tag(prod.getId(), Set.of("prod", "eu")));
         asUser(alice, () -> machineService.tag(staging.getId(), Set.of("eu")));
@@ -161,7 +163,7 @@ class MachineServiceTest {
     void applyDetectedFacts_IsAddOnly_RefinesProvisional_AndRunsOnce() {
         // Provisional login-user guess (aws) plus a manual tag the user owns.
         Machine machine = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("box", 22, "ec2-user")));
+                new RegisterMachineInput("box", "box", 22, "ec2-user")));
         asUser(alice, () -> machineService.tag(machine.getId(), Set.of("prod")));
 
         // First reach: the probe found the box is really Ubuntu on AWS → add-only,
@@ -178,7 +180,7 @@ class MachineServiceTest {
     @Test
     void requireMachine_OnAnotherUsersMachine_Is404() {
         Machine aliceMachine = asUser(alice, () -> machineService.register(
-                new RegisterMachineInput("secret-host", 22, "root")));
+                new RegisterMachineInput("secret-host", "secret-host", 22, "root")));
 
         assertThatThrownBy(() -> asUser(bob, () -> machineService.requireMachine(aliceMachine.getId())))
                 .isInstanceOf(MachineNotFoundException.class);

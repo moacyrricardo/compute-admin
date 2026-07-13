@@ -137,7 +137,7 @@ class MachineFactsTaggerTest {
 
         // Register with a login user that carries no provisional tag, then add a manual one.
         Machine machine = CurrentUser.runWhere(AuthContext.ui(owner.getId(), owner.getEmail()),
-                () -> machineService.register(new RegisterMachineInput("box-" + UUID.randomUUID(), 22, "root")));
+                () -> machineService.register(new RegisterMachineInput("box-" + UUID.randomUUID(), "box-" + UUID.randomUUID(), 22, "root")));
         machineId = machine.getId();
         CurrentUser.runWhere(AuthContext.ui(owner.getId(), owner.getEmail()),
                 () -> machineService.tag(machineId, java.util.Set.of("prod")));

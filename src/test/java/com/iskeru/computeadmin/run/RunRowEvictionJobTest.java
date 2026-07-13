@@ -164,7 +164,7 @@ class RunRowEvictionJobTest {
     }
 
     private Action seedAction(AppUser user) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "monitor", "monitors", RecipeType.MONITOR));
         return actionService.addAction(new AddActionInput(

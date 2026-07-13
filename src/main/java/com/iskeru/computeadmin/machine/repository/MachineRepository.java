@@ -28,4 +28,7 @@ public interface MachineRepository extends JpaRepository<Machine, String> {
     Optional<Machine> findByIdAndOwnerId(String id, String ownerId);
 
     boolean existsByOwnerIdAndHostAndPortAndLoginUser(String ownerId, String host, int port, String loginUser);
+
+    /** Per-owner name-uniqueness pre-check for {@code uq_machine_owner_name} (spec-028). */
+    boolean existsByOwnerIdAndName(String ownerId, String name);
 }

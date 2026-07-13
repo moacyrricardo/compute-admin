@@ -84,9 +84,9 @@ class InstantiationServiceTest {
     @Test
     void instantiate_OntoExplicitMachines_CreatesPendingRecipesWithProvenance() {
         asUser(alice, () -> {
-            Machine m1 = machineService.register(new RegisterMachineInput("h1", 22, "root"));
-            Machine m2 = machineService.register(new RegisterMachineInput("h2", 22, "root"));
-            Machine m3 = machineService.register(new RegisterMachineInput("h3", 22, "root"));
+            Machine m1 = machineService.register(new RegisterMachineInput("h1", "h1", 22, "root"));
+            Machine m2 = machineService.register(new RegisterMachineInput("h2", "h2", 22, "root"));
+            Machine m3 = machineService.register(new RegisterMachineInput("h3", "h3", 22, "root"));
             RecipeBlueprint blueprint = seedBlueprint();
 
             List<InstantiatedRecipe> results = instantiationService.instantiate(blueprint.getId(),
@@ -107,8 +107,8 @@ class InstantiationServiceTest {
     @Test
     void instantiate_ByTag_TargetsOnlyTaggedMachines() {
         asUser(alice, () -> {
-            Machine tagged = machineService.register(new RegisterMachineInput("web1", 22, "root"));
-            machineService.register(new RegisterMachineInput("db1", 22, "root"));
+            Machine tagged = machineService.register(new RegisterMachineInput("web1", "web1", 22, "root"));
+            machineService.register(new RegisterMachineInput("db1", "db1", 22, "root"));
             machineService.tag(tagged.getId(), Set.of("web"));
             RecipeBlueprint blueprint = seedBlueprint();
 
@@ -126,7 +126,7 @@ class InstantiationServiceTest {
     @Test
     void reinstantiate_UnchangedBlueprint_PreservesApproval() {
         asUser(alice, () -> {
-            Machine m1 = machineService.register(new RegisterMachineInput("h1", 22, "root"));
+            Machine m1 = machineService.register(new RegisterMachineInput("h1", "h1", 22, "root"));
             RecipeBlueprint blueprint = seedBlueprint();
 
             List<InstantiatedRecipe> first = instantiationService.instantiate(blueprint.getId(),
@@ -150,7 +150,7 @@ class InstantiationServiceTest {
     @Test
     void reinstantiate_AfterBlueprintActionEdit_ResetsApprovedToDraft() {
         asUser(alice, () -> {
-            Machine m1 = machineService.register(new RegisterMachineInput("h1", 22, "root"));
+            Machine m1 = machineService.register(new RegisterMachineInput("h1", "h1", 22, "root"));
             RecipeBlueprint blueprint = seedBlueprint();
             BlueprintAction blueprintAction = blueprintService.listActions(blueprint.getId()).get(0);
 

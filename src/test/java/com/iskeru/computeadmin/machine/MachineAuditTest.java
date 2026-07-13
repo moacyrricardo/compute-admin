@@ -81,7 +81,7 @@ class MachineAuditTest {
         AppUser alice = saveUser("audit-ui@example.com");
 
         Machine machine = CurrentUser.runWhere(AuthContext.ui(alice.getId(), alice.getEmail()),
-                () -> machineService.register(new RegisterMachineInput("audit-ui-host", 22, "root")));
+                () -> machineService.register(new RegisterMachineInput("audit-ui-host", "audit-ui-host", 22, "root")));
 
         List<Number> revisions = revisionsOf(machine.getId());
         assertThat(revisions).hasSize(1);
@@ -96,7 +96,7 @@ class MachineAuditTest {
         AppUser alice = saveUser("audit-system@example.com");
 
         Machine machine = CurrentUser.runWhere(AuthContext.ui(alice.getId(), alice.getEmail()),
-                () -> machineService.register(new RegisterMachineInput("audit-system-host", 22, "root")));
+                () -> machineService.register(new RegisterMachineInput("audit-system-host", "audit-system-host", 22, "root")));
 
         // An unattended, system-scoped status update — what the connectivity job does.
         CurrentUser.runWhere(AuthContext.system(), () -> tx.execute(status -> {
