@@ -12,7 +12,8 @@ let src = fs.readFileSync(path, "utf8");
 src = src.replace(
   "  window.addEventListener(\"hashchange\", route);\n  route();\n})();",
   "  window.addEventListener(\"hashchange\", route);\n" +
-  "  globalThis.__ca = { buildConsumers, applyDockerReading, consumerLegend, consumerCard," +
+  "  globalThis.__ca = { buildConsumers, applyDockerReading, applyConsumerReading," +
+  " parseAppCpu, consumerLegend, consumerCard," +
   " datastoresOf, serviceRow, parseDockerStats, parseDockerPs, parseDockerVolumes," +
   " dockerBytes, parseDfTotal, pctText };\n})();"
 );
@@ -141,5 +142,55 @@ const shDbs = ca.datastoresOf(shModels);
 assert(shDbs.shared.length === 1 && shDbs.ded.length === 0,
   "a standalone DATABASE consumer must stay in the Shared band: " + JSON.stringify({ded:shDbs.ded.length,shared:shDbs.shared.length}));
 
+// ---- spec-039: a NATIVE consumer's CPU axis fills from the process-tree cpu probe ----
+// The 032 cpu probe emits `## pid N` headers + `ps -o …,pcpu=,comm=` rows; parseAppCpu
+// sums the 3rd (pcpu) field, and applyConsumerReading divides by the host core count
+// (the SAME denom docker uses) so a native consumer reads a numeric CPU axis, not —.
+assert(ca.parseAppCpu("## pid 100\n100 1 80.0 java\n101 100 20.0 java\n") === 100,
+  "parseAppCpu should sum pcpu (80+20=100), got " + ca.parseAppCpu("## pid 100\n100 1 80.0 java\n101 100 20.0 java\n"));
+assert(ca.parseAppCpu("no listener on port 8080") === null, "no-listener sentinel must parse to null");
+assert(ca.parseAppCpu("") === null && ca.parseAppCpu(null) === null, "empty/absent stdout must parse to null");
+
+const nativeMachine = { machineId:"m4", apps:[
+  { appName:"orders", framework:"spring", port:8080, checks:[
+    { id:"proc1", name:"process", approvalState:"APPROVED", changedSinceApproval:false },
+    { id:"cpu1", name:"cpu", approvalState:"APPROVED", changedSinceApproval:false }
+  ] }
+], consumers:[
+  { id:"orders", name:"orders", role:"APP", source:"HOST", ram:null, cpu:null, disk:null, services:[] }
+]};
+const nmodels = ca.buildConsumers(nativeMachine);
+const nc = nmodels[0];
+
+// Pre-poll the native CPU axis is — (the bug 039 fixes).
+const nBefore = ca.consumerLegend(nmodels, ()=>{}).textContent;
+assert(nBefore.indexOf("—") >= 0, "native consumer CPU axis should start at — : " + nBefore);
+
+// process → RAM (VmRSS 2048000 kB = 2000 MB / 4000 = 50%); cpu → 100% pcpu / 4 cores = 25%.
+const nOutputs = {
+  proc1: { orders: { stdout: "VmRSS: 2048000 kB\n", exit: 0 } },
+  cpu1:  { orders: { stdout: "## pid 100\n100 1 80.0 java\n101 100 20.0 java\n", exit: 0 } }
+};
+ca.applyConsumerReading(nc, nOutputs, 4000, 4);
+assert(nc.ram === 50, "native RAM expected 50, got " + nc.ram);
+assert(nc.cpu === 25, "native CPU expected 25 (100 pcpu / 4 cores), got " + nc.cpu);
+
+const nCard = ca.consumerCard(nc, ()=>{}, ()=>{}).textContent;
+assert(/25%/.test(nCard), "native card must show a numeric CPU axis (25%), not — : " + nCard);
+assert(/UP/.test(nCard), "native card should show UP: " + nCard);
+const nLegend = ca.consumerLegend(nmodels, ()=>{}).textContent;
+assert(/50%/.test(nLegend) && /25%/.test(nLegend), "native legend missing numeric ram/cpu: " + nLegend);
+
+// Honest — : an unapproved/absent cpu reading (no probe outputs) leaves CPU null.
+const nc2 = ca.buildConsumers(nativeMachine)[0];
+ca.applyConsumerReading(nc2, null, 4000, 4);
+assert(nc2.cpu === null || nc2.cpu === undefined, "absent cpu reading must stay — (null), got " + nc2.cpu);
+
+// Honest — : an unknown core count leaves CPU null even with a parseable reading.
+const nc3 = ca.buildConsumers(nativeMachine)[0];
+ca.applyConsumerReading(nc3, nOutputs, 4000, null);
+assert(nc3.cpu === null || nc3.cpu === undefined, "unknown cores must leave CPU — (null), got " + nc3.cpu);
+
 console.log("PASS: docker consumer axes render numeric (ram=51% cpu=50% disk=3%), UP, service axes + unit/df/volume parsers verified");
 console.log("PASS: spec-038 — compose project renders as ONE card (services incl. datastore, axes sum all); Databases lens Dedicated band derives from the project's DB service; standalone datastore stays Shared");
+console.log("PASS: spec-039 — native consumer CPU axis fills from the process-tree probe (100 pcpu / 4 cores = 25%), renders numeric on the card/legend; absent reading or unknown cores stays —");

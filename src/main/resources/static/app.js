@@ -1743,7 +1743,7 @@
                   diskBytes: hostDiskTotal[m.machineId]
                 };
                 return Promise.all([
-                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb),
+                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores),
                   pollDockerConsumers(m, selectedNamed(m), denom)
                 ]);
               }).then(paint);
@@ -1935,6 +1935,27 @@
       if (m) { total += parseInt(m[1], 10); seen = true; }
     });
     return seen ? Math.round(total / 1024) : null;
+  }
+
+  /**
+   * Sum the process-tree %CPU from a native cpu-probe stdout (spec-032/039). The probe
+   * emits a `## pid N` header per tree, then `ps -o pid=,ppid=,pcpu=,comm=` rows whose
+   * 3rd whitespace field is that PID's lifetime %cpu (per-core, can exceed 100). Header
+   * lines and the `no listener on port …` sentinel carry no numeric 3rd field and are
+   * skipped. null if nothing parses, so the axis degrades to — (never a silent 0). The
+   * summation caveats (single ps level, naïve backend double-count) are spec-032's.
+   */
+  function parseAppCpu(text) {
+    if (!text) return null;
+    var total = 0, seen = false;
+    text.split(/\r?\n/).forEach(function (ln) {
+      var t = ln.trim();
+      if (!t || t.indexOf("##") === 0) return;   // blanks + "## pid N" headers
+      var cols = t.split(/\s+/);                  // pid ppid pcpu comm…
+      if (cols.length < 3 || !/^\d+(\.\d+)?$/.test(cols[2])) return;
+      total += parseFloat(cols[2]); seen = true;
+    });
+    return seen ? total : null;
   }
 
   /**
@@ -2238,9 +2259,10 @@
   // ---- consumer poll (spec-034) --------------------------------------------
   // Group the visible consumers by their (shared) fan-out check actions so each
   // check runs ONCE over all apps that declare it, then distribute the results and
-  // fill each consumer's RAM axis (RSS / host total) + UP/DOWN + probe states.
+  // fill each consumer's RAM axis (RSS / host total) and CPU axis (process-tree
+  // %cpu ÷ host cores, spec-039) + UP/DOWN + probe states.
 
-  function pollConsumers(machineId, consumers, hostTotal) {
+  function pollConsumers(machineId, consumers, hostTotal, cores) {
     var pollable = consumers.filter(function (c) { return (c.checks || []).length && c.port != null; });
     if (!pollable.length) return Promise.resolve();
     var groups = {};
@@ -2254,7 +2276,7 @@
     });
     var ids = Object.keys(groups);
     if (!ids.length) {
-      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal); });
+      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal, cores); });
       return Promise.resolve();
     }
     var outputs = {}; // checkId → (appName → { stdout, exit })
@@ -2262,19 +2284,22 @@
       return runProbeForApps(machineId, groups[id].action, groups[id].apps)
         .then(function (byApp) { outputs[id] = byApp; });
     })).then(function () {
-      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal); });
+      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal, cores); });
     });
   }
 
   /**
    * Fold one consumer's probe outputs into its live state: the process probe's VmRSS
-   * (summed → MB) over the host total gives the RAM axis; liveness/process rolls up
-   * to UP/DOWN; each check keeps its responded state (na = did not respond, so it is
-   * omitted from the drawer's probe list — probe honesty, spec-034 §6). Only the RAM
-   * axis is filled client-side; CPU/disk stay at their server value (null against 032).
+   * (summed → MB) over the host total gives the RAM axis; the cpu probe's process-tree
+   * %CPU (summed → ÷ the host core count, spec-039) gives the CPU axis, mirroring the
+   * docker path's `sumCpu / denom.cores`; liveness/process rolls up to UP/DOWN; each
+   * check keeps its responded state (na = did not respond, so it is omitted from the
+   * drawer's probe list — probe honesty, spec-034 §6). Disk stays at its server value
+   * (null against 032 — a native process has no attributable disk). An absent cpu
+   * reading or an unknown `cores` leaves CPU null → — (honesty rule, never a silent 0).
    */
-  function applyConsumerReading(c, outputs, hostTotal) {
-    var livenessUp = null, processUp = null, rssMb = null, rows = [];
+  function applyConsumerReading(c, outputs, hostTotal, cores) {
+    var livenessUp = null, processUp = null, rssMb = null, cpuRaw = null, rows = [];
     (c.checks || []).forEach(function (chk) {
       var res = outputs && outputs[chk.id] && outputs[chk.id][c.name];
       var kind = checkKind(chk);
@@ -2287,6 +2312,8 @@
           processUp = listener;
           state = listener ? "up" : "down";
         } else if (kind === "cpu") {
+          var pcpu = parseAppCpu(res.stdout);
+          if (pcpu != null) cpuRaw = (cpuRaw == null ? 0 : cpuRaw) + pcpu;
           state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
         } else if (kind === "liveness") {
           livenessUp = res.exit === 0;
@@ -2304,6 +2331,9 @@
     });
     c._rssMb = rssMb;
     c.ram = clientMemPct(rssMb, hostTotal);
+    // % of host = summed process-tree %cpu ÷ logical cores (spec-039), the same
+    // `denom.cores` docker uses. Absent reading / unknown cores → leave null (—).
+    c.cpu = (cpuRaw != null && cores) ? clampPct(Math.round(cpuRaw / cores)) : c.cpu;
   }
 
   // ---- docker consumer poll (spec-037) -------------------------------------
