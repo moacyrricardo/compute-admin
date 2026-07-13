@@ -1271,17 +1271,11 @@
       sub ? h("div", { class: "meter-sub mono", text: sub }) : null);
   }
 
-  // ---- client-side parsers (spec-023 raw stdout → bars; degrade to raw text) ----
-
-  function parseCpu(text) {
-    // top -bn1: "%Cpu(s):  3.4 us,  1.2 sy,  0.0 ni, 95.0 id, ..." → used = 100 − idle.
-    var m = text.match(/Cpu\(s\)[^\n]*?([\d.]+)\s*(?:%\s*)?id/i);
-    if (!m) m = text.match(/([\d.]+)\s*(?:%\s*)?id\b/i);
-    if (!m) return null;
-    var idle = parseFloat(m[1]);
-    if (isNaN(idle)) return null;
-    return Math.max(0, Math.min(100, 100 - idle));
-  }
+  // ---- client-side stdout parsers (spec-023) --------------------------------
+  // The consumer redesign (spec-034) replaced the host-vitals meters with the
+  // per-consumer segmented bars, so the host CPU/disk parsers are gone; the host
+  // memory parser stays because its total is the RAM-%-of-host denominator, and
+  // the per-app RSS parser (parseRssMb, below) is the numerator.
 
   function parseMem(text) {
     // free -m: "Mem:  <total> <used> ..." / "Swap: <total> <used> ..." (MiB).
@@ -1299,19 +1293,6 @@
       }
     });
     return out.mem ? out : null;
-  }
-
-  function parseDisk(text) {
-    // df -h: rows ending "... <use>% <mountpoint>". Prefer "/", else the busiest.
-    var rows = [];
-    text.split(/\r?\n/).forEach(function (ln) {
-      var m = ln.match(/(\d+)%\s+(\/\S*)\s*$/);
-      if (m) rows.push({ pct: parseInt(m[1], 10), mount: m[2] });
-    });
-    if (!rows.length) return null;
-    var root = rows.filter(function (r) { return r.mount === "/"; })[0];
-    var busiest = rows.slice().sort(function (a, b) { return b.pct - a.pct; })[0];
-    return { primary: root || busiest, all: rows };
   }
 
   function mibText(mib) {
@@ -1425,52 +1406,38 @@
     return actionApprovalHref(a) + "/run";
   }
 
-  /**
-   * A gate-safe run chip for one related action. APPROVED + param-free → runs inline
-   * (toast feedback); APPROVED + parameterised → links to the run form (params are
-   * entered there); not APPROVED → a disabled chip linking to the approval screen.
-   */
-  function runChip(action) {
-    var approved = action.approvalState === "APPROVED" && !action.changedSinceApproval;
-    var parameterised = (action.paramDefs || []).length > 0;
-    if (!approved) {
-      return h("a", { class: "run-chip run-chip--disabled", href: actionApprovalHref(action),
-        title: "Not approved — review and approve before it can run" },
-        action.name, h("span", { class: "run-chip-state", text: humanize(action.approvalState) }));
-    }
-    if (parameterised) {
-      return h("a", { class: "run-chip", href: actionRunHref(action),
-        title: "Enter parameters and run" }, action.name, h("span", { class: "run-chip-go", text: "run…" }));
-    }
-    var chip = h("button", { type: "button", class: "run-chip", title: "Run now (approved)" },
-      action.name, h("span", { class: "run-chip-go", text: "run" }));
-    chip.addEventListener("click", function () {
-      chip.disabled = true;
-      runAndCollect(action.machineId, action.id, {}).then(function (r) {
-        toast(action.name + " ran");
-      }).catch(function (err) { toast(err.message); }).then(function () { chip.disabled = false; });
-    });
-    return chip;
-  }
-
   function screenMonitor() {
     mountAsync(function () {
       return api("GET", "/monitor").then(function (dash) {
         var machines = (dash && dash.machines) || [];
 
-        // ---- filter state (client-side; spec-029) ------------------------
-        // Two dimensions: machine tags (018) and app-names (022). Both are pure client
-        // filters and DEFINE THE POLL SET — a filtered-out machine/app is never polled.
+        // ---- filter + view state (client-side; spec-029/034) -------------
+        // Two POLL-SET filters (spec-029): machine tags (018) and app-names (022) —
+        // both define what is polled, so a filtered-out machine/app is never polled.
+        // Two pure RE-RENDER toggles (spec-034): the View lens (Apps | Databases) and
+        // the Show chips (docker / system buckets); they re-slice already-polled data
+        // and never touch the poll set.
         var selectedTags = {};
         var selectedApps = {};   // app-name → true; plus the synthetic NO_APPS token
+        var lens = "apps";       // "apps" | "db"
+        var showDocker = false, showSystem = false;
         var cadence = "single";
-        var hostMemTotal = {};    // machineId → total MB (the per-app mem% denominator)
+        var hostMemTotal = {};    // machineId → host total MB (the RAM-% denominator)
+
+        // The consumer spine (spec-032/034): every machine's apps re-expressed as
+        // MonitorConsumerViews, joined to the 029 per-app rollup for the probe
+        // metadata (framework/port/checks/ops) the 032 contract does not carry yet.
+        // Built ONCE per machine so a consumer keeps its last poll reading across the
+        // client re-renders that lens/bucket/filter toggles trigger.
+        var models = {};
+        machines.forEach(function (m) { models[m.machineId] = buildConsumers(m); });
+        function named(mid) { return models[mid].filter(function (c) { return !c.bucket; }); }
 
         var allTags = uniqSorted(flatMap(machines, function (m) { return m.tags || []; }));
         var allApps = uniqSorted(flatMap(machines, function (m) {
-          return (m.apps || []).map(function (a) { return a.appName; });
+          return named(m.machineId).map(function (c) { return c.name; });
         }));
-        var anyHostOnly = machines.some(function (m) { return !((m.apps || []).length); });
+        var anyHostOnly = machines.some(function (m) { return named(m.machineId).length === 0; });
 
         function selTags() { return allTags.filter(function (t) { return selectedTags[t]; }); }
         function selApps() { return allApps.filter(function (a) { return selectedApps[a]; }); }
@@ -1481,23 +1448,23 @@
           var mine = m.tags || [];
           return s.some(function (t) { return mine.indexOf(t) >= 0; });
         }
+        // The poll set of named consumers for one machine: all its apps, or — when an
+        // app-name is pinned — only the pinned ones (unpinned apps are never polled).
+        // Buckets are server-side aggregates, never polled, so they are excluded here.
+        function selectedNamed(m) {
+          var list = named(m.machineId);
+          if (appFilterActive() && !noAppsOn()) {
+            var s = selApps();
+            return list.filter(function (c) { return s.indexOf(c.name) >= 0; });
+          }
+          return list;
+        }
         // A machine is visible when it matches the tag filter AND either no app-name is
-        // pinned (⇒ all machines) or it runs a pinned app (⇒ machines that don't run it
-        // disappear: broad → deep). The `no-apps` toggle is a host-only view: it keeps
-        // ALL tag-matching machines but hides every app card (see visibleAppsFor).
+        // pinned (⇒ all machines), the host-only view is on, or it runs a pinned app.
         function machineVisible(m) {
           if (!tagMatch(m)) return false;
-          if (noAppsOn()) return true;
-          if (!appFilterActive()) return true;
-          var s = selApps();
-          return (m.apps || []).some(function (a) { return s.indexOf(a.appName) >= 0; });
-        }
-        function visibleAppsFor(m) {
-          if (noAppsOn()) return [];
-          var apps = m.apps || [];
-          if (!appFilterActive()) return apps;
-          var s = selApps();
-          return apps.filter(function (a) { return s.indexOf(a.appName) >= 0; });
+          if (noAppsOn() || !appFilterActive()) return true;
+          return selectedNamed(m).length > 0;
         }
 
         // ---- poll state --------------------------------------------------
@@ -1532,6 +1499,7 @@
 
         var tagBar = h("div", { class: "filter-chips" });
         var appBar = h("div", { class: "filter-chips" });
+        var viewBar = h("div", { class: "filter-chips" });
         var body = h("div", { class: "monitor-machines" });
 
         // Clicking a card's app-name is the second entry point to the app filter.
@@ -1551,8 +1519,17 @@
             "aria-pressed": on ? "true" : "false", title: title || label, text: label, onclick: onClick });
         }
 
+        // The lens + bucket toggles re-slice already-polled data, so they only
+        // repaint the existing sections — no re-poll (spec-034 §7).
+        function repaint() { sections.forEach(function (s) { s.paint(); }); updateCounter(); }
+        function setLens(x) { lens = x; renderChips(); repaint(); }
+        function toggleBucket(which) {
+          if (which === "docker") showDocker = !showDocker; else showSystem = !showSystem;
+          renderChips(); repaint();
+        }
+
         function renderChips() {
-          clear(tagBar); clear(appBar);
+          clear(tagBar); clear(appBar); clear(viewBar);
           if (allTags.length) {
             tagBar.appendChild(h("span", { class: "small dim", text: "Tags" }));
             allTags.forEach(function (t) {
@@ -1568,15 +1545,26 @@
             });
             if (anyHostOnly) {
               appBar.appendChild(chipBtn("no-apps", !!selectedApps[NO_APPS],
-                "Host-only view: all machines, no app cards", function () { toggleApp(NO_APPS); }));
+                "Host-only view: machine rollup bars, no consumer cards", function () { toggleApp(NO_APPS); }));
             }
           }
+          // The View lens and the bucket Show chips (spec-034): pure re-render toggles.
+          viewBar.appendChild(h("span", { class: "small dim", text: "View" }));
+          viewBar.appendChild(chipBtn("Apps", lens === "apps",
+            "Per-consumer cards on three axes", function () { setLens("apps"); }));
+          viewBar.appendChild(chipBtn("Databases", lens === "db",
+            "Re-slice the same consumers by datastore role", function () { setLens("db"); }));
+          viewBar.appendChild(h("span", { class: "small dim", style: "margin-left:12px", text: "Show" }));
+          viewBar.appendChild(chipBtn("docker bucket", showDocker,
+            "Reveal the unclassified docker bucket in the bars", function () { toggleBucket("docker"); }));
+          viewBar.appendChild(chipBtn("system / free", showSystem,
+            "Reveal the system + free remainder in the bars", function () { toggleBucket("system"); }));
         }
 
         function updateCounter() {
           var vm = machines.filter(machineVisible);
           var apps = 0;
-          vm.forEach(function (mch) { apps += visibleAppsFor(mch).length; });
+          vm.forEach(function (mch) { apps += selectedNamed(mch).length; });
           counterLabel.textContent = "polling " + vm.length + (vm.length === 1 ? " machine · " : " machines · ")
             + apps + (apps === 1 ? " app" : " apps");
         }
@@ -1593,7 +1581,7 @@
             return;
           }
           vm.forEach(function (mch) {
-            var sec = buildMachineSection(mch, visibleAppsFor(mch), hostMemTotal, toggleApp);
+            var sec = buildSection(mch);
             sections.push(sec);
             body.appendChild(sec.node);
           });
@@ -1610,10 +1598,92 @@
             .then(function () { cycleInFlight = false; runNowBtn.disabled = false; });
         }
 
+        // ---- one machine's section (spec-034) ----------------------------
+        // The host panel is three segmented axisMeters + a legend; the body is either
+        // the consumer-card grid (Apps lens) or the datastore bands (Databases lens).
+        // paint() rebuilds the body from the consumers' CURRENT state, so a re-poll
+        // (which mutates those consumer objects in place) and a lens/bucket toggle
+        // both go through the same paint() — no duplicate render paths.
+        function buildSection(m) {
+          var all = models[m.machineId];
+          var bodyWrap = h("div");
+          var node = h("section", { class: "section monitor-machine" },
+            h("div", { class: "row-between" },
+              h("div", { class: "grow" },
+                h("h2", { text: m.host }),
+                h("p", { class: "small dim mono", text: m.loginUser + "@" + m.host + ":" + m.port })),
+              chip(m.status)),
+            bodyWrap);
+
+          function openDrawer(cid) {
+            var c = all.filter(function (x) { return x.id === cid; })[0];
+            if (c) openConsumerDrawer(m, c);
+          }
+          function revealedBuckets() {
+            return all.filter(function (c) {
+              if (c.bucket === "DOCKER") return showDocker;
+              if (c.bucket === "SYSTEM") return showSystem;
+              return false;
+            });
+          }
+
+          function paint() {
+            clear(bodyWrap);
+            if (lens === "db") {
+              renderDbInto(bodyWrap, all.filter(function (c) { return !c.bucket; }), openDrawer);
+              return;
+            }
+            // Bars = the polled named consumers plus any revealed bucket; the free
+            // remainder is hatched, so the default (buckets hidden) sits short of 100 %.
+            var bars = selectedNamed(m).concat(revealedBuckets());
+            bodyWrap.appendChild(h("div", { class: "host-panel" },
+              axisMeter("RAM", bars, "ram", openDrawer),
+              axisMeter("CPU", bars, "cpu", openDrawer),
+              axisMeter("Disk", bars, "disk", openDrawer)));
+            bodyWrap.appendChild(consumerLegend(bars, openDrawer));
+            var cards = noAppsOn() ? [] : selectedNamed(m);
+            if (cards.length) {
+              bodyWrap.appendChild(h("h3", { class: "mt-4", text: "Consumers" }));
+              bodyWrap.appendChild(h("div", { class: "app-cards" },
+                cards.map(function (c) { return consumerCard(c, toggleApp, openDrawer); })));
+            } else if (!noAppsOn() && !bars.length) {
+              bodyWrap.appendChild(h("p", { class: "small dim mt-3",
+                text: "No discovered consumers on this host." }));
+            }
+          }
+
+          // Host memory first (the RAM-% denominator), then the visible consumers'
+          // fan-out probes; both mutate the shared consumer objects, then paint().
+          function refresh() {
+            return pollHostTotal(m).then(function (total) {
+              if (total != null) hostMemTotal[m.machineId] = total;
+              return pollConsumers(m.machineId, selectedNamed(m), hostMemTotal[m.machineId]);
+            }).then(paint);
+          }
+
+          paint();
+          return { node: node, refresh: refresh, paint: paint };
+        }
+
+        // Poll the machine's approved host-memory probe → host total MB. No host
+        // vitals are rendered any more (spec-034 replaced the host panel with the
+        // per-consumer segmented bars); this run only feeds the RAM-% denominator.
+        function pollHostTotal(m) {
+          var mem = (m.hostActions || []).filter(function (a) {
+            return metricKind(a) === "memory" && a.approvalState === "APPROVED"
+              && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+          })[0];
+          if (!mem) return Promise.resolve(null);
+          return runAndCollect(m.machineId, mem.id, {}).then(function (r) {
+            var parsed = parseMem(r.stdout);
+            return parsed && parsed.mem && parsed.mem.total ? parsed.mem.total : null;
+          }).catch(function () { return null; });
+        }
+
         var head = h("div", { class: "page-head" },
           h("div", null,
             h("h1", { text: "Monitor" }),
-            h("p", { class: "sub", text: "Fleet health, polled from your browser. Filter by tag or app-name; whatever is filtered out is not polled. Approval stays UI-only — polling re-runs already-approved actions." })),
+            h("p", { class: "sub", text: "Fleet health, polled from your browser. Every consumer — app, datastore, bucket — sits on the same RAM/CPU/disk axes as its host. Filter by tag or app-name; whatever is filtered out is not polled. Approval stays UI-only." })),
           h("div", { class: "row monitor-controls" },
             h("label", { class: "small dim", text: "Cadence" }),
             cadenceSel, runNowBtn, counterLabel, updatedLabel));
@@ -1624,7 +1694,7 @@
         applyCadence();
         cycle();
 
-        return h("div", null, head, tagBar, appBar, body);
+        return h("div", null, head, tagBar, appBar, viewBar, body);
       });
     });
   }
@@ -1757,292 +1827,405 @@
     return Math.round(rssMb / hostTotalMb * 100);
   }
 
+  // ---- consumer render helpers (spec-034) ----------------------------------
+  // The redesigned fleet UI is CONSUMER-centric: it renders MonitorConsumerView
+  // (spec-032) instead of the 029 MonitorAppView. Every consumer sits on the same
+  // three host-relative axes as its host (RAM/CPU/disk, % of the machine), one
+  // categorical colour held across all three. Server-side assembly leaves the axes
+  // null (no server sampler); the browser fills RAM from its poll. Built against
+  // 032 alone, native consumers have no attributable disk (— on that axis) and the
+  // docker/system buckets are not populated yet (spec-033) — rendered honestly:
+  // absent is —, never a silent 0. All text reaches the DOM via textContent (h()).
+
+  // The categorical palette (spec-034 / tokens.css): ~5 hues cycled across a
+  // machine's named consumers, a neutral for the docker bucket, transparent for
+  // system/free. Colour is ALWAYS backed by the labelled legend (WCAG AA).
+  var CONSUMER_HUES = ["--c-1", "--c-2", "--c-3", "--c-4", "--c-5"];
+  function consumerColorVar(c) { return "var(" + (c._hue || "--c-docker") + ")"; }
+
+  /** A 0..100 axis value as text; null/NaN → an em dash (never a silent 0). */
+  function pctText(n) { return (n == null || isNaN(n)) ? "—" : Math.round(n) + "%"; }
+  function clampPct(n) { return Math.max(0, Math.min(100, n)); }
+
   /**
-   * One machine's fleet section (spec-029): a compact host-vitals header + a per-app
-   * card grid for the machine's `visibleApps`. refresh() re-runs the machine's approved
-   * host probes (for the vitals AND the host-mem denominator) then the visible apps'
-   * fan-out checks, and updates each card's live rollup. Returns { node, refresh }.
+   * Build one machine's consumer models (spec-034). Each MonitorConsumerView (032)
+   * is joined by name to the 029 per-app rollup so the client still has the probe
+   * metadata the 032 contract does not carry — framework, port, fan-out checks, and
+   * app-ops — while role/source/dedication/owner/usedBy/bucket/services come from
+   * the consumer. A stable categorical colour is assigned per named consumer here so
+   * it holds across all three axes and across re-renders. The axis fields are copied
+   * so the poll can mutate them in place without touching the wire objects.
    */
-  function buildMachineSection(mch, visibleApps, hostMemTotal, onToggleApp) {
-    var hostActions = mch.hostActions || [];
-
-    var hostPanel = h("div", { class: "host-panel" });
-    var rawWrap = h("div", { class: "host-raw" });
-
-    function renderHost(readings) {
-      clear(hostPanel);
-      clear(rawWrap);
-      if (!hostActions.length) {
-        hostPanel.appendChild(h("p", { class: "small dim" },
-          "No host monitor yet. ",
-          link("#/machines/" + mch.machineId, "Discover recipes", null),
-          " to add the ", h("span", { class: "mono", text: "monitor machine" }), " recipe."));
-        return;
-      }
-      var anyBar = false;
-      var rawBlocks = [];
-      hostActions.forEach(function (a) {
-        var reading = readings[a.id];
-        var approved = a.approvalState === "APPROVED" && !a.changedSinceApproval;
-        if (!approved) {
-          hostPanel.appendChild(h("div", { class: "meter" },
-            h("div", { class: "meter-head" },
-              h("span", { class: "meter-label", text: a.name }),
-              h("a", { class: "small", href: actionApprovalHref(a), text: "approve to poll" }))));
-          return;
-        }
-        var text = reading && reading.stdout ? reading.stdout : "";
-        var kind = metricKind(a);
-        if (kind === "cpu") {
-          var cpu = parseCpu(text);
-          if (cpu != null) { hostPanel.appendChild(meter("CPU", cpu)); anyBar = true; return; }
-        } else if (kind === "memory") {
-          var mem = parseMem(text);
-          if (mem) {
-            hostPanel.appendChild(meter("Memory", mem.mem.pct,
-              mibText(mem.mem.used) + " / " + mibText(mem.mem.total)));
-            if (mem.swap && mem.swap.total > 0) {
-              hostPanel.appendChild(meter("Swap", mem.swap.pct,
-                mibText(mem.swap.used) + " / " + mibText(mem.swap.total)));
-            }
-            anyBar = true; return;
-          }
-        } else if (kind === "disk") {
-          var disk = parseDisk(text);
-          if (disk) {
-            hostPanel.appendChild(meter("Disk " + disk.primary.mount, disk.primary.pct));
-            anyBar = true; return;
-          }
-        } else if (kind === "docker") {
-          // Docker consumer metrics (spec-033): CPU/mem from `docker stats` and disk from
-          // `docker ps -s`, parsed client-side per container. The per-consumer headline
-          // axes render with the fleet redesign (spec-034); until then an approved docker
-          // monitor shows its parsed reading as a labelled block (degrade-to-raw below).
-          var summary = dockerSummary(a, text);
-          if (summary) {
-            rawBlocks.push(h("details", { class: "host-raw-item" },
-              h("summary", { text: a.name }),
-              h("pre", { class: "mono", text: summary })));
-            return;
-          }
-        }
-        // Unknown metric or parse failure → degrade to raw text (spec-024 known gap).
-        if (text) {
-          rawBlocks.push(h("details", { class: "host-raw-item" },
-            h("summary", { text: a.name + " (raw output)" }),
-            h("pre", { class: "mono", text: text })));
-        } else {
-          hostPanel.appendChild(h("div", { class: "meter" },
-            h("div", { class: "meter-head" },
-              h("span", { class: "meter-label", text: a.name }),
-              h("span", { class: "meter-val mono", text: "…" }))));
-        }
-      });
-      rawBlocks.forEach(function (b) { rawWrap.appendChild(b); });
-      if (!anyBar && !rawBlocks.length && hostActions.length) {
-        hostPanel.appendChild(h("p", { class: "small dim", text: "Polling…" }));
-      }
-    }
-
-    var cards = visibleApps.map(function (app) { return appCard(mch, app, onToggleApp); });
-    var appGrid = cards.length
-      ? h("div", { class: "app-cards" }, cards.map(function (c) { return c.node; }))
-      : ((mch.apps || []).length ? null
-        : h("p", { class: "small dim", text: "No discovered apps on this host." }));
-
-    renderHost({});
-
-    var node = h("section", { class: "section monitor-machine" },
-      h("div", { class: "row-between" },
-        h("div", { class: "grow" },
-          h("h2", { text: mch.host }),
-          h("p", { class: "small dim mono", text: mch.loginUser + "@" + mch.host + ":" + mch.port })),
-        chip(mch.status)),
-      hostPanel,
-      rawWrap,
-      cards.length ? h("h3", { class: "mt-4", text: "Apps" }) : null,
-      appGrid);
-
-    // Host poll: approved, param-free host actions → vitals + the host total memory
-    // (parseMem's total) that the per-app mem% divides by.
-    function pollHost() {
-      var runnable = hostActions.filter(function (a) {
-        return a.approvalState === "APPROVED" && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
-      });
-      if (!runnable.length) { renderHost({}); return Promise.resolve(); }
-      var readings = {};
-      return Promise.all(runnable.map(function (a) {
-        return runAndCollect(mch.machineId, a.id, {}).then(function (r) { readings[a.id] = r; })
-          .catch(function () { readings[a.id] = { stdout: "" }; });
-      })).then(function () {
-        renderHost(readings);
-        runnable.forEach(function (a) {
-          if (metricKind(a) === "memory") {
-            var mem = parseMem(readings[a.id] && readings[a.id].stdout);
-            if (mem && mem.mem && mem.mem.total) hostMemTotal[mch.machineId] = mem.mem.total;
-          }
-        });
-      });
-    }
-
-    // App poll: group visible apps by their (shared) fan-out check actions so each check
-    // runs ONCE over all the apps that declare it, then distribute each app's result.
-    function pollApps() {
-      if (!cards.length) return Promise.resolve();
-      var groups = {}; // checkId → { action, apps:[{appName,port}], seen:{} }
-      visibleApps.forEach(function (app) {
-        (app.checks || []).forEach(function (chk) {
-          if (chk.approvalState !== "APPROVED" || chk.changedSinceApproval) return;
-          if (!appPortListParamName(chk)) return;
-          var g = groups[chk.id] || (groups[chk.id] = { action: chk, apps: [], seen: {} });
-          if (!g.seen[app.appName]) { g.seen[app.appName] = true; g.apps.push({ appName: app.appName, port: app.port }); }
-        });
-      });
-      var checkIds = Object.keys(groups);
-      if (!checkIds.length) { cards.forEach(function (c) { c.applyReading(null); }); return Promise.resolve(); }
-      var outputs = {}; // checkId → (appName → {stdout,exit})
-      return Promise.all(checkIds.map(function (id) {
-        return runProbeForApps(mch.machineId, groups[id].action, groups[id].apps)
-          .then(function (byApp) { outputs[id] = byApp; });
-      })).then(function () {
-        cards.forEach(function (c) { c.applyReading({ outputs: outputs, hostTotal: hostMemTotal[mch.machineId] }); });
-      });
-    }
-
-    // Host first so the mem% denominator is set before the app rollup reads it.
-    function refresh() { return pollHost().then(pollApps); }
-
-    return { node: node, refresh: refresh };
+  function buildConsumers(m) {
+    var appsByName = {};
+    (m.apps || []).forEach(function (a) { appsByName[a.appName] = a; });
+    var hueIdx = 0;
+    return (m.consumers || []).map(function (c) {
+      var app = appsByName[c.id] || appsByName[c.name] || null;
+      var model = {
+        id: c.id,
+        name: c.name,
+        role: c.role,
+        source: c.source,
+        dedication: c.dedication || null,
+        owner: c.owner || null,
+        usedBy: c.usedBy || [],
+        bucket: c.bucket || null,
+        ram: c.ram,
+        cpu: c.cpu,
+        disk: c.disk,
+        services: c.services || [],
+        framework: app ? (app.framework || "generic") : (c.role === "DATABASE" ? "datastore" : "generic"),
+        runtime: app ? app.runtime : null,
+        port: app ? app.port : null,
+        checks: app ? (app.checks || []) : [],
+        ops: app ? (app.ops || []) : []
+      };
+      if (model.bucket === "SYSTEM") model._hue = "--c-system";
+      else if (model.bucket === "DOCKER") model._hue = "--c-docker";
+      else { model._hue = CONSUMER_HUES[hueIdx % CONSUMER_HUES.length]; hueIdx++; }
+      return model;
+    });
   }
 
   /**
-   * One unified per-app card (spec-029): framework badge (with an "actuator-less" note
-   * for the http family), UP/DOWN rollup, a mem-%-of-host bar, its checks, and its
-   * matched ops — checks and ops on one card. The app-name is a filter toggle.
-   * applyReading(reading) fills the live rollup from the poll (null → "no data").
+   * A segmented axis meter (spec-034): the .meter-track sliced one coloured segment
+   * per consumer for the given axis, then a hatched free remainder to 100 %. The
+   * aggregate "used %" adopts the meterBand thresholds (amber >=75, red >=90). A
+   * segment (and every legend chip) opens the consumer drawer.
    */
-  function appCard(machine, app, onToggleApp) {
-    var framework = app.framework || "generic";
-    var badge = h("span", { class: "fw-badge fw-badge--" + framework, text: framework });
-    var actuatorless = framework === "http"
+  function axisMeter(label, consumers, axis, onOpen) {
+    var total = 0;
+    consumers.forEach(function (c) { if (c[axis] != null) total += c[axis]; });
+    var track = h("div", { class: "meter-track axis-track", role: "img",
+      "aria-label": label + " — used " + pctText(total) + " of host" });
+    consumers.forEach(function (c) {
+      var v = c[axis];
+      if (v == null || v <= 0) return;
+      var seg = h("div", { class: "axis-seg", "data-cid": c.id,
+        title: c.name + " · " + pctText(v) + " of host " + label });
+      seg.style.width = clampPct(v) + "%";
+      seg.style.background = consumerColorVar(c);
+      if (onOpen) seg.addEventListener("click", function () { onOpen(c.id); });
+      track.appendChild(seg);
+    });
+    var free = Math.max(0, 100 - total);
+    if (free > 0.3) {
+      var f = h("div", { class: "axis-seg axis-seg--free", title: "unshown / free · " + pctText(free) });
+      f.style.width = free + "%";
+      track.appendChild(f);
+    }
+    var band = meterBand(total);
+    return h("div", { class: "meter" },
+      h("div", { class: "meter-head" },
+        h("span", { class: "meter-label", text: label }),
+        h("span", { class: "meter-val mono" + (band === "amber" ? " meter-val--amber" : band === "red" ? " meter-val--red" : ""),
+          text: "used " + pctText(total) })),
+      track);
+  }
+
+  /**
+   * The mandatory legend (spec-034): one clickable chip per consumer — colour swatch
+   * PLUS name PLUS its three axis values — so the segment colours are never the sole
+   * signal (WCAG AA, the house rule). A chip opens the consumer drawer.
+   */
+  function consumerLegend(consumers, onOpen) {
+    return h("div", { class: "legend" }, consumers.map(function (c) {
+      var dot = h("span", { class: "legend-dot" });
+      dot.style.background = consumerColorVar(c);
+      return h("button", { type: "button", class: "legend-chip", "data-cid": c.id,
+        title: "Open " + c.name, onclick: function () { onOpen(c.id); } },
+        dot,
+        h("span", { text: c.name }),
+        h("span", { class: "lg-pct", text: pctText(c.ram) + " · " + pctText(c.cpu) + " · " + pctText(c.disk) }));
+    }));
+  }
+
+  /**
+   * One axis meter on a consumer card. A known value renders the reused .meter
+   * (RAM carries its RSS as the sub-line); a null value renders — with an honest
+   * note: a native process has no attributable disk, an axis with no approved
+   * monitor says so, everything else is simply "no data" yet.
+   */
+  function consumerAxis(label, consumer) {
+    var key = label.toLowerCase();
+    var pct = consumer[key];
+    if (pct == null) {
+      var note = (key === "disk")
+        ? (consumer.source === "DOCKER" ? "n/a" : "native — n/a")
+        : (consumer._anyApproved === false ? "approve to see" : "no data");
+      return h("div", { class: "meter" },
+        h("div", { class: "meter-head" },
+          h("span", { class: "meter-label", text: label }),
+          h("span", { class: "meter-val mono", text: "—" })),
+        h("div", { class: "meter-sub mono", text: note }));
+    }
+    var sub = (key === "ram" && consumer._rssMb != null) ? (mibText(consumer._rssMb) + " RSS") : null;
+    return meter(label, pct, sub);
+  }
+
+  /**
+   * One consumer card (spec-034): framework badge (+ "actuator-less" for the http
+   * family), UP/DOWN pill rolled up from the probes, all THREE axes, the responded
+   * checks as chips, and the matched app-ops. The name is a fleet filter toggle; the
+   * card body opens the drawer. Rebuilt from the consumer's current state on paint().
+   */
+  function consumerCard(consumer, onToggle, onOpen) {
+    var fw = consumer.framework || "generic";
+    var badge = h("span", { class: "fw-badge fw-badge--" + fw, text: fw });
+    var actuatorless = fw === "http"
       ? h("span", { class: "tag", title: "No actuator responded; liveness via GET /", text: "actuator-less" })
       : null;
-    var pill = h("span", { class: "pill pill--unknown", text: "no data" });
-
-    var nameBtn = h("button", { type: "button", class: "app-name-toggle",
-      title: "Filter the fleet to " + app.appName, text: app.appName });
-    nameBtn.addEventListener("click", function () { onToggleApp(app.appName); });
-
-    var memWrap = h("div", { class: "app-mem mt-2" });
-    var checksWrap = h("div", { class: "app-checks mt-2" });
-
-    var ops = app.ops || [];
-    var opsRow = ops.length
-      ? h("div", { class: "run-chip-row mt-3" }, ops.map(function (op) { return opsRunChip(op, app.appName); }))
-      : null;
-
-    var card = h("div", { class: "app-card" },
-      h("div", { class: "row-between" },
-        h("div", { class: "grow" },
-          nameBtn,
-          h("div", { class: "row mt-2" }, badge, actuatorless, pill)),
-        h("span", { class: "tag mono", text: (app.runtime || "process") + " :" + app.port })),
-      memWrap,
-      checksWrap,
-      opsRow);
-    card.addEventListener("click", function (e) {
-      if (e.target.closest(".run-chip") || e.target.closest(".app-name-toggle")) return;
-      openAppDrawer(machine, app);
-    });
-
-    function applyReading(reading) {
-      var livenessUp = null, processUp = null, rssMb = null, checkRows = [];
-      (app.checks || []).forEach(function (chk) {
-        var res = reading && reading.outputs && reading.outputs[chk.id] && reading.outputs[chk.id][app.appName];
-        var kind = checkKind(chk);
-        var state = "na";
-        if (res) {
-          if (kind === "process") {
-            var rss = parseRssMb(res.stdout);
-            if (rss != null) rssMb = (rssMb == null ? 0 : rssMb) + rss;
-            var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
-            processUp = listener;
-            state = listener ? "up" : "down";
-          } else if (kind === "cpu") {
-            // The app-level CPU probe (spec-032): a process-tree read. It has no headline
-            // bar yet (the consumer axes land with the 034 redesign) — its check row just
-            // reflects whether the probe found a live listener to sample.
-            state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
-          } else if (kind === "liveness") {
-            livenessUp = res.exit === 0;
-            state = livenessUp ? "up" : "down";
-          } else {
-            state = res.exit === 0 ? "up" : "down";
-          }
-        }
-        checkRows.push({ name: chk.name, state: state });
-      });
-      var up = livenessUp != null ? livenessUp : processUp;
-
-      var newPill = up == null
-        ? h("span", { class: "pill pill--unknown", text: "no data" })
-        : h("span", { class: "pill pill--" + (up ? "up" : "down"), text: up ? "UP" : "DOWN" });
-      pill.parentNode.replaceChild(newPill, pill);
-      pill = newPill;
-
-      clear(memWrap);
-      var hostTotal = reading && reading.hostTotal;
-      var pct = clientMemPct(rssMb, hostTotal);
-      if (pct != null) {
-        memWrap.appendChild(meter("Mem % of host", pct, mibText(rssMb) + " / " + mibText(hostTotal)));
-      } else if (rssMb != null) {
-        memWrap.appendChild(meter("Mem % of host", null, mibText(rssMb) + " RSS · host total unknown"));
-      } else {
-        var anyApproved = (app.checks || []).some(function (c) {
-          return c.approvalState === "APPROVED" && !c.changedSinceApproval;
-        });
-        memWrap.appendChild(h("div", { class: "meter-sub mono",
-          text: anyApproved ? "mem % of host — no data"
-                            : "mem % of host — approve this monitor to see metrics" }));
-      }
-
-      clear(checksWrap);
-      if (checkRows.length) {
-        checksWrap.appendChild(h("div", { class: "run-chip-row" }, checkRows.map(function (r) {
+    var up = consumer._up;
+    var pill = up == null
+      ? h("span", { class: "pill pill--unknown", text: "no data" })
+      : h("span", { class: "pill pill--" + (up ? "up" : "down"), text: up ? "UP" : "DOWN" });
+    var name = h("button", { type: "button", class: "app-name-toggle",
+      title: "Filter the fleet to " + consumer.name, text: consumer.name,
+      onclick: function (e) { e.stopPropagation(); onToggle(consumer.name); } });
+    var runtimeTag = h("span", { class: "tag mono",
+      text: (consumer.runtime || (consumer.source === "DOCKER" ? "docker" : "process"))
+        + (consumer.port != null ? " :" + consumer.port : "") });
+    var axes = h("div", { class: "d-axes mt-2" },
+      consumerAxis("RAM", consumer), consumerAxis("CPU", consumer), consumerAxis("Disk", consumer));
+    var states = consumer._checkStates || [];
+    var checks = states.length
+      ? h("div", { class: "run-chip-row mt-3" }, states.map(function (r) {
           var cls = r.state === "up" ? "chip chip--ok" : r.state === "down" ? "chip chip--bad" : "chip chip--neutral";
           return h("span", { class: cls, title: r.name + " (" + humanize(r.state) + ")", text: r.name });
-        })));
-      }
-    }
-
-    applyReading(null);
-    return { node: card, applyReading: applyReading };
+        }))
+      : null;
+    var ops = (consumer.ops || []).length
+      ? h("div", { class: "run-chip-row mt-2" }, consumer.ops.map(function (op) { return opsRunChip(op, consumer.name); }))
+      : null;
+    var card = h("div", { class: "app-card" },
+      h("div", { class: "row-between" },
+        h("div", { class: "grow" }, name, h("div", { class: "row mt-2" }, badge, actuatorless, pill)),
+        runtimeTag),
+      axes, checks, ops);
+    card.addEventListener("click", function (e) {
+      if (e.target.closest(".run-chip") || e.target.closest(".app-name-toggle")) return;
+      onOpen(consumer.id);
+    });
+    return card;
   }
 
-  /** The per-app detail drawer (spec-029): its runtime facts, checks, and ops. */
-  function openAppDrawer(machine, app) {
-    var framework = app.framework || "generic";
-    var checks = app.checks || [];
-    var ops = app.ops || [];
+  // ---- databases lens (spec-034 §5) ----------------------------------------
+  // One lens, two bands. Dedicated datastores (one owner → attributable) show the
+  // owner split per axis; shared datastores (many users, no owner) show "used by"
+  // chips and NO per-app split. It is a re-slice of the SAME consumers, not a move.
 
-    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": app.appName },
+  function datastoresOf(consumers) {
+    var ded = [], shared = [];
+    consumers.forEach(function (c) {
+      if (c.role !== "DATABASE") return;
+      (c.dedication === "SHARED" ? shared : ded).push(c);
+    });
+    return { ded: ded, shared: shared };
+  }
+
+  /** A segmented split of the dedicated datastores on one axis, coloured per owner. */
+  function splitMeter(axis, items) {
+    var total = 0;
+    items.forEach(function (i) { if (i[axis] != null) total += i[axis]; });
+    var track = h("div", { class: "meter-track axis-track" });
+    items.forEach(function (i) {
+      var v = i[axis];
+      if (v == null || v <= 0) return;
+      var seg = h("div", { class: "axis-seg", title: (i.owner || i.name) + " · " + pctText(v) + " of host" });
+      seg.style.width = (total > 0 ? (v / total * 100) : 0) + "%";
+      seg.style.background = consumerColorVar(i);
+      track.appendChild(seg);
+    });
+    var rows = items.map(function (i) {
+      var share = (total > 0 && i[axis] != null) ? Math.round(i[axis] / total * 100) : null;
+      var dot = h("span", { class: "legend-dot" });
+      dot.style.background = consumerColorVar(i);
+      return h("span", { class: "row", style: "gap:6px" }, dot,
+        (i.owner || i.name) + " " + (share == null ? "—" : share + "%"));
+    });
+    return h("div", { class: "meter" },
+      h("div", { class: "meter-head" },
+        h("span", { class: "meter-label", text: axis.toUpperCase() + " — " + pctText(total) + " of host" })),
+      track,
+      h("div", { class: "split-legend" }, rows));
+  }
+
+  /** One shared-datastore row: no per-app split, just its "used by" chips + axes. */
+  function sharedRow(c, onOpen) {
+    var usedBy = (c.usedBy || []).map(function (a) { return h("span", { class: "tag", text: a }); });
+    function ax(key, label) {
+      var na = c[key] == null;
+      return h("div", { class: "dax" },
+        h("div", { class: "k", text: label }),
+        h("div", { class: "v" + (na ? " na" : ""), text: pctText(c[key]) }));
+    }
+    var dot = h("span", { class: "legend-dot" });
+    dot.style.background = consumerColorVar(c);
+    var row = h("div", { class: "drow drow--click" }, dot,
+      h("div", { class: "grow" },
+        h("div", { style: "font-weight:600", text: c.name }),
+        usedBy.length
+          ? h("div", { class: "small dim row mt-2" }, h("span", { text: "used by" }), usedBy)
+          : h("div", { class: "small dim", text: "no dependents recorded" })),
+      h("div", { class: "daxes" }, ax("ram", "RAM"), ax("cpu", "CPU"), ax("disk", "DISK")));
+    row.addEventListener("click", function () { onOpen(c.id); });
+    return row;
+  }
+
+  function renderDbInto(wrap, datastores, onOpen) {
+    var d = datastoresOf(datastores);
+    if (!d.ded.length && !d.shared.length) {
+      wrap.appendChild(empty("No datastores detected on this host."));
+      return;
+    }
+    wrap.appendChild(h("p", { class: "small dim mt-2",
+      text: "The same consumers as the Apps view, re-sliced by datastore role — a re-slice, not a move." }));
+    if (d.ded.length) {
+      wrap.appendChild(h("div", { class: "card mt-3" },
+        h("div", { class: "row" },
+          h("span", { class: "band-title", text: "Dedicated" }),
+          h("span", { class: "tag", text: "one owner → resource is attributable, so we show the split" })),
+        h("div", { class: "d-axes mt-3" },
+          splitMeter("ram", d.ded), splitMeter("cpu", d.ded), splitMeter("disk", d.ded))));
+    }
+    if (d.shared.length) {
+      wrap.appendChild(h("div", { class: "card mt-3" },
+        h("div", { class: "row" },
+          h("span", { class: "band-title", text: "Shared" }),
+          h("span", { class: "tag", text: "many users, no owner → NO per-app split; we show who uses it" })),
+        d.shared.map(function (c) { return sharedRow(c, onOpen); })));
+    }
+  }
+
+  // ---- consumer poll (spec-034) --------------------------------------------
+  // Group the visible consumers by their (shared) fan-out check actions so each
+  // check runs ONCE over all apps that declare it, then distribute the results and
+  // fill each consumer's RAM axis (RSS / host total) + UP/DOWN + probe states.
+
+  function pollConsumers(machineId, consumers, hostTotal) {
+    var pollable = consumers.filter(function (c) { return (c.checks || []).length && c.port != null; });
+    if (!pollable.length) return Promise.resolve();
+    var groups = {};
+    pollable.forEach(function (c) {
+      (c.checks || []).forEach(function (chk) {
+        if (chk.approvalState !== "APPROVED" || chk.changedSinceApproval) return;
+        if (!appPortListParamName(chk)) return;
+        var g = groups[chk.id] || (groups[chk.id] = { action: chk, apps: [], seen: {} });
+        if (!g.seen[c.name]) { g.seen[c.name] = true; g.apps.push({ appName: c.name, port: c.port }); }
+      });
+    });
+    var ids = Object.keys(groups);
+    if (!ids.length) {
+      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal); });
+      return Promise.resolve();
+    }
+    var outputs = {}; // checkId → (appName → { stdout, exit })
+    return Promise.all(ids.map(function (id) {
+      return runProbeForApps(machineId, groups[id].action, groups[id].apps)
+        .then(function (byApp) { outputs[id] = byApp; });
+    })).then(function () {
+      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal); });
+    });
+  }
+
+  /**
+   * Fold one consumer's probe outputs into its live state: the process probe's VmRSS
+   * (summed → MB) over the host total gives the RAM axis; liveness/process rolls up
+   * to UP/DOWN; each check keeps its responded state (na = did not respond, so it is
+   * omitted from the drawer's probe list — probe honesty, spec-034 §6). Only the RAM
+   * axis is filled client-side; CPU/disk stay at their server value (null against 032).
+   */
+  function applyConsumerReading(c, outputs, hostTotal) {
+    var livenessUp = null, processUp = null, rssMb = null, rows = [];
+    (c.checks || []).forEach(function (chk) {
+      var res = outputs && outputs[chk.id] && outputs[chk.id][c.name];
+      var kind = checkKind(chk);
+      var state = "na";
+      if (res) {
+        if (kind === "process") {
+          var rss = parseRssMb(res.stdout);
+          if (rss != null) rssMb = (rssMb == null ? 0 : rssMb) + rss;
+          var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
+          processUp = listener;
+          state = listener ? "up" : "down";
+        } else if (kind === "cpu") {
+          state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
+        } else if (kind === "liveness") {
+          livenessUp = res.exit === 0;
+          state = livenessUp ? "up" : "down";
+        } else {
+          state = res.exit === 0 ? "up" : "down";
+        }
+      }
+      rows.push({ name: chk.name, state: state });
+    });
+    c._checkStates = rows;
+    c._up = livenessUp != null ? livenessUp : processUp;
+    c._anyApproved = (c.checks || []).some(function (x) {
+      return x.approvalState === "APPROVED" && !x.changedSinceApproval;
+    });
+    c._rssMb = rssMb;
+    c.ram = clientMemPct(rssMb, hostTotal);
+  }
+
+  /**
+   * The per-consumer detail drawer (spec-034, replacing openAppDrawer): the tri-axis
+   * readout, the owner / used-by line for a datastore, the services breakdown (docker
+   * containers, spec-033), the responded-only probe list, and the compose block. All
+   * facts come from the consumer; native consumers have no services and no compose.
+   */
+  function openConsumerDrawer(machine, c) {
+    var badges = [
+      h("span", { class: "fw-badge fw-badge--" + (c.framework || "generic"), text: c.framework || "generic" }),
+      h("span", { class: "tag", text: (c.source || "").toLowerCase() }),
+      c.role === "DATABASE" ? h("span", { class: "tag", text: c.dedication === "SHARED" ? "shared" : "dedicated" }) : null,
+      c.bucket ? h("span", { class: "tag", text: "hidden bucket" }) : null
+    ];
+    var diskMeter = c.disk == null
+      ? h("div", { class: "meter" },
+          h("div", { class: "meter-head" },
+            h("span", { class: "meter-label", text: "Disk" }),
+            h("span", { class: "meter-val mono", text: "—" })),
+          h("div", { class: "meter-sub mono",
+            text: c.source === "DOCKER" ? "n/a" : "native process — no attributable disk footprint" }))
+      : meter("Disk", c.disk);
+    var owner = c.role === "DATABASE"
+      ? (c.dedication === "SHARED"
+          ? h("dl", { class: "kv mt-2" }, h("dt", { text: "used by" }),
+              h("dd", { text: (c.usedBy || []).join(", ") + " — shared engine, resource not split per app" }))
+          : (c.owner ? h("dl", { class: "kv mt-2" }, h("dt", { text: "owned by" }), h("dd", { text: c.owner })) : null))
+      : null;
+    var services = (c.services || []).length
+      ? [h("h3", { class: "mt-4", text: "Services" }), h("div", { class: "mt-2" }, c.services.map(serviceRow))]
+      : null;
+    var responded = (c._checkStates || []).filter(function (r) { return r.state !== "na"; });
+    var probes = responded.length
+      ? [h("h3", { class: "mt-4", text: "Probes" }),
+         h("div", { class: "run-chip-row mt-2" }, responded.map(function (r) {
+           return h("span", { class: "chip " + (r.state === "up" ? "chip--ok" : "chip--bad"), text: r.name });
+         })),
+         h("p", { class: "small faint mt-2",
+           text: "Only probes that responded are shown — a springboot exposing just /actuator/health shows only health." })]
+      : [h("h3", { class: "mt-4", text: "Probes" }),
+         (c.checks || []).length
+           ? h("p", { class: "small dim", text: "No probe has responded yet — run the monitor to populate." })
+           : h("p", { class: "small dim", text: "Aggregate bucket — not a monitored app." })];
+    var compose = c.source === "DOCKER"
+      ? [h("h3", { class: "mt-4", text: "Compose" }),
+         h("p", { class: "small dim mt-2" }, "Grouped by ",
+           h("span", { class: "mono", text: "com.docker.compose.project" }),
+           " label; project file not reachable from this host (best-effort).")]
+      : null;
+
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": c.name },
       h("div", { class: "row-between" },
-        h("h2", { text: app.appName }),
+        h("h2", { text: c.name }),
         h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
-      h("div", { class: "row mt-2" },
-        h("span", { class: "fw-badge fw-badge--" + framework, text: framework }),
-        h("span", { class: "tag mono", text: (app.runtime || "process") + " :" + app.port }),
-        framework === "http" ? h("span", { class: "tag", text: "actuator-less" }) : null),
+      h("div", { class: "row mt-2" }, badges),
       h("p", { class: "small dim mt-2", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
-      h("h3", { class: "mt-4", text: "Checks" }),
-      checks.length
-        ? h("div", { class: "run-chip-row mt-2" }, checks.map(function (c) { return runChip(c); }))
-        : h("p", { class: "small dim", text: "No probes discovered for this app." }),
-      h("h3", { class: "mt-4", text: "Operations" }),
-      ops.length
-        ? h("div", { class: "run-chip-row mt-2" }, ops.map(function (op) { return opsRunChip(op, app.appName); }))
-        : h("p", { class: "small dim", text: "No approved ops target this app." }));
-
+      h("div", { class: "d-axes mt-4" }, meter("RAM", c.ram), meter("CPU", c.cpu), diskMeter),
+      owner, services, probes, compose);
     var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
       if (e.target === backdrop) closeDrawer();
     } }, drawer);
@@ -2050,6 +2233,22 @@
     clear(root);
     root.appendChild(backdrop);
   }
+
+  /** One service (docker container, spec-033) inside a consumer, with its own axes. */
+  function serviceRow(s) {
+    function ax(key, label) {
+      var na = s[key] == null;
+      return h("div", { class: "dax" },
+        h("div", { class: "k", text: label }),
+        h("div", { class: "v" + (na ? " na" : ""), text: pctText(s[key]) }));
+    }
+    return h("div", { class: "drow" },
+      h("div", { class: "grow" },
+        h("div", { style: "font-weight:600", text: s.name }),
+        h("div", { class: "small dim mono", text: s.image || "" })),
+      h("div", { class: "daxes" }, ax("ram", "RAM"), ax("cpu", "CPU"), ax("disk", "DISK")));
+  }
+
   function closeDrawer() { clear(byId("modal-root")); }
 
   // =========================================================== ROUTER =======
