@@ -1368,6 +1368,78 @@
     return null;
   }
 
+  /**
+   * Parse a docker/`df` size token into whole BYTES, null when unparseable (spec-037).
+   * Handles the three unit dialects the docker/host reads use: binary `KiB/MiB/GiB/TiB`
+   * (1024, `docker stats` MemUsage), SI `kB/MB/GB/TB` (1000, `docker ps -s` Size), and
+   * the bare `K/M/G/T` of `df -h` (1024). A leading `"1.5GiB / 3.8GiB"` or `"1.09kB
+   * (virtual 7.05MB)"` yields its FIRST value — the container's own share, not the pair.
+   */
+  function dockerBytes(s) {
+    if (s == null) return null;
+    var m = String(s).match(/([\d.]+)\s*([KMGTP])?(i)?B?/i);
+    if (!m || m[1] === "") return null;
+    var n = parseFloat(m[1]);
+    if (isNaN(n)) return null;
+    var unit = (m[2] || "").toUpperCase();
+    if (!unit) return Math.round(n);
+    var raw = String(s);
+    // Binary when an explicit "i" (GiB) or a bare df-style letter with no trailing "B"
+    // (df -h "50G"); SI only for the letter+B docker size form ("120MB").
+    var hasI = !!m[3];
+    var trailingB = new RegExp(unit + "B", "i").test(raw);
+    var base = (hasI || !trailingB) ? 1024 : 1000;
+    var pow = { K: 1, M: 2, G: 3, T: 4, P: 5 }[unit] || 0;
+    return Math.round(n * Math.pow(base, pow));
+  }
+
+  /**
+   * Parse the "Local Volumes space usage:" table of `docker system df -v` (spec-037):
+   * [{ name, bytes }] per named volume, from the VOLUME NAME / LINKS / SIZE columns.
+   * Named volumes are attributed to a compose project by the `<project>_…` name
+   * convention at aggregation time. null → nothing parsed (degrade-to-raw).
+   */
+  function parseDockerVolumes(text) {
+    if (!text) return null;
+    var lines = text.split(/\r?\n/);
+    var out = [], inSection = false;
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      var head = ln.trim().toUpperCase();
+      if (head.indexOf("VOLUME NAME") >= 0 && head.indexOf("SIZE") >= 0) { inSection = true; continue; }
+      if (!inSection) continue;
+      if (!ln.trim()) break;                         // blank line ends the section
+      if (/space usage:/i.test(ln)) break;           // next section header
+      var cols = ln.trim().split(/\s{2,}|\t+/);
+      if (cols.length < 2) cols = ln.trim().split(/\s+/);
+      var name = cols[0];
+      var size = cols[cols.length - 1];
+      var bytes = dockerBytes(size);
+      if (name && bytes != null) out.push({ name: name, bytes: bytes });
+    }
+    return out.length ? out : null;
+  }
+
+  /**
+   * The total capacity in BYTES of the filesystem mounted at `/` from `df -h` stdout
+   * (spec-037): the docker data-root (`/var/lib/docker`) proxy, the disk-axis
+   * denominator. Falls back to the first data row when no `/` row is found; null when
+   * nothing parses (disk then degrades to —).
+   */
+  function parseDfTotal(text) {
+    if (!text) return null;
+    var lines = text.split(/\r?\n/), root = null, firstData = null;
+    for (var i = 0; i < lines.length; i++) {
+      var cols = lines[i].trim().split(/\s+/);
+      if (cols.length < 6) continue;
+      if (/^filesystem$/i.test(cols[0])) continue;   // header
+      if (firstData == null) firstData = cols;
+      if (cols[cols.length - 1] === "/") { root = cols; break; }
+    }
+    var row = root || firstData;
+    return row ? dockerBytes(row[1]) : null;          // the Size column
+  }
+
   function metricKind(action) {
     var n = (action.name || "").toLowerCase();
     // Docker consumer metrics (spec-033) route first — a "docker disk" check must not be
@@ -1423,6 +1495,8 @@
         var showDocker = false, showSystem = false;
         var cadence = "single";
         var hostMemTotal = {};    // machineId → host total MB (the RAM-% denominator)
+        var hostCores = {};       // machineId → logical CPU count (docker CPU-% denominator, spec-037)
+        var hostDiskTotal = {};   // machineId → data-root FS total bytes (docker disk-% denominator, spec-037)
 
         // The consumer spine (spec-032/034): every machine's apps re-expressed as
         // MonitorConsumerViews, joined to the 029 per-app rollup for the probe
@@ -1652,13 +1726,27 @@
             }
           }
 
-          // Host memory first (the RAM-% denominator), then the visible consumers'
-          // fan-out probes; both mutate the shared consumer objects, then paint().
+          // Host denominators first — RAM total (free -m), core count (nproc, spec-037),
+          // data-root FS total (df -h, spec-037) — then the two polls that fill the
+          // consumer axes: the native APP_PORT_LIST fan-out (RAM) and the param-free
+          // docker reads (RAM/CPU/disk, spec-037). All mutate the shared consumer
+          // objects in place, then paint() rebuilds from their current state.
           function refresh() {
-            return pollHostTotal(m).then(function (total) {
-              if (total != null) hostMemTotal[m.machineId] = total;
-              return pollConsumers(m.machineId, selectedNamed(m), hostMemTotal[m.machineId]);
-            }).then(paint);
+            return Promise.all([pollHostTotal(m), pollHostCores(m), pollHostDiskTotal(m)])
+              .then(function (res) {
+                if (res[0] != null) hostMemTotal[m.machineId] = res[0];
+                if (res[1] != null) hostCores[m.machineId] = res[1];
+                if (res[2] != null) hostDiskTotal[m.machineId] = res[2];
+                var denom = {
+                  ramMb: hostMemTotal[m.machineId],
+                  cores: hostCores[m.machineId],
+                  diskBytes: hostDiskTotal[m.machineId]
+                };
+                return Promise.all([
+                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb),
+                  pollDockerConsumers(m, selectedNamed(m), denom)
+                ]);
+              }).then(paint);
           }
 
           paint();
@@ -1677,6 +1765,38 @@
           return runAndCollect(m.machineId, mem.id, {}).then(function (r) {
             var parsed = parseMem(r.stdout);
             return parsed && parsed.mem && parsed.mem.total ? parsed.mem.total : null;
+          }).catch(function () { return null; });
+        }
+
+        // Poll the approved `cores` host vital (nproc, spec-037) → logical CPU count,
+        // the denominator for the docker CPU axis. null → CPU degrades to — (honesty).
+        // Found by name (nproc/core) so it is never confused with the top -bn1 host CPU.
+        function pollHostCores(m) {
+          var cores = (m.hostActions || []).filter(function (a) {
+            var n = (a.name || "").toLowerCase();
+            return (n.indexOf("core") >= 0 || n.indexOf("nproc") >= 0)
+              && a.approvalState === "APPROVED" && !a.changedSinceApproval
+              && (a.paramDefs || []).length === 0;
+          })[0];
+          if (!cores) return Promise.resolve(null);
+          return runAndCollect(m.machineId, cores.id, {}).then(function (r) {
+            var m2 = (r.stdout || "").match(/\d+/);
+            var n = m2 ? parseInt(m2[0], 10) : null;
+            return (n && n > 0) ? n : null;
+          }).catch(function () { return null; });
+        }
+
+        // Poll the approved host `disk` vital (df -h, spec-037) → the data-root
+        // filesystem total in bytes (the `/` row as the /var/lib/docker proxy), the
+        // denominator for the docker disk axis. null → disk degrades to —.
+        function pollHostDiskTotal(m) {
+          var disk = (m.hostActions || []).filter(function (a) {
+            return metricKind(a) === "disk" && a.approvalState === "APPROVED"
+              && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+          })[0];
+          if (!disk) return Promise.resolve(null);
+          return runAndCollect(m.machineId, disk.id, {}).then(function (r) {
+            return parseDfTotal(r.stdout);
           }).catch(function () { return null; });
         }
 
@@ -2167,6 +2287,102 @@
     });
     c._rssMb = rssMb;
     c.ram = clientMemPct(rssMb, hostTotal);
+  }
+
+  // ---- docker consumer poll (spec-037) -------------------------------------
+  // 034's pollConsumers only drives the native (app-name,port) APP_PORT_LIST
+  // fan-out, so a docker consumer (no port, no fan-out check) never gets metrics.
+  // This is the missing path: run each APPROVED, un-drifted, PARAM-FREE docker
+  // MONITOR check (docker stats / ps -s / system df -v) ONCE per machine — they
+  // enumerate every container in one read — parse with the 033 parsers, then
+  // aggregate per container up to the consumer via its services[] identity and
+  // normalize each axis to % of host (RAM ÷ host total, CPU ÷ nproc, disk ÷
+  // data-root FS). Absent parse or denominator → the axis stays — (honesty rule).
+
+  function pollDockerConsumers(m, consumers, denom) {
+    var dockerConsumers = consumers.filter(function (c) {
+      return c.source === "DOCKER" && (c.services || []).length;
+    });
+    if (!dockerConsumers.length) return Promise.resolve();
+    var checks = (m.hostActions || []).filter(function (a) {
+      return metricKind(a) === "docker" && a.approvalState === "APPROVED"
+        && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+    });
+    if (!checks.length) return Promise.resolve();
+    return Promise.all(checks.map(function (a) {
+      return runAndCollect(m.machineId, a.id, {})
+        .then(function (r) { return { action: a, stdout: r.stdout }; })
+        .catch(function () { return { action: a, stdout: "" }; });
+    })).then(function (results) {
+      var stats = null, ps = null, vol = null;
+      results.forEach(function (res) {
+        var n = (res.action.name || "").toLowerCase();
+        if (n.indexOf("stat") >= 0) stats = parseDockerStats(res.stdout);
+        else if (n.indexOf("vol") >= 0 || n.indexOf("system") >= 0 || n.indexOf("df") >= 0)
+          vol = parseDockerVolumes(res.stdout);
+        else ps = parseDockerPs(res.stdout);   // "docker disk" → docker ps -s writable layer
+      });
+      dockerConsumers.forEach(function (c) { applyDockerReading(c, stats, ps, vol, denom); });
+    });
+  }
+
+  /** Index parsed docker rows by container name for the per-consumer join. */
+  function indexByName(rows) {
+    var by = {};
+    (rows || []).forEach(function (r) { if (r.name) by[r.name] = r; });
+    return by;
+  }
+
+  /**
+   * Fold one docker consumer's container readings into its axes (spec-037). Sums the
+   * consumer's services[] (a compose project sums its members; a standalone datastore
+   * is 1:1): RAM from `docker stats` MemUsage ABSOLUTE bytes (not MemPerc, which is
+   * container-limit-relative), CPU from `docker stats` CPUPerc (sums cores ⇒ ÷ nproc),
+   * disk from `docker ps -s` writable-layer bytes plus this project's named volumes
+   * (`<project>_…`). Each axis is a % of host, clamped 0..100, and set ONLY when both
+   * numerator and denominator are present — otherwise it stays — (never a silent 0).
+   * Per-service axes are filled too so the drawer's service rows read numeric.
+   */
+  function applyDockerReading(c, stats, ps, vol, denom) {
+    var statBy = indexByName(stats), psBy = indexByName(ps);
+    var sumMemBytes = 0, memSeen = false;
+    var sumCpu = 0, cpuSeen = false;
+    var sumDiskBytes = 0, diskSeen = false;
+    var anyContainer = false, statsRan = !!stats, diskRan = !!ps;
+    (c.services || []).forEach(function (s) {
+      var st = statBy[s.name], p = psBy[s.name];
+      if (st || p) anyContainer = true;
+      var memBytes = st ? dockerBytes(st.memUsage) : null;
+      var cpuRaw = st ? st.cpu : null;               // percent, already summed over cores
+      var diskBytes = p ? dockerBytes(p.size) : null;
+      if (memBytes != null) { sumMemBytes += memBytes; memSeen = true; }
+      if (cpuRaw != null) { sumCpu += cpuRaw; cpuSeen = true; }
+      if (diskBytes != null) { sumDiskBytes += diskBytes; diskSeen = true; }
+      s.ram = (memBytes != null && denom.ramMb) ? clampPct(Math.round(memBytes / 1048576 / denom.ramMb * 100)) : s.ram;
+      s.cpu = (cpuRaw != null && denom.cores) ? clampPct(Math.round(cpuRaw / denom.cores)) : s.cpu;
+      s.disk = (diskBytes != null && denom.diskBytes) ? clampPct(Math.round(diskBytes / denom.diskBytes * 100)) : s.disk;
+    });
+    // Named volumes attributed to this compose project by the <project>_… convention
+    // (best-effort — docker system df -v gives a link count, not which container; a
+    // shared volume across projects is deliberately not split, spec-032 §4 / Known Gaps).
+    if (vol && c.id) {
+      var prefix = c.id + "_";
+      vol.forEach(function (v) {
+        if (v.name && v.name.indexOf(prefix) === 0 && v.bytes != null) { sumDiskBytes += v.bytes; diskSeen = true; }
+      });
+    }
+    if (memSeen && denom.ramMb) c.ram = clampPct(Math.round(sumMemBytes / 1048576 / denom.ramMb * 100));
+    if (cpuSeen && denom.cores) c.cpu = clampPct(Math.round(sumCpu / denom.cores));
+    if (diskSeen && denom.diskBytes) c.disk = clampPct(Math.round(sumDiskBytes / denom.diskBytes * 100));
+    // A docker consumer with a running container reads UP; the two docker reads become
+    // the responded probe chips (only those that produced data show — probe honesty).
+    if (anyContainer) c._up = true;
+    else if (statsRan || diskRan) c._up = false;
+    c._anyApproved = statsRan || diskRan;
+    c._checkStates = [
+      { name: "docker stats", state: statsRan ? (anyContainer && memSeen ? "up" : "na") : "na" },
+      { name: "docker disk", state: diskRan ? (diskSeen ? "up" : "na") : "na" }
+    ].filter(function (r) { return r.state !== "na"; });
   }
 
   /**
