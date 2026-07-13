@@ -6,9 +6,14 @@ import com.iskeru.computeadmin.monitor.api.MonitorDtos;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorAppView;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorConsumerView;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorMachineView;
+import com.iskeru.computeadmin.monitor.api.MonitorDtos.ConsumerServiceView;
+import com.iskeru.computeadmin.monitor.model.Bucket;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
 import com.iskeru.computeadmin.monitor.model.ConsumerSource;
+import com.iskeru.computeadmin.monitor.model.Dedication;
 import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
+import com.iskeru.computeadmin.monitor.service.MonitorService.DockerConsumerData;
+import com.iskeru.computeadmin.monitor.service.MonitorService.DockerServiceData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
 import com.iskeru.computeadmin.monitor.service.MonitorService.OpsAction;
@@ -143,6 +148,71 @@ class MonitorRollupTest {
         assertThat(MonitorDtos.frameworkOf("http app monitor")).isEqualTo("http");
         assertThat(MonitorDtos.frameworkOf("generic app monitor")).isEqualTo("generic");
         assertThat(MonitorDtos.frameworkOf(null)).isEqualTo("generic");
+    }
+
+    @Test
+    void of_AssemblesDockerConsumers_WithClassification_AndDedupsNativeByName() {
+        Machine machine = machine("m1");
+
+        // A native springboot monitor pre-fills "orders"; a docker compose monitor also
+        // classifies a project "orders" (+ its dedicated postgres), a standalone shared
+        // redis, and the DOCKER bucket. The name collision on "orders" must resolve to one.
+        Recipe nativeRecipe = recipe("springboot monitor", RecipeType.MONITOR);
+        MonitorRecipe nativeMonitor = new MonitorRecipe(nativeRecipe,
+                List.of(appProbe(nativeRecipe, "health")),
+                List.of(new AppPort("orders", 8080, "process")));
+
+        Recipe dockerRecipe = recipe("orders", RecipeType.MONITOR);
+        List<DockerConsumerData> consumers = List.of(
+                new DockerConsumerData("orders", ConsumerRole.APP, null, null, List.of(), null,
+                        List.of(new DockerServiceData("orders-web-1", "orders/web:latest", ConsumerRole.APP))),
+                new DockerConsumerData("orders-db-1", ConsumerRole.DATABASE, Dedication.DEDICATED, "orders",
+                        List.of(), null,
+                        List.of(new DockerServiceData("orders-db-1", "postgres:16", ConsumerRole.DATABASE))),
+                new DockerConsumerData("cache", ConsumerRole.DATABASE, Dedication.SHARED, null,
+                        List.of(), null,
+                        List.of(new DockerServiceData("cache", "redis:7", ConsumerRole.DATABASE))),
+                new DockerConsumerData("docker", ConsumerRole.OTHER, null, null, List.of(),
+                        Bucket.DOCKER, List.of()));
+        MonitorRecipe dockerMonitor = new MonitorRecipe(dockerRecipe,
+                List.of(hostProbe(dockerRecipe, "docker stats")), List.of(), consumers);
+
+        MachineMonitors monitors = new MachineMonitors(machine,
+                List.of(nativeMonitor, dockerMonitor), List.of());
+
+        MonitorMachineView view = MonitorMachineView.of(monitors);
+
+        // "orders" appears once — the docker consumer wins the dedup, source=DOCKER.
+        assertThat(view.consumers()).extracting(MonitorConsumerView::name)
+                .containsExactly("orders", "orders-db-1", "cache", "docker");
+        MonitorConsumerView orders = consumer(view, "orders");
+        assertThat(orders.role()).isEqualTo(ConsumerRole.APP);
+        assertThat(orders.source()).isEqualTo(ConsumerSource.DOCKER);
+        assertThat(orders.services()).extracting(ConsumerServiceView::name).containsExactly("orders-web-1");
+        assertThat(orders.services()).allSatisfy(s ->
+                assertThat(s.source()).isEqualTo(ConsumerSource.DOCKER));
+
+        MonitorConsumerView db = consumer(view, "orders-db-1");
+        assertThat(db.role()).isEqualTo(ConsumerRole.DATABASE);
+        assertThat(db.dedication()).isEqualTo(Dedication.DEDICATED);
+        assertThat(db.owner()).isEqualTo("orders");
+
+        MonitorConsumerView cache = consumer(view, "cache");
+        assertThat(cache.dedication()).isEqualTo(Dedication.SHARED);
+        assertThat(cache.owner()).isNull();
+
+        MonitorConsumerView bucket = consumer(view, "docker");
+        assertThat(bucket.bucket()).isEqualTo(Bucket.DOCKER);
+        assertThat(bucket.services()).isEmpty();
+
+        // The axes are client-filled — server assembly leaves all three null.
+        assertThat(orders.ram()).isNull();
+        assertThat(orders.cpu()).isNull();
+        assertThat(orders.disk()).isNull();
+    }
+
+    private static MonitorConsumerView consumer(MonitorMachineView view, String name) {
+        return view.consumers().stream().filter(c -> c.name().equals(name)).findFirst().orElseThrow();
     }
 
     // --- in-memory fixture builders ----------------------------------------
