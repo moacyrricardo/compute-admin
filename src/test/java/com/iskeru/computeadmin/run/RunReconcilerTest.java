@@ -20,6 +20,8 @@ import com.iskeru.computeadmin.recipe.service.ActionService.AddActionInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.ArgTokenInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.ParamDefInput;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
+import com.iskeru.computeadmin.ssh.StubSshExecutor;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
@@ -59,8 +61,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({RunReconciler.class, MachineService.class, ActionService.class,
-        RecipeService.class, ApprovalService.class, ParamBinder.class,
-        RunReconcilerTest.TestBeans.class})
+        RecipeService.class, ApprovalService.class, ScriptPinService.class,
+        StubSshExecutor.class, ParamBinder.class, RunReconcilerTest.TestBeans.class})
 class RunReconcilerTest {
 
     static class TestBeans {

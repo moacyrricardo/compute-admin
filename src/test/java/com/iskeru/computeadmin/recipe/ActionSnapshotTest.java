@@ -72,6 +72,21 @@ class ActionSnapshotTest {
                 .isNotEqualTo(ActionSnapshot.hash(restartAction(false)));
     }
 
+    @Test
+    void hash_IsIndependentOfApprovedScriptHash() {
+        // The content-pinning script digest (spec-015) is a sibling column, deliberately
+        // NOT folded into the structural snapshot hash: the two gates stay independent, so
+        // setting/changing approvedScriptHash must never move ActionSnapshot.hash.
+        Action action = restartAction(true);
+        String base = ActionSnapshot.hash(action);
+
+        action.setApprovedScriptHash("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assertThat(ActionSnapshot.hash(action)).isEqualTo(base);
+
+        action.setApprovedScriptHash("0000000000000000000000000000000000000000000000000000000000000000");
+        assertThat(ActionSnapshot.hash(action)).isEqualTo(base);
+    }
+
     // --- fixtures -----------------------------------------------------------
 
     private Action restartAction(boolean sudo) {

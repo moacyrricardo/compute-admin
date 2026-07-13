@@ -23,15 +23,24 @@ import com.iskeru.computeadmin.recipe.service.ApprovalService;
 import com.iskeru.computeadmin.recipe.service.IllegalApprovalTransitionException;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
+import com.iskeru.computeadmin.recipe.service.ScriptUnreadableException;
+import com.iskeru.computeadmin.ssh.ExecResult;
+import com.iskeru.computeadmin.ssh.OutputSink;
+import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshTarget;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,8 +56,43 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@Import({ApprovalService.class, ActionService.class, RecipeService.class, MachineService.class})
+@Import({ApprovalService.class, ActionService.class, RecipeService.class, MachineService.class,
+        ScriptPinService.class, ApprovalServiceTest.FakeSshConfig.class})
 class ApprovalServiceTest {
+
+    /** A valid 64-char hex digest a {@code sha256sum} probe reports by default. */
+    private static final String SCRIPT_HASH =
+            "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1230000";
+
+    @TestConfiguration
+    static class FakeSshConfig {
+        @Bean
+        FakeSsh fakeSshExecutor() {
+            return new FakeSsh();
+        }
+    }
+
+    /**
+     * Records every argv handed to {@code exec} (so a test can assert the {@code
+     * sha256sum} probe received the path as a single argument) and returns a
+     * configurable {@link ExecResult} (so a test can simulate an unreadable script).
+     * spec-015.
+     */
+    static final class FakeSsh implements SshExecutor {
+        final List<List<String>> execArgv = new CopyOnWriteArrayList<>();
+        volatile ExecResult response = new ExecResult(0, SCRIPT_HASH + "  /path\n", "");
+
+        @Override
+        public ExecResult exec(SshTarget target, List<String> argv, boolean sudo) {
+            execArgv.add(List.copyOf(argv));
+            return response;
+        }
+
+        @Override
+        public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink) {
+            sink.onComplete(0);
+        }
+    }
 
     @Autowired
     private ApprovalService approvalService;
@@ -65,6 +109,9 @@ class ApprovalServiceTest {
     @Autowired
     private AppUserRepository users;
 
+    @Autowired
+    private FakeSsh ssh;
+
     private AppUser alice;
     private AppUser bob;
 
@@ -72,6 +119,8 @@ class ApprovalServiceTest {
     void seedUsers() {
         alice = saveUser("alice@example.com");
         bob = saveUser("bob@example.com");
+        ssh.execArgv.clear();
+        ssh.response = new ExecResult(0, SCRIPT_HASH + "  /path\n", "");
     }
 
     @Test
@@ -172,6 +221,71 @@ class ApprovalServiceTest {
 
         assertThatThrownBy(() -> asUser(bob, () -> approvalService.approve(action.getId())))
                 .isInstanceOf(ActionNotFoundException.class);
+    }
+
+    // --- content-pinning of CUSTOM actions (spec-015) -----------------------
+
+    @Test
+    void approve_CustomAction_PinsScriptHash() {
+        Action action = asUser(alice, () -> seedCustomAction("/opt/app/run.sh"));
+        asUser(alice, () -> approvalService.submitForApproval(action.getId()));
+
+        Action approved = asUser(alice, () -> approvalService.approve(action.getId()));
+
+        assertThat(approved.getApprovalState()).isEqualTo(ApprovalState.APPROVED);
+        assertThat(approved.getApprovedScriptHash()).isEqualTo(SCRIPT_HASH);
+        assertThat(ssh.execArgv).containsExactly(List.of("sha256sum", "/opt/app/run.sh"));
+    }
+
+    @Test
+    void approve_NonCustomAction_LeavesScriptHashNull() {
+        Action action = asUser(alice, this::seedAction); // an NGINX action
+        asUser(alice, () -> approvalService.submitForApproval(action.getId()));
+
+        Action approved = asUser(alice, () -> approvalService.approve(action.getId()));
+
+        assertThat(approved.getApprovedScriptHash()).isNull();
+        // A non-CUSTOM action is never probed.
+        assertThat(ssh.execArgv).isEmpty();
+    }
+
+    @Test
+    void approve_ScriptUnreadable_Refuses() {
+        Action action = asUser(alice, () -> seedCustomAction("/opt/app/run.sh"));
+        asUser(alice, () -> approvalService.submitForApproval(action.getId()));
+        // sha256sum exits non-zero: the script is missing / unreadable / sha256sum absent.
+        ssh.response = new ExecResult(1, "", "sha256sum: /opt/app/run.sh: No such file or directory");
+
+        assertThatThrownBy(() -> asUser(alice, () -> approvalService.approve(action.getId())))
+                .isInstanceOf(ScriptUnreadableException.class);
+
+        // Refused without mutating approval state — the action is still PENDING_APPROVAL
+        // and unpinned (the probe runs before any state change).
+        Action after = asUser(alice, () -> actionService.requireAction(action.getId()));
+        assertThat(after.getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
+        assertThat(after.getApprovedScriptHash()).isNull();
+    }
+
+    @Test
+    void approve_PathWithSpaces_ProbesSingleArgument() {
+        Action action = asUser(alice, () -> seedCustomAction("/path with space/run.sh"));
+        asUser(alice, () -> approvalService.submitForApproval(action.getId()));
+
+        asUser(alice, () -> approvalService.approve(action.getId()));
+
+        // The path is one discrete argv element; POSIX quoting is the SSH adapter's job.
+        assertThat(ssh.execArgv).containsExactly(List.of("sha256sum", "/path with space/run.sh"));
+    }
+
+    /** Registers a machine and a CUSTOM recipe/action wrapping {@code scriptPath}. */
+    private Action seedCustomAction(String scriptPath) {
+        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Recipe recipe = recipeService.create(new CreateRecipeInput(
+                machine.getId(), "custom", "custom commands", RecipeType.CUSTOM));
+        return actionService.addAction(new AddActionInput(
+                recipe.getId(), "run script", "runs the wrapped script", false,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, scriptPath)),
+                List.of()));
     }
 
     /** Registers a machine, a recipe, and a draft action for the current user. */
