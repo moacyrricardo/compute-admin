@@ -70,6 +70,9 @@ class MonitorWebTest {
         // The fleet per-app rollup (spec-029) is always present; with no discovery
         // pre-fill (appPortList set only by discovery) this machine has no app cards yet.
         assertThat(machine.apps()).isEmpty();
+        // The spec-032 consumer contract ships alongside it on the wire (additive,
+        // non-breaking); with no pre-filled apps the consumer list is empty too.
+        assertThat(machine.consumers()).isEmpty();
     }
 
     @Test
