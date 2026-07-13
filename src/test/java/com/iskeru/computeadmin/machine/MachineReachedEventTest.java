@@ -183,6 +183,7 @@ class MachineReachedEventTest {
         MachineDtos.MachineView aMachine = rest.postForObject(
                 "/api/machines",
                 new HttpEntity<>(new MachineDtos.RegisterMachineRequest(
+                        "owned-" + UUID.randomUUID(), 
                         "owned-" + UUID.randomUUID(), 22, "root"), bearer(a.token())),
                 MachineDtos.MachineView.class);
         rememberMachine(aMachine.id());
@@ -200,6 +201,7 @@ class MachineReachedEventTest {
         MachineDtos.MachineView created = rest.postForObject(
                 "/api/machines",
                 new HttpEntity<>(new MachineDtos.RegisterMachineRequest(
+                        "refresh-" + UUID.randomUUID(), 
                         "refresh-" + UUID.randomUUID(), 22, "root"), bearer(owner.token())),
                 MachineDtos.MachineView.class);
         rememberMachine(created.id());
@@ -233,6 +235,7 @@ class MachineReachedEventTest {
                     AppUser managed = users.findById(owner.getId()).orElseThrow();
                     Machine machine = new Machine();
                     machine.setOwner(managed);
+                    machine.setName(host);
                     machine.setHost(host);
                     machine.setPort(22);
                     machine.setLoginUser("root");

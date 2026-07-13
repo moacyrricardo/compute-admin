@@ -176,7 +176,7 @@ class RunReconcilerTest {
     }
 
     private Action seedApprovedAction() {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "nginx", "nginx service ops", RecipeType.NGINX));
         Action action = actionService.addAction(new AddActionInput(

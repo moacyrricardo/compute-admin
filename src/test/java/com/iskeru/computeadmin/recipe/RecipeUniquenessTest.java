@@ -60,7 +60,7 @@ class RecipeUniquenessTest {
     @Test
     void duplicateMachineTypeName_isRejectedBySchema() {
         asUser(alice, () -> {
-            Machine machine = machineService.register(new RegisterMachineInput("host", 22, "deploy"));
+            Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
             recipeService.create(new CreateRecipeInput(machine.getId(), "docker", null, RecipeType.DOCKER));
             recipes.flush();
 

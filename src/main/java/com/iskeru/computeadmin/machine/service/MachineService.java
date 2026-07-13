@@ -34,10 +34,11 @@ import java.util.Set;
 public class MachineService {
 
     /**
-     * Service-input for {@link #register}. {@code port} is already resolved to a
+     * Service-input for {@link #register}. {@code name} is the user-provided,
+     * per-owner-unique label (spec-028). {@code port} is already resolved to a
      * concrete value by the caller (the RS defaults an omitted port to 22).
      */
-    public record RegisterMachineInput(String host, int port, String loginUser) {
+    public record RegisterMachineInput(String name, String host, int port, String loginUser) {
     }
 
     /**
@@ -66,6 +67,10 @@ public class MachineService {
     /** Registers a machine owned by the current user. */
     @Transactional
     public Machine register(RegisterMachineInput input) {
+        String name = input.name();
+        if (name == null || name.isBlank()) {
+            throw new BadRequestException("name is required");
+        }
         String host = input.host();
         if (host == null || host.isBlank()) {
             throw new BadRequestException("host is required");
@@ -79,8 +84,14 @@ public class MachineService {
             throw new BadRequestException("loginUser is required");
         }
         AppUser owner = currentUser();
+        String normalizedName = name.trim();
         String normalizedHost = host.trim();
         String normalizedLoginUser = loginUser.trim();
+        // Pre-check the uq_machine_owner_name key so a duplicate name returns a clean
+        // 409 rather than surfacing the constraint violation as 500 (spec-028).
+        if (machines.existsByOwnerIdAndName(owner.getId(), normalizedName)) {
+            throw new MachineNameTakenException(normalizedName);
+        }
         // Pre-check the uq_machine_owner_host_port_user key so a re-registration
         // returns a clean 409 rather than surfacing the constraint violation as 500.
         if (machines.existsByOwnerIdAndHostAndPortAndLoginUser(
@@ -89,6 +100,7 @@ public class MachineService {
         }
         Machine machine = new Machine();
         machine.setOwner(owner);
+        machine.setName(normalizedName);
         machine.setHost(normalizedHost);
         machine.setPort(port);
         machine.setLoginUser(normalizedLoginUser);

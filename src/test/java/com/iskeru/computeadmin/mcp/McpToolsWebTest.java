@@ -94,7 +94,7 @@ class McpToolsWebTest {
 
             // --- create over MCP: register machine → recipe → action ---
             JsonNode machine = callJson(client, "register_machine",
-                    Map.of("host", "mcp-host", "port", 22, "loginUser", "root"));
+                    Map.of("name", "mcp-box", "host", "mcp-host", "port", 22, "loginUser", "root"));
             String machineId = machine.get("id").asText();
             assertThat(machineId).isNotBlank();
 

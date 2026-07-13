@@ -79,7 +79,7 @@ class ConnectivityCheckJobTest {
         AppUser alice = saveUser("connectivity@example.com");
 
         Machine machine = CurrentUser.runWhere(AuthContext.ui(alice.getId(), alice.getEmail()),
-                () -> machineService.register(new RegisterMachineInput("connectivity-host", 22, "root")));
+                () -> machineService.register(new RegisterMachineInput("connectivity-host", "connectivity-host", 22, "root")));
         // Register is the only config edit → exactly one revision.
         assertThat(revisionsOf(machine.getId())).hasSize(1);
 
@@ -107,7 +107,7 @@ class ConnectivityCheckJobTest {
         CurrentUser.runWhere(AuthContext.ui(owner.getId(), owner.getEmail()), () -> {
             for (int i = 0; i < 4; i++) {
                 ids.add(machineService.register(
-                        new RegisterMachineInput(slowHost + "-" + i, 22, "root")).getId());
+                        new RegisterMachineInput(slowHost + "-" + i, slowHost + "-" + i, 22, "root")).getId());
             }
             return null;
         });

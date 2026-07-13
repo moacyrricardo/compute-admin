@@ -2,7 +2,7 @@ package com.iskeru.computeadmin.mcp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iskeru.computeadmin.machine.model.Machine;
+import com.iskeru.computeadmin.machine.api.MachineDtos.McpMachineView;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -24,7 +24,11 @@ import java.util.Map;
  * execution; see {@code config/McpServletConfig}). The earlier spec-002 note that
  * {@code CurrentUser} was unbound inside a tool no longer applies.
  *
- * <p>spec-002; actor scoping enabled in spec-008.
+ * <p>Serializes the {@link McpMachineView} (id/name/status/tags only) — never the
+ * SSH coordinates, so no infra/topology leaks into the LLM context (spec-028,
+ * resolving ARCH S9).
+ *
+ * <p>spec-002; actor scoping enabled in spec-008; MCP view in spec-028.
  */
 @Component
 public class ListMachinesTool implements McpTool {
@@ -71,12 +75,12 @@ public class ListMachinesTool implements McpTool {
                 }
             }
         }
-        List<Map<String, Object>> summaries = machineService.list(tags).stream()
-                .map(ListMachinesTool::summarize)
+        List<McpMachineView> views = machineService.list(tags).stream()
+                .map(McpMachineView::of)
                 .toList();
         try {
             return McpSchema.CallToolResult.builder()
-                    .addTextContent(objectMapper.writeValueAsString(summaries))
+                    .addTextContent(objectMapper.writeValueAsString(views))
                     .build();
         } catch (JsonProcessingException e) {
             return McpSchema.CallToolResult.builder()
@@ -84,14 +88,5 @@ public class ListMachinesTool implements McpTool {
                     .isError(true)
                     .build();
         }
-    }
-
-    private static Map<String, Object> summarize(Machine machine) {
-        return Map.of(
-                "id", machine.getId(),
-                "host", machine.getHost(),
-                "port", machine.getPort(),
-                "loginUser", machine.getLoginUser(),
-                "status", machine.getStatus().name());
     }
 }

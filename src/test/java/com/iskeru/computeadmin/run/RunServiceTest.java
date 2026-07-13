@@ -687,7 +687,7 @@ class RunServiceTest {
 
     /** Registers a machine + recipe + action; approves it when {@code approve}. */
     private Seed seedAction(boolean approve) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "nginx", "nginx service ops", RecipeType.NGINX));
         Action action = actionService.addAction(new AddActionInput(
@@ -710,7 +710,7 @@ class RunServiceTest {
      * is content-pinned via the recording SSH fake's {@code sha256sum} response.
      */
     private Seed seedCustomAction(String scriptPath) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "custom", "custom commands", RecipeType.CUSTOM));
         Action action = actionService.addAction(new AddActionInput(
@@ -728,7 +728,7 @@ class RunServiceTest {
      * {@code APP_PORT_LIST} composite param (spec-022). Approved when {@code approve}.
      */
     private Seed seedFanOutAction(boolean approve) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "monitor", "app monitors", RecipeType.MONITOR));
         Action action = actionService.addAction(new AddActionInput(
@@ -750,7 +750,7 @@ class RunServiceTest {
      * Approved when {@code approve}.
      */
     private Seed seedVitalsAction(boolean approve) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "monitor machine", "host vitals", RecipeType.MONITOR));
         Action action = actionService.addAction(new AddActionInput(

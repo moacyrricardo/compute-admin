@@ -148,7 +148,7 @@ class RunWebTest {
 
     private String registerMachine(AuthDtos.Session s) {
         return post("/api/machines",
-                new MachineDtos.RegisterMachineRequest("run-host", 22, "root"),
+                new MachineDtos.RegisterMachineRequest("run-host", "run-host", 22, "root"),
                 s.token(), MachineDtos.MachineView.class).id();
     }
 

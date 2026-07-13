@@ -279,7 +279,7 @@ class ApprovalServiceTest {
 
     /** Registers a machine and a CUSTOM recipe/action wrapping {@code scriptPath}. */
     private Action seedCustomAction(String scriptPath) {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "custom", "custom commands", RecipeType.CUSTOM));
         return actionService.addAction(new AddActionInput(
@@ -290,7 +290,7 @@ class ApprovalServiceTest {
 
     /** Registers a machine, a recipe, and a draft action for the current user. */
     private Action seedAction() {
-        Machine machine = machineService.register(new RegisterMachineInput("host", 22, "root"));
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
         Recipe recipe = recipeService.create(new CreateRecipeInput(
                 machine.getId(), "nginx", "nginx service ops", RecipeType.NGINX));
         return actionService.addAction(new AddActionInput(
