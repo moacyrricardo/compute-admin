@@ -3,6 +3,10 @@ package com.iskeru.computeadmin.monitor.api;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.model.MachineStatus;
 import com.iskeru.computeadmin.machine.model.Tag;
+import com.iskeru.computeadmin.monitor.model.Bucket;
+import com.iskeru.computeadmin.monitor.model.ConsumerRole;
+import com.iskeru.computeadmin.monitor.model.ConsumerSource;
+import com.iskeru.computeadmin.monitor.model.Dedication;
 import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
@@ -68,13 +72,21 @@ public final class MonitorDtos {
      * is the spec-029 fleet rollup: one {@link MonitorAppView} per discovery-pre-filled
      * {@code (app-name, port)} item, keyed by {@code (machine, app-name)}, unifying an
      * app's fan-out {@code checks} and its matched {@code ops} onto one card.
+     *
+     * <p>{@code consumers} is the spec-032 <strong>consumer contract</strong>: the same
+     * pre-filled apps re-expressed as {@link MonitorConsumerView}s — the shared unit the
+     * redesigned fleet UI (spec-034) and docker discovery (spec-033) both build against.
+     * It ships <em>alongside</em> {@code apps} (additive, non-breaking): the UI keeps
+     * rendering {@code apps} until spec-034 switches over, so this read has no visible
+     * change yet.
      */
     public record MonitorMachineView(String machineId, String host, int port, String loginUser,
                                      MachineStatus status, List<String> tags,
                                      List<MonitorActionView> hostActions,
                                      List<MonitorActionView> appActions,
                                      List<AppOpView> appOps,
-                                     List<MonitorAppView> apps) {
+                                     List<MonitorAppView> apps,
+                                     List<MonitorConsumerView> consumers) {
         public static MonitorMachineView of(MachineMonitors m) {
             Machine machine = m.machine();
             TreeSet<String> tagNames = new TreeSet<>();
@@ -90,6 +102,7 @@ public final class MonitorDtos {
             List<MonitorActionView> host = new ArrayList<>();
             List<MonitorActionView> app = new ArrayList<>();
             List<MonitorAppView> apps = new ArrayList<>();
+            List<MonitorConsumerView> consumers = new ArrayList<>();
             for (MonitorRecipe r : m.recipes()) {
                 List<MonitorActionView> recipeChecks = new ArrayList<>();
                 for (Action action : r.actions()) {
@@ -111,11 +124,17 @@ public final class MonitorDtos {
                     for (AppPort item : r.appPortList()) {
                         apps.add(MonitorAppView.of(machine.getId(), item, framework,
                                 recipeChecks, opsForApp(appOps, item.appName())));
+                        // The same pre-filled app as a spec-032 consumer. A native
+                        // app-monitor recipe (spec-025) yields an APP consumer whose source
+                        // is read from the runtime label the discoverer attached; datastore
+                        // role, dedication, owner/usedBy and buckets arrive with spec-033.
+                        consumers.add(MonitorConsumerView.ofNativeApp(item));
                     }
                 }
             }
             return new MonitorMachineView(machine.getId(), machine.getHost(), machine.getPort(),
-                    machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames), host, app, appOps, apps);
+                    machine.getLoginUser(), machine.getStatus(), List.copyOf(tagNames),
+                    host, app, appOps, apps, consumers);
         }
     }
 
@@ -198,6 +217,67 @@ public final class MonitorDtos {
             return new MonitorAppView(machineId, app.appName(), framework, app.runtime(), app.port(),
                     null, null, null, null, List.copyOf(checks), List.copyOf(ops));
         }
+    }
+
+    /**
+     * The <strong>consumer</strong> — the unit the Monitor aggregates and the redesigned
+     * fleet UI renders (spec-032 §3). A native process (spec-025) and, from spec-033, a
+     * docker compose project both map onto it. Each consumer carries three host-relative
+     * axes — {@code ram}, {@code cpu}, {@code disk}, each {@code 0..100} = share of the
+     * machine's total (spec-032 §1) — where {@code null} means "no honest number for this
+     * axis" (rendered {@code —}): the normal state for disk on a native process, and for
+     * any axis whose monitor isn't approved or hasn't been polled. Percentages never
+     * silently become 0 — absent is {@code null}, present is a number.
+     *
+     * <p>The classification vocabulary the UI slices by: {@code role} (app / database /
+     * other), {@code source} (native / docker), and — for a datastore — {@code
+     * dedication} plus {@code owner} (the single owning app, {@code DEDICATED}) or {@code
+     * usedBy} (the sharing apps, {@code SHARED}); see {@link Dedication}. {@code bucket}
+     * is set only on the synthetic remainder consumers ({@link Bucket}), whose {@code
+     * services} are empty. {@code services} lists a docker project's containers as
+     * {@link ConsumerServiceView}s (spec-033); a native app has none.
+     *
+     * <p>Server-side assembly leaves {@code ram}/{@code cpu}/{@code disk} {@code null} —
+     * there is no server sampler (spec-029 gap); the client fills them from the
+     * browser-driven poll. This read only assembles identity + classification.
+     *
+     * <p>spec-032.
+     */
+    public record MonitorConsumerView(String id, String name, ConsumerRole role, ConsumerSource source,
+                                      Integer ram, Integer cpu, Integer disk, Dedication dedication,
+                                      String owner, List<String> usedBy, Bucket bucket,
+                                      List<ConsumerServiceView> services) {
+        /**
+         * The native-app consumer (spec-032/025): an {@link ConsumerRole#APP} whose
+         * {@code source} is read from the discoverer's {@code runtime} label ({@code
+         * docker} ⇒ {@link ConsumerSource#DOCKER}, else {@link ConsumerSource#NATIVE}).
+         * Datastore fields (dedication/owner/usedBy) and buckets are null here — native
+         * discovery attaches no such labels yet (spec-033); the disk axis defaults to
+         * {@code null} (no attributable disk for a generic native process, spec-032 §1);
+         * ram/cpu stay {@code null} for the client to fill; a native app has no services.
+         */
+        public static MonitorConsumerView ofNativeApp(AppPort app) {
+            return new MonitorConsumerView(app.appName(), app.appName(), ConsumerRole.APP,
+                    sourceOf(app.runtime()), null, null, null, null, null, null, null, List.of());
+        }
+
+        /** {@code docker} runtime ⇒ {@link ConsumerSource#DOCKER}; anything else ⇒ NATIVE. */
+        private static ConsumerSource sourceOf(String runtime) {
+            return "docker".equalsIgnoreCase(runtime) ? ConsumerSource.DOCKER : ConsumerSource.NATIVE;
+        }
+    }
+
+    /**
+     * One service inside a consumer (spec-032 §3): a docker compose project's container,
+     * with its {@code image} and its own {@code role}/{@code source} and the three
+     * host-relative axes ({@code ram}/{@code cpu}/{@code disk}, {@code null} = no honest
+     * number). A native app consumer has no services; the container-level values are
+     * produced by spec-033.
+     *
+     * <p>spec-032.
+     */
+    public record ConsumerServiceView(String name, String image, ConsumerRole role, ConsumerSource source,
+                                      Integer ram, Integer cpu, Integer disk) {
     }
 
     /**

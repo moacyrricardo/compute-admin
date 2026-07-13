@@ -4,7 +4,10 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.model.MachineStatus;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorAppView;
+import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorConsumerView;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorMachineView;
+import com.iskeru.computeadmin.monitor.model.ConsumerRole;
+import com.iskeru.computeadmin.monitor.model.ConsumerSource;
 import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
@@ -77,6 +80,45 @@ class MonitorRollupTest {
     }
 
     @Test
+    void of_AssemblesConsumers_FromPrefilledApps_WithSourceFromRuntime() {
+        Machine machine = machine("m1");
+        Recipe probeRecipe = recipe("springboot monitor", RecipeType.MONITOR);
+        Action health = appProbe(probeRecipe, "health");
+
+        MachineMonitors monitors = new MachineMonitors(machine,
+                List.of(new MonitorRecipe(probeRecipe, List.of(health),
+                        List.of(new AppPort("orders", 8080, "systemd"),
+                                new AppPort("billing", 9090, "docker")))),
+                List.of());
+
+        MonitorMachineView view = MonitorMachineView.of(monitors);
+
+        // One consumer per pre-filled app, all APPs (spec-032 §3), keyed by app-name.
+        assertThat(view.consumers()).extracting(MonitorConsumerView::name)
+                .containsExactly("orders", "billing");
+        assertThat(view.consumers()).allSatisfy(c ->
+                assertThat(c.role()).isEqualTo(ConsumerRole.APP));
+
+        // Source is read from the discoverer's runtime label: a systemd/process app is
+        // NATIVE, a container-hosted one is DOCKER (spec-032 §3).
+        MonitorConsumerView orders = view.consumers().get(0);
+        assertThat(orders.source()).isEqualTo(ConsumerSource.NATIVE);
+        assertThat(view.consumers().get(1).source()).isEqualTo(ConsumerSource.DOCKER);
+
+        // The three axes are null at assembly — no server sampler; the client fills them.
+        // Disk defaults to null for a native app (no attributable disk, spec-032 §1).
+        assertThat(orders.ram()).isNull();
+        assertThat(orders.cpu()).isNull();
+        assertThat(orders.disk()).isNull();
+        // Datastore/bucket labels are unset for native apps in spec-032 (spec-033 fills them).
+        assertThat(orders.dedication()).isNull();
+        assertThat(orders.owner()).isNull();
+        assertThat(orders.usedBy()).isNull();
+        assertThat(orders.bucket()).isNull();
+        assertThat(orders.services()).isEmpty();
+    }
+
+    @Test
     void of_HostOnlyMachine_HasNoApps() {
         Machine machine = machine("m2");
         Recipe hostRecipe = recipe("monitor machine", RecipeType.MONITOR);
@@ -89,6 +131,7 @@ class MonitorRollupTest {
         MonitorMachineView view = MonitorMachineView.of(monitors);
 
         assertThat(view.apps()).isEmpty();
+        assertThat(view.consumers()).isEmpty();
         assertThat(view.hostActions()).extracting(v -> v.id()).containsExactly(cpu.getId());
         assertThat(view.appActions()).isEmpty();
     }
