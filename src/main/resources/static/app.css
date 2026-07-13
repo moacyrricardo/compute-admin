@@ -632,3 +632,76 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
   box-shadow: var(--elevation);
 }
 .drawer h3 { color: var(--text-dim); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* --------------------------------------------- consumer fleet (spec-034) --- */
+/* The redesign renders every consumer on the same three host-relative axes.
+   Reuses the .meter / .host-panel / .app-card / .drawer components verbatim;
+   the additions below are only what those components lacked. */
+
+/* Aggregate "used %" adopts the meterBand thresholds (amber >=75, red >=90). */
+.meter-val--amber { color: var(--s-warn); }
+.meter-val--red   { color: var(--s-bad); }
+
+/* A segmented .meter-track: one coloured slice per consumer instead of one fill,
+   the same colour held across the RAM/CPU/disk bars. */
+.axis-track { display: flex; }
+.axis-seg { height: 100%; cursor: pointer; }
+.axis-seg:hover { filter: brightness(1.12) saturate(1.1); }
+.axis-seg--free {
+  cursor: default;
+  background: repeating-linear-gradient(45deg,
+    var(--surface-2), var(--surface-2) 5px, transparent 5px, transparent 10px);
+}
+
+.fw-badge--datastore { color: var(--accent); border-color: var(--accent); }
+
+/* The mandatory legend — colour is NEVER the sole signal (WCAG AA, house rule). */
+.legend { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.legend-chip:hover { border-color: var(--accent); }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.legend-chip .lg-pct { font-family: var(--font-mono); color: var(--text-faint); }
+
+/* Per-consumer card: three axis meters side by side (stack when cramped). */
+.d-axes { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.d-axes .meter { flex: 1 1 30%; min-width: 72px; }
+
+/* Databases lens: a dedicated split band and shared-datastore rows. */
+.band-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.split-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  justify-content: space-between;
+  margin-top: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.drow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px dashed var(--border);
+}
+.drow:last-child { border-bottom: none; }
+.drow--click { cursor: pointer; }
+.drow--click:hover { color: var(--accent); }
+.drow .daxes { margin-left: auto; display: flex; gap: var(--sp-4); }
+.drow .dax { text-align: right; }
+.drow .dax .k { font-size: var(--fs-xs); color: var(--text-faint); }
+.drow .dax .v { font-size: var(--fs-sm); font-weight: var(--fw-semibold); font-family: var(--font-mono); }
+.drow .dax .v.na { color: var(--text-faint); font-weight: var(--fw-regular); }
