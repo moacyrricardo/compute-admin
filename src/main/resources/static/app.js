@@ -413,7 +413,8 @@
           listWrap.appendChild(h("ul", { class: "list" }, visible.map(function (m) {
             return h("li", null, h("div", { class: "row-between" },
               h("div", { class: "grow" },
-                link("#/machines/" + m.id, m.loginUser + "@" + m.host + ":" + m.port, "mono"),
+                link("#/machines/" + m.id, m.name),
+                h("div", { class: "small dim mono mt-2", text: m.loginUser + "@" + m.host + ":" + m.port }),
                 h("div", { class: "row mt-2" }, (m.tags || []).map(function (t) {
                   return h("span", { class: "tag", text: t });
                 }))),
@@ -451,6 +452,7 @@
   function screenRegisterMachine() {
     mountAsync(function () {
       return api("GET", "/ssh/public-key").then(function (key) {
+        var name = h("input", { placeholder: "web-prod-1" });
         var host = h("input", { class: "mono", placeholder: "10.0.0.5 or db.internal" });
         var port = h("input", { type: "number", value: "22", min: "1", max: "65535" });
         var user = h("input", { class: "mono", placeholder: "admin" });
@@ -459,12 +461,13 @@
 
         function submit() {
           status.textContent = "";
-          if (!host.value.trim() || !user.value.trim()) {
-            status.appendChild(h("div", { class: "field-error", text: "host and login user are required" }));
+          if (!name.value.trim() || !host.value.trim() || !user.value.trim()) {
+            status.appendChild(h("div", { class: "field-error", text: "name, host and login user are required" }));
             return;
           }
           mount(loading());
           api("POST", "/machines", {
+            name: name.value.trim(),
             host: host.value.trim(),
             port: parseInt(port.value, 10) || 22,
             loginUser: user.value.trim()
@@ -498,7 +501,8 @@
               h("button", { class: "btn btn--sm mt-2", onclick: function () { copy(snippet); } }, "Copy snippet"))),
           h("div", { class: "card" },
             h("h2", { text: "2 · Register & test connection" }),
-            h("div", { class: "field mt-3" }, h("label", { text: "Host" }), host),
+            h("div", { class: "field mt-3" }, h("label", { text: "Name" }), name),
+            h("div", { class: "field" }, h("label", { text: "Host" }), host),
             h("div", { class: "field" }, h("label", { text: "Port" }), port),
             h("div", { class: "field" }, h("label", { text: "Login user" }), user),
             h("button", { class: "btn btn--primary", onclick: submit }, "Register & test connection"),
@@ -568,8 +572,8 @@
 
         return h("div", null,
           crumbs(link("#/machines", "Machines"),
-            h("span", { class: "mono", text: machine.loginUser + "@" + machine.host })),
-          pageHead(machine.host, machine.loginUser + "@" + machine.host + ":" + machine.port,
+            h("span", { text: machine.name })),
+          pageHead(machine.name, machine.loginUser + "@" + machine.host + ":" + machine.port,
             [statusChip, testBtn, discoverBtn]),
           h("div", { class: "row" }, (machine.tags || []).map(function (t) {
             return h("span", { class: "tag", text: t });
