@@ -26,7 +26,7 @@
 ## Context
 
 During the 003/005/006 builds, spec-eval flagged three related runtime-robustness
-gaps (H1, H3, H6 in the [catalog backlog](./README.md)). They share one root cause:
+gaps (H1, H3, H6 in the [catalog backlog](./catalog.md)). They share one root cause:
 **holding a resource — memory, a DB transaction, or an un-pooled SSH client —
 across slow network I/O.** Each was deferred (none breaks the invariant), but
 together they're the reliability issues that bite once the app runs for a while or

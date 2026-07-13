@@ -1,6 +1,6 @@
 # 015 — Custom-script content-pinning
 
-> Resolves **H5** (specs/README.md deferred-hardening backlog) and hardens the
+> Resolves **H5** (specs/catalog.md deferred-hardening backlog) and hardens the
 > **S5** posture (ARCH.md security register). Security spec sitting beside the
 > S-register: it closes a TOCTOU hole in the approve-then-run invariant for
 > `CUSTOM` script actions.

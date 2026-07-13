@@ -85,7 +85,7 @@ the execution engine, auto-discovery, custom & blueprint recipes, the MCP
 tool surface, and the web UI shell (specs 001–012). Runtime hardening
 (spec 013) and cloud import (spec 009) are the tracked follow-ups. Architecture
 is specified in [ARCH.md](./ARCH.md); each feature lands as a numbered spec —
-see the [spec catalog](./specs/README.md) for status.
+see the [spec catalog](./specs/catalog.md) for status.
 
 ## Running
 
