@@ -1,5 +1,37 @@
 # 032 — Monitoring axes foundations (the consumer model)
 
+_Status: done · branch `moacyrricardo/spec-032-monitoring-axes-foundations` · Linear
+blocked (no ticket)._
+
+## Divergence from the spec
+
+Implemented faithfully, with these notes:
+
+- **H8 resolved by dropping**, not wiring. The spec offered "single server-side source
+  of truth *or* dropped". Since there is no server-side metric sampler (the `/api/monitor`
+  read only enumerates approved actions; the raw `free`/`/proc` stdout the axis math needs
+  is produced by client-driven runs, spec-029), the `memPctOfHost`/`parseHostMemTotalMb`
+  helpers could not become a *used* production source of truth without a redesign the spec
+  defers. They were dead (test-only), so they were dropped and their tests removed; the
+  client `clientMemPct` in `app.js` remains the single source of truth for the mem axis.
+  No cpu/disk server twins were added (the spec's explicit anti-pattern). The other H8
+  member the catalog names — `MonitorDtos.opsForApp` — is **out of scope** for 032 (this
+  spec scopes H8 to the mem-axis helpers) and was left untouched.
+- **The metric-kind classifier is client-side (`checkKind`), plus the existing
+  MONITOR+APP_PORT_LIST server classification.** The spec said "extend `metricKind(action)`
+  (client) and the server-side classification". `metricKind()` already classifies *host*
+  CPU; the app-level CPU probe is an *app check*, so the client extension landed in
+  `checkKind()` (the app-check classifier). No new server-side `MetricKind` enum was
+  added — it would have been dead (the server assembles identity only; per-axis values
+  are client-computed), the same anti-pattern H8 warns against. The server already
+  "recognises" the cpu probe as a MONITOR action carrying an `APP_PORT_LIST` param.
+- **Consumer axes and datastore/bucket labels are null at assembly.** Native discovery
+  attaches only the `runtime` label today, so `MonitorConsumerView` maps native apps to
+  `role = APP`, `source` from `runtime` (docker ⇒ DOCKER, else NATIVE), and leaves
+  ram/cpu/disk/dedication/owner/usedBy/bucket/services null/empty — exactly the contract
+  spec-033/034 fill in. `consumers` ships alongside the 029 `MonitorAppView`; the UI still
+  renders `apps`, so there is no visible change.
+
 ## Context
 
 Spec-029 gave the fleet Monitor a single resource axis — **mem-% of host**, per app
