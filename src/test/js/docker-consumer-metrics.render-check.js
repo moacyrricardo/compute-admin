@@ -13,7 +13,8 @@ src = src.replace(
   "  window.addEventListener(\"hashchange\", route);\n  route();\n})();",
   "  window.addEventListener(\"hashchange\", route);\n" +
   "  globalThis.__ca = { buildConsumers, applyDockerReading, consumerLegend, consumerCard," +
-  " parseDockerStats, parseDockerPs, parseDockerVolumes, dockerBytes, parseDfTotal, pctText };\n})();"
+  " datastoresOf, serviceRow, parseDockerStats, parseDockerPs, parseDockerVolumes," +
+  " dockerBytes, parseDfTotal, pctText };\n})();"
 );
 if (src.indexOf("globalThis.__ca") < 0) { console.error("FAIL: could not inject test hook"); process.exit(1); }
 
@@ -95,4 +96,50 @@ assert(dfTotal === 50*1024*1024*1024, "df total: " + dfTotal);
 const vols = ca.parseDockerVolumes("Local Volumes space usage:\n\nVOLUME NAME    LINKS   SIZE\nshop_pgdata    1       120MB\n");
 assert(vols && vols[0].name === "shop_pgdata" && vols[0].bytes === 120000000, "volumes: " + JSON.stringify(vols));
 
+// ---- spec-038: a compose project is ONE card whose services include its datastore ----
+// The dedicated split in the Databases lens derives from the project's role=DATABASE
+// service (owner = the project), preserving the per-datastore axis; the project card's
+// axes sum ALL its services (app + datastore).
+const project = { machineId:"m2", apps:[], consumers:[
+  { id:"lia-consulta", name:"lia-consulta", role:"APP", source:"DOCKER", ram:null, cpu:null, disk:null,
+    services:[ { name:"lia-consulta-api-1", image:"lia/api", role:"APP" },
+               { name:"lia-consulta-worker-1", image:"lia/worker", role:"APP" },
+               { name:"lia-consulta-postgres-1", image:"postgres:16", role:"DATABASE" } ] }
+]};
+const pmodels = ca.buildConsumers(project);
+assert(pmodels.length === 1, "a compose project must render as ONE card/consumer, got " + pmodels.length);
+const pc = pmodels[0];
+assert(pc.services.length === 3, "the project card keeps ALL services incl. its datastore, got " + pc.services.length);
+// The datastore service renders inside the project drawer tagged "database".
+const dsRow = ca.serviceRow(pc.services[2]).textContent;
+assert(/database/.test(dsRow), "datastore service row should be tagged 'database': " + dsRow);
+
+const pstats = ca.parseDockerStats([
+  JSON.stringify({ Name:"lia-consulta-api-1", CPUPerc:"100.00%", MemPerc:"5%", MemUsage:"1GiB / 4GiB" }),
+  JSON.stringify({ Name:"lia-consulta-worker-1", CPUPerc:"40.00%", MemPerc:"5%", MemUsage:"512MiB / 4GiB" }),
+  JSON.stringify({ Name:"lia-consulta-postgres-1", CPUPerc:"20.00%", MemPerc:"5%", MemUsage:"512MiB / 4GiB" })
+].join("\n"));
+ca.applyDockerReading(pc, pstats, null, null, { ramMb: 4000, cores: 4, diskBytes: 50*1024*1024*1024 });
+// Card RAM sums all three services: (1024+512+512)MB / 4000 = 51%.
+assert(pc.ram === 51, "project card RAM must sum ALL its services, got " + pc.ram);
+
+// Databases lens: the Dedicated band derives from the project's role=DATABASE service.
+const dbs = ca.datastoresOf(pmodels);
+assert(dbs.ded.length === 1, "dedicated band must derive one datastore from the project's DB service, got " + dbs.ded.length);
+assert(dbs.shared.length === 0, "an app project must NOT surface as a shared datastore consumer: " + JSON.stringify(dbs.shared.map(c=>c.name)));
+assert(dbs.ded[0].owner === "lia-consulta" && dbs.ded[0].name === "lia-consulta-postgres-1",
+  "dedicated datastore owner/name: " + JSON.stringify(dbs.ded[0]));
+// It carries its OWN per-service axis (512MiB / 4000 ≈ 13%), not the project's sum.
+assert(dbs.ded[0].ram === 13, "dedicated datastore per-service RAM axis, got " + dbs.ded[0].ram);
+
+// A standalone/shared datastore consumer still goes to the Shared band (unchanged).
+const shModels = ca.buildConsumers({ machineId:"m3", apps:[], consumers:[
+  { id:"cache", name:"cache", role:"DATABASE", source:"DOCKER", dedication:"SHARED", ram:null, cpu:null, disk:null,
+    services:[ { name:"cache", image:"redis:7", role:"DATABASE" } ] }
+]});
+const shDbs = ca.datastoresOf(shModels);
+assert(shDbs.shared.length === 1 && shDbs.ded.length === 0,
+  "a standalone DATABASE consumer must stay in the Shared band: " + JSON.stringify({ded:shDbs.ded.length,shared:shDbs.shared.length}));
+
 console.log("PASS: docker consumer axes render numeric (ram=51% cpu=50% disk=3%), UP, service axes + unit/df/volume parsers verified");
+console.log("PASS: spec-038 — compose project renders as ONE card (services incl. datastore, axes sum all); Databases lens Dedicated band derives from the project's DB service; standalone datastore stays Shared");
