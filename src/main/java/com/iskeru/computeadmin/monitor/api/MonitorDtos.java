@@ -182,11 +182,13 @@ public final class MonitorDtos {
      * <p>The live metrics are the client's to fill from the browser-driven poll (024,
      * no server sampler — see the spec's Known Gaps): {@code up} (rolled up from the
      * checks), {@code rssMb} (summed {@code VmRSS} from the process probe) and
-     * {@code hostMemTotalMb} (parsed from the host {@code free -m}, see
-     * {@link #parseHostMemTotalMb}). When both memory figures are known the headline
-     * {@code memPctOfHost = round(rssMb / hostMemTotalMb * 100)} (spec-029 §5) — the one
-     * cross-machine metric — is derived by {@link #memPctOfHost}. Server-side assembly
-     * leaves all four {@code null}; a client that has polled recomputes them.
+     * {@code hostMemTotalMb} (parsed from the host {@code free -m}). When both memory
+     * figures are known the headline {@code memPctOfHost = round(rssMb / hostMemTotalMb
+     * * 100)} (spec-029 §5) — the one cross-machine metric. Server-side assembly leaves
+     * all four {@code null}; a client that has polled recomputes them. The mem axis has
+     * a single source of truth — the client (spec-032 dropped the dead server-side
+     * {@code memPctOfHost}/{@code parseHostMemTotalMb} helpers that only tests called;
+     * catalog H8).
      */
     public record MonitorAppView(String machineId, String appName, String framework, String runtime,
                                  int port, Boolean up, Integer rssMb, Integer hostMemTotalMb,
@@ -196,19 +198,6 @@ public final class MonitorDtos {
             return new MonitorAppView(machineId, app.appName(), framework, app.runtime(), app.port(),
                     null, null, null, null, List.copyOf(checks), List.copyOf(ops));
         }
-    }
-
-    /**
-     * The headline cross-machine metric (spec-029 §5): an app's resident memory as a
-     * whole-percent of its host's total RAM, {@code round(rssMb / hostMemTotalMb * 100)}.
-     * {@code null} when either figure is missing (not yet polled) or the host total is
-     * non-positive (a divide-by-zero guard) — the client renders that as "no data".
-     */
-    public static Integer memPctOfHost(Integer rssMb, Integer hostMemTotalMb) {
-        if (rssMb == null || hostMemTotalMb == null || hostMemTotalMb <= 0) {
-            return null;
-        }
-        return (int) Math.round((double) rssMb / hostMemTotalMb * 100.0);
     }
 
     /**
@@ -230,31 +219,6 @@ public final class MonitorDtos {
         }
         return "generic";
     }
-
-    /**
-     * Parses the host's total memory in MB from {@code free -m} output (spec-023's
-     * {@code monitor machine} host-vitals probe) — the {@code Mem:} row's first figure.
-     * The denominator for {@link #memPctOfHost}. Tolerant: a null/blank/unparseable
-     * value (or a non-positive total) yields {@code null} so the rollup degrades to
-     * "no data" rather than throwing.
-     */
-    public static Integer parseHostMemTotalMb(String freeOutput) {
-        if (freeOutput == null || freeOutput.isBlank()) {
-            return null;
-        }
-        for (String line : freeOutput.split("\\r?\\n")) {
-            java.util.regex.Matcher m = MEM_TOTAL.matcher(line);
-            if (m.find()) {
-                int total = Integer.parseInt(m.group(1));
-                return total > 0 ? total : null;
-            }
-        }
-        return null;
-    }
-
-    /** {@code free -m}'s "Mem: <total> <used> ..." row; group 1 is the total in MB. */
-    private static final java.util.regex.Pattern MEM_TOTAL =
-            java.util.regex.Pattern.compile("^\\s*Mem:\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
      * One {@code MONITOR} action, enriched for grouping and inline running:
