@@ -78,6 +78,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private enum Family {
         SPRINGBOOT("springboot monitor", "Discovered Spring Boot app health via Actuator, plus process metrics."),
         FASTAPI("fastapi monitor", "Discovered FastAPI app liveness/metrics, plus process metrics."),
+        HTTP("http app monitor", "Discovered app liveness via HTTP (GET /, no actuator responded), plus process metrics."),
         GENERIC("generic app monitor", "Discovered app resource metrics from /proc (process probe only).");
 
         private final String recipeName;
@@ -144,6 +145,12 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             Runtime runtime = runtimeOf(ssh, target, listener.pid());
             String container = runtime == Runtime.DOCKER ? containerName(ssh, target, listener.pid()) : null;
             Family family = classify(listener.process(), cmdline);
+            // A java listener is only a springboot monitor if Actuator actually answers;
+            // otherwise its /actuator/* probes would all be dead. Fall back to an HTTP
+            // liveness monitor (GET / + process) — the actuator-less Spring Boot case.
+            if (family == Family.SPRINGBOOT && !respondsToActuator(ssh, target, listener.port())) {
+                family = Family.HTTP;
+            }
             String appName = appName(family, listener, cmdline, container);
             byFamily.computeIfAbsent(family, f -> new ArrayList<>())
                     .add(new AppPortItem(appName, listener.port(), runtime.label));
@@ -203,6 +210,14 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
         }
         return null;
+    }
+
+    /** Whether the app answers Spring Boot Actuator on {@code /actuator/health} (HTTP 2xx). */
+    private boolean respondsToActuator(SshExecutor ssh, SshTarget target, int port) {
+        // Same fixed read-only GET shape as the metrics probe; -f makes a 404/redirect
+        // fail so an actuator-less app yields no lines.
+        return !Probes.lines(ssh, target,
+                List.of("curl", "-sf", "-m", "2", "http://127.0.0.1:" + port + "/actuator/health")).isEmpty();
     }
 
     /** Whether the FastAPI app exposes a Prometheus {@code /metrics} endpoint (HTTP 2xx). */
@@ -299,7 +314,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             return sanitize(container, listener.port());
         }
         String derived = switch (family) {
-            case SPRINGBOOT -> springBootName(cmdline);
+            case SPRINGBOOT, HTTP -> springBootName(cmdline);
             case FASTAPI -> fastApiName(cmdline);
             case GENERIC -> listener.process();
         };
@@ -349,6 +364,9 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                     endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"),
                     processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."));
             case FASTAPI -> fastApiActions(prometheus);
+            case HTTP -> List.of(
+                    endpointProbe("liveness", "HTTP liveness (GET / — no Actuator present).", "/"),
+                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."));
             case GENERIC -> List.of(
                     processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe only)."));
         };
