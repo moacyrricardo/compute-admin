@@ -1,0 +1,511 @@
+<title>compute-admin · fleet resource mock (in-place style)</title>
+<style>
+/* ===== spec-012 tokens.css — copied verbatim ============================== */
+:root {
+  color-scheme: light dark;
+  --ground:#f8fafc; --surface:#ffffff; --surface-2:#f1f5f9; --border:#e2e8f0;
+  --text:#0f172a; --text-dim:#475569; --text-faint:#94a3b8; --accent:#0891b2;
+  --s-ok:#16a34a; --s-warn:#d97706; --s-bad:#dc2626; --s-info:#2563eb; --s-neutral:#94a3b8;
+  --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --fs-xs:12px; --fs-sm:14px; --fs-md:16px; --fs-lg:20px; --fs-xl:28px;
+  --fw-regular:400; --fw-semibold:600;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-6:24px; --sp-8:32px;
+  --radius:6px; --radius-sm:4px;
+  --elevation:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.10);
+  --focus-ring:0 0 0 2px var(--ground),0 0 0 4px var(--accent);
+  /* NEW (the one token group 030 would add): a categorical consumer palette.
+     Colour is ALWAYS paired with a legend label — never the sole signal (WCAG AA). */
+  --c-1:#6366f1; --c-2:#0d9488; --c-3:#a855f7; --c-4:#e11d48; --c-5:#d97706;
+  --c-docker:#64748b; --c-system:transparent;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:#0b1220; --surface:#111827; --surface-2:#1e293b; --border:#334155;
+    --text:#e2e8f0; --text-dim:#94a3b8; --text-faint:#64748b; --accent:#22d3ee;
+    --s-ok:#4ade80; --s-warn:#fbbf24; --s-bad:#f87171; --s-info:#60a5fa; --s-neutral:#64748b;
+    --elevation:0 1px 2px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.5);
+    --c-1:#818cf8; --c-2:#2dd4bf; --c-3:#c084fc; --c-4:#fb7185; --c-5:#fbbf24; --c-docker:#94a3b8;
+  }
+}
+:root[data-theme="light"] {
+  --ground:#f8fafc; --surface:#ffffff; --surface-2:#f1f5f9; --border:#e2e8f0;
+  --text:#0f172a; --text-dim:#475569; --text-faint:#94a3b8; --accent:#0891b2;
+  --s-ok:#16a34a; --s-warn:#d97706; --s-bad:#dc2626; --s-info:#2563eb; --s-neutral:#94a3b8;
+  --elevation:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.10);
+  --c-1:#6366f1; --c-2:#0d9488; --c-3:#a855f7; --c-4:#e11d48; --c-5:#d97706; --c-docker:#64748b;
+}
+:root[data-theme="dark"] {
+  --ground:#0b1220; --surface:#111827; --surface-2:#1e293b; --border:#334155;
+  --text:#e2e8f0; --text-dim:#94a3b8; --text-faint:#64748b; --accent:#22d3ee;
+  --s-ok:#4ade80; --s-warn:#fbbf24; --s-bad:#f87171; --s-info:#60a5fa; --s-neutral:#64748b;
+  --elevation:0 1px 2px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.5);
+  --c-1:#818cf8; --c-2:#2dd4bf; --c-3:#c084fc; --c-4:#fb7185; --c-5:#fbbf24; --c-docker:#94a3b8;
+}
+
+/* ===== spec-012 app.css — the classes this screen uses, copied verbatim ==== */
+* { box-sizing:border-box; }
+html,body { margin:0; padding:0; }
+body { background:var(--ground); color:var(--text); font-family:var(--font-sans); font-size:var(--fs-md); line-height:1.5; -webkit-font-smoothing:antialiased; }
+a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+:focus-visible { outline:none; box-shadow:var(--focus-ring); border-radius:var(--radius-sm); }
+h1,h2,h3 { margin:0; font-weight:var(--fw-semibold); } h1 { font-size:var(--fs-xl); } h2 { font-size:var(--fs-lg); } h3 { font-size:var(--fs-md); }
+p { margin:0; }
+.mono { font-family:var(--font-mono); } .dim { color:var(--text-dim); } .faint { color:var(--text-faint); }
+.small { font-size:var(--fs-sm); } .xs { font-size:var(--fs-xs); }
+.shell { display:grid; grid-template-columns:240px 1fr; grid-template-rows:auto 1fr;
+  grid-template-areas:"brand topbar" "nav view"; min-height:100vh; }
+.topbar { grid-area:topbar; display:flex; align-items:center; justify-content:flex-end; gap:var(--sp-3);
+  padding:var(--sp-3) var(--sp-6); border-bottom:1px solid var(--border); background:var(--surface); }
+.brand { grid-area:brand; display:flex; align-items:center; gap:var(--sp-2); padding:var(--sp-3) var(--sp-4);
+  border-bottom:1px solid var(--border); border-right:1px solid var(--border); background:var(--surface); font-weight:var(--fw-semibold); }
+.brand .dot { width:10px; height:10px; border-radius:50%; background:var(--accent); flex:none; }
+.nav { grid-area:nav; border-right:1px solid var(--border); background:var(--surface); padding:var(--sp-3);
+  display:flex; flex-direction:column; gap:var(--sp-1); }
+.nav a { display:block; padding:var(--sp-2) var(--sp-3); border-radius:var(--radius); color:var(--text-dim); font-size:var(--fs-sm); }
+.nav a:hover { background:var(--surface-2); text-decoration:none; }
+.nav a.active { background:var(--surface-2); color:var(--text); font-weight:var(--fw-semibold); }
+.view { grid-area:view; padding:var(--sp-6); max-width:960px; }
+.userbox { display:flex; align-items:center; gap:var(--sp-2); font-size:var(--fs-sm); } .userbox .email { color:var(--text-dim); }
+@media (max-width:720px) { .shell { grid-template-columns:1fr; grid-template-areas:"brand" "topbar" "nav" "view"; }
+  .brand,.nav { border-right:none; } .nav { flex-direction:row; flex-wrap:wrap; } }
+.page-head { display:flex; align-items:baseline; justify-content:space-between; gap:var(--sp-4); margin-bottom:var(--sp-6); flex-wrap:wrap; }
+.page-head .sub { color:var(--text-dim); font-size:var(--fs-sm); margin-top:var(--sp-1); max-width:64ch; }
+.section { margin-top:var(--sp-6); } .section > h2 { margin-bottom:var(--sp-3); }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--elevation); padding:var(--sp-4); }
+.card + .card { margin-top:var(--sp-3); }
+.row { display:flex; align-items:center; gap:var(--sp-3); flex-wrap:wrap; }
+.row-between { display:flex; align-items:center; justify-content:space-between; gap:var(--sp-3); flex-wrap:wrap; }
+.grow { flex:1 1 auto; min-width:0; }
+.chip { display:inline-flex; align-items:center; gap:var(--sp-1); padding:2px var(--sp-2); border-radius:999px;
+  font-size:var(--fs-xs); font-weight:var(--fw-semibold); line-height:1.6; border:1px solid currentColor; white-space:nowrap; }
+.chip::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; flex:none; }
+.chip--ok { color:var(--s-ok); } .chip--warn { color:var(--s-warn); } .chip--bad { color:var(--s-bad); }
+.chip--info { color:var(--s-info); } .chip--neutral { color:var(--s-neutral); }
+.tag { display:inline-block; padding:1px var(--sp-2); border-radius:var(--radius-sm); font-size:var(--fs-xs);
+  background:var(--surface-2); color:var(--text-dim); border:1px solid var(--border); }
+.filter-chips { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin-bottom:var(--sp-3); align-items:center; }
+.tag--filter { cursor:pointer; font-family:inherit; line-height:1.6; }
+.tag--filter.tag--on { background:var(--accent); color:var(--surface); border-color:transparent; }
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:var(--sp-2); font-family:var(--font-sans);
+  font-size:var(--fs-sm); font-weight:var(--fw-semibold); padding:var(--sp-2) var(--sp-4); border-radius:var(--radius);
+  border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; }
+.btn:hover { background:var(--surface-2); }
+.btn--primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+@media (prefers-color-scheme: dark) { .btn--primary { color:#06121a; } }
+.btn--sm { padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs); }
+select { font-family:var(--font-sans); font-size:var(--fs-sm); padding:var(--sp-2) var(--sp-3); border:1px solid var(--border);
+  border-radius:var(--radius); background:var(--surface); color:var(--text); }
+.kv { display:grid; grid-template-columns:minmax(120px,max-content) 1fr; gap:var(--sp-2) var(--sp-4); font-size:var(--fs-sm); }
+.kv dt { color:var(--text-dim); } .kv dd { margin:0; } .kv dd.mono { font-family:var(--font-mono); }
+.empty { color:var(--text-dim); font-size:var(--fs-sm); padding:var(--sp-6); text-align:center; border:1px dashed var(--border); border-radius:var(--radius); }
+.mt-2 { margin-top:var(--sp-2); } .mt-3 { margin-top:var(--sp-3); } .mt-4 { margin-top:var(--sp-4); }
+.monitor-controls { justify-content:flex-end; } .monitor-controls select { padding:var(--sp-1) var(--sp-2); font-size:var(--fs-sm); }
+.monitor-machine { margin-top:var(--sp-6); } .monitor-machine > .row-between { margin-bottom:var(--sp-3); }
+.host-panel { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:var(--sp-4);
+  padding:var(--sp-4); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); }
+.meter { min-width:0; }
+.meter-head { display:flex; justify-content:space-between; align-items:baseline; gap:var(--sp-2); }
+.meter-label { font-size:var(--fs-sm); color:var(--text-dim); }
+.meter-val { font-size:var(--fs-sm); font-weight:var(--fw-semibold); }
+.meter-val--amber { color:var(--s-warn); } .meter-val--red { color:var(--s-bad); }
+.meter-track { margin-top:var(--sp-1); height:10px; border-radius:999px; background:var(--surface-2); overflow:hidden; }
+.meter-fill { height:100%; border-radius:999px; background:var(--s-ok); }
+.meter-fill--ok { background:var(--s-ok); } .meter-fill--amber { background:var(--s-warn); }
+.meter-fill--red { background:var(--s-bad); } .meter-fill--none { background:var(--s-neutral); }
+.meter-sub { margin-top:var(--sp-1); font-size:var(--fs-xs); color:var(--text-faint); }
+@media (prefers-reduced-motion: no-preference) { .meter-fill { transition:width .3s ease; } }
+.app-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:var(--sp-3); }
+.app-card { padding:var(--sp-4); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); cursor:pointer; }
+.app-card:hover { border-color:var(--accent); }
+.fw-badge { display:inline-block; padding:2px var(--sp-2); border-radius:var(--radius-sm); font-size:var(--fs-xs);
+  font-family:var(--font-mono); border:1px solid var(--border); color:var(--text-dim); }
+.fw-badge--springboot { color:var(--s-ok); border-color:var(--s-ok); }
+.fw-badge--fastapi { color:var(--s-info); border-color:var(--s-info); }
+.fw-badge--http { color:var(--s-warn); border-color:var(--s-warn); }
+.fw-badge--datastore { color:var(--accent); border-color:var(--accent); }
+.fw-badge--generic { color:var(--text-dim); }
+.app-name-toggle { background:none; border:none; padding:0; margin:0; font:inherit; font-weight:var(--fw-semibold);
+  color:var(--text); cursor:pointer; text-align:left; }
+.app-name-toggle:hover { color:var(--accent); text-decoration:underline; }
+.pill { display:inline-flex; align-items:center; gap:var(--sp-1); padding:2px var(--sp-2); border-radius:999px;
+  font-size:var(--fs-xs); font-weight:var(--fw-semibold); border:1px solid var(--border); }
+.pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+.pill--up { color:var(--s-ok); border-color:var(--s-ok); } .pill--down { color:var(--s-bad); border-color:var(--s-bad); }
+.pill--unknown { color:var(--s-neutral); }
+.run-chip-row { display:flex; flex-wrap:wrap; gap:var(--sp-2); }
+.run-chip { display:inline-flex; align-items:center; gap:var(--sp-2); padding:var(--sp-1) var(--sp-3); font-size:var(--fs-xs);
+  font-family:var(--font-mono); border:1px solid var(--border); border-radius:999px; background:var(--surface-2); color:var(--text); }
+.drawer-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex; justify-content:flex-end; z-index:150; }
+.drawer { width:min(480px,92vw); height:100%; overflow-y:auto; padding:var(--sp-6); background:var(--surface);
+  border-left:1px solid var(--border); box-shadow:var(--elevation); }
+.drawer h3 { color:var(--text-dim); font-size:var(--fs-sm); text-transform:uppercase; letter-spacing:.04em; }
+
+/* ===== NEW for concern 030 — segmented axis + legend + db bands =========== */
+/* A segmented .meter-track: per-consumer coloured slices instead of one fill. */
+.axis-track { display:flex; }
+.axis-seg { height:100%; cursor:pointer; }
+.axis-seg:hover { filter:brightness(1.12) saturate(1.1); }
+.axis-seg--free { cursor:default;
+  background:repeating-linear-gradient(45deg,var(--surface-2),var(--surface-2) 5px,transparent 5px,transparent 10px); }
+.legend { display:flex; flex-wrap:wrap; gap:var(--sp-2); margin-top:var(--sp-3); }
+.legend-chip { display:inline-flex; align-items:center; gap:var(--sp-2); cursor:pointer; padding:2px var(--sp-2);
+  border-radius:var(--radius-sm); font-size:var(--fs-xs); background:var(--surface-2); color:var(--text-dim); border:1px solid var(--border); }
+.legend-chip:hover { border-color:var(--accent); }
+.legend-dot { width:10px; height:10px; border-radius:3px; flex:none; }
+.legend-chip .lg-pct { font-family:var(--font-mono); color:var(--text-faint); }
+.band-title { font-size:var(--fs-sm); font-weight:var(--fw-semibold); }
+.drow { display:flex; align-items:center; gap:var(--sp-3); padding:var(--sp-3) 0; border-bottom:1px dashed var(--border); }
+.drow:last-child { border-bottom:none; }
+.drow .daxes { margin-left:auto; display:flex; gap:var(--sp-4); }
+.drow .dax { text-align:right; } .drow .dax .k { font-size:var(--fs-xs); color:var(--text-faint); }
+.drow .dax .v { font-size:var(--fs-sm); font-weight:var(--fw-semibold); font-family:var(--font-mono); }
+.drow .dax .v.na { color:var(--text-faint); font-weight:var(--fw-regular); }
+.split-legend { display:flex; justify-content:space-between; font-size:var(--fs-xs); color:var(--text-dim); margin-top:var(--sp-1); }
+.d-axes { display:flex; gap:var(--sp-3); } .d-axes .meter { flex:1; }
+</style>
+
+<div class="shell">
+  <div class="brand"><span class="dot"></span> compute-admin</div>
+  <div class="topbar">
+    <span class="tag">mock · concern 030</span>
+    <button class="btn btn--sm" id="themeBtn">◐ Theme</button>
+    <div class="userbox"><span class="email">moacyr@…</span></div>
+  </div>
+  <nav class="nav">
+    <a href="#">Machines</a>
+    <a href="#" class="active">Monitor</a>
+    <a href="#">Recipes</a>
+    <a href="#">Runs</a>
+  </nav>
+  <main class="view" id="view"></main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<script>
+(function(){
+  "use strict";
+  // ---- h() hyperscript, copied from app.js (textContent-only, no innerHTML) ----
+  function h(tag, props){
+    var el=document.createElement(tag);
+    if(props){ Object.keys(props).forEach(function(k){ var v=props[k];
+      if(v==null||v===false) return;
+      if(k==="class") el.className=v;
+      else if(k==="text") el.textContent=v;
+      else if(k.slice(0,2)==="on"&&typeof v==="function") el.addEventListener(k.slice(2),v);
+      else if(v===true) el.setAttribute(k,"");
+      else el.setAttribute(k,v);
+    }); }
+    for(var i=2;i<arguments.length;i++) appendChild(el,arguments[i]);
+    return el;
+  }
+  function appendChild(el,kid){ if(kid==null||kid===false) return;
+    if(Array.isArray(kid)) kid.forEach(function(k){appendChild(el,k);});
+    else if(typeof kid==="string"||typeof kid==="number") el.appendChild(document.createTextNode(String(kid)));
+    else el.appendChild(kid); }
+  function clear(el){ while(el.firstChild) el.removeChild(el.firstChild); }
+  function byId(id){ return document.getElementById(id); }
+
+  function meterBand(pct){ if(pct==null||isNaN(pct)) return "none"; if(pct>=90) return "red"; if(pct>=75) return "amber"; return "ok"; }
+  function pctText(n){ return n==null? "—" : Math.round(n)+"%"; }
+  var COLORVAR={ "birthday-rsvp":"--c-1","analytics":"--c-2","metrics-agent":"--c-3",
+    "pg-shared":"--c-4","redis-shared":"--c-5","landing":"--c-1","docker":"--c-docker","system":"--c-system" };
+  function cvar(id){ return "var("+(COLORVAR[id]||"--c-docker")+")"; }
+
+  // A single (non-segmented) meter — the house component, for drawers/services.
+  function meter(label,pct,sub){
+    var known=pct!=null&&!isNaN(pct); var clamped=known?Math.max(0,Math.min(100,pct)):0;
+    var fill=h("div",{class:"meter-fill meter-fill--"+meterBand(pct)}); fill.style.width=clamped+"%";
+    var band=meterBand(pct);
+    return h("div",{class:"meter"},
+      h("div",{class:"meter-head"},
+        h("span",{class:"meter-label",text:label}),
+        h("span",{class:"meter-val mono"+(band==="amber"?" meter-val--amber":band==="red"?" meter-val--red":""),
+          text:known?Math.round(clamped)+"%":"—"})),
+      h("div",{class:"meter-track"},fill),
+      sub?h("div",{class:"meter-sub mono",text:sub}):null);
+  }
+
+  // NEW: a segmented axis meter — one coloured slice per consumer + a free remainder.
+  function axisMeter(label,consumers,axis){
+    var total=0; consumers.forEach(function(c){ if(c[axis]!=null) total+=c[axis]; });
+    var track=h("div",{class:"meter-track axis-track"});
+    consumers.forEach(function(c){ var v=c[axis]; if(v==null||v<=0) return;
+      var seg=h("div",{class:"axis-seg","data-cid":c.id,title:c.name+" · "+pctText(v)+" of host "+label});
+      seg.style.width=v+"%"; seg.style.background=cvar(c.id); track.appendChild(seg); });
+    var free=Math.max(0,100-total);
+    if(free>0.3){ var f=h("div",{class:"axis-seg axis-seg--free",title:"unshown / free · "+pctText(free)}); f.style.width=free+"%"; track.appendChild(f); }
+    var band=meterBand(total);
+    return h("div",{class:"meter"},
+      h("div",{class:"meter-head"},
+        h("span",{class:"meter-label",text:label}),
+        h("span",{class:"meter-val mono"+(band==="amber"?" meter-val--amber":band==="red"?" meter-val--red":""),
+          text:"used "+pctText(total)})),
+      track);
+  }
+
+  function legend(consumers){
+    return h("div",{class:"legend"}, consumers.map(function(c){
+      var dot=h("span",{class:"legend-dot"}); dot.style.background=cvar(c.id);
+      return h("button",{type:"button",class:"legend-chip","data-cid":c.id,title:"Open "+c.name},
+        dot, h("span",{text:c.name}),
+        h("span",{class:"lg-pct",text:pctText(c.ram)+" · "+pctText(c.cpu)+" · "+pctText(c.disk)}));
+    }));
+  }
+
+  // ---------------- fleet data (fake) ----------------
+  var FLEET=[
+    { name:"web-prod-1", host:"10.0.1.12", loginUser:"deploy", port:22, status:"ONLINE",
+      tags:["env:prod","role:web"], spec:{ram:"32 GB",cpu:"8 vCPU",disk:"512 GB @ /var/lib/docker"},
+      consumers:[
+        { id:"birthday-rsvp", name:"birthday-rsvp", kind:"app", source:"docker", framework:"springboot", runtime:"docker", port:8080,
+          ram:39, cpu:3, disk:20, composeFile:"/srv/birthday-rsvp/docker-compose.yml",
+          checks:[{n:"health",s:"up"},{n:"metrics",s:"up"}],
+          ops:[{n:"restart"},{n:"tail-logs"}],
+          services:[ {nm:"web",im:"birthday-rsvp:2.3 (springboot)",badge:"springboot · in docker → shown once",ram:36,cpu:2,disk:4},
+                     {nm:"db",im:"mysql:8.0",role:"database",ded:"birthday-rsvp",ram:3,cpu:1,disk:16} ]},
+        { id:"analytics", name:"analytics", kind:"app", source:"docker", framework:"fastapi", runtime:"docker", port:8010,
+          ram:18, cpu:12, disk:12, composeFile:null,
+          checks:[{n:"liveness",s:"up"},{n:"openapi",s:"up"},{n:"stats",s:"up"}],
+          ops:[{n:"restart"}],
+          services:[ {nm:"web",im:"analytics-api:1.7 (fastapi)",ram:7,cpu:8,disk:2},
+                     {nm:"worker",im:"analytics-api:1.7 (celery)",badge:"portless worker",ram:4,cpu:3,disk:1},
+                     {nm:"db",im:"postgres:16",role:"database",ded:"analytics",ram:7,cpu:1,disk:9} ]},
+        { id:"metrics-agent", name:"metrics-agent", kind:"app", source:"native", framework:"springboot", runtime:"process", port:9100,
+          ram:4, cpu:1, disk:null, diskNote:"native process — no attributable disk footprint", composeFile:null,
+          checks:[{n:"health",s:"up"}], ops:[],
+          services:[ {nm:"metrics-agent",im:"java -jar metrics-agent.jar",badge:"only /actuator/health exposed",ram:4,cpu:1,disk:null} ]},
+        { id:"pg-shared", name:"postgres (shared)", kind:"datastore", source:"native", framework:"datastore", runtime:"process", port:5432,
+          ram:9, cpu:5, disk:null, diskNote:"data dir /var/lib/postgresql/16 not readable as login user (S5)",
+          sharedBy:["birthday-rsvp","analytics"], composeFile:null,
+          checks:[{n:"tcp:5432",s:"up"},{n:"process",s:"up"}], ops:[],
+          services:[ {nm:"postgres",im:"postgresql-16 (apt / systemd)",ram:9,cpu:5,disk:null} ]},
+        { id:"redis-shared", name:"redis (shared)", kind:"datastore", source:"docker", framework:"datastore", runtime:"docker", port:6379,
+          ram:3, cpu:1, disk:1, sharedBy:["birthday-rsvp","analytics"], composeFile:null,
+          checks:[{n:"tcp:6379",s:"up"},{n:"stats",s:"up"}], ops:[],
+          services:[ {nm:"redis",im:"redis:7 (standalone — docker run)",badge:"no compose project",ram:3,cpu:1,disk:1} ]},
+        { id:"docker", name:"docker (unclassified)", kind:"bucket", bucket:"docker", source:"docker", framework:"generic",
+          ram:6, cpu:2, disk:4, note:"containers not classified as an app or datastore (langfuse, sidecars)",
+          checks:[], ops:[], services:[ {nm:"langfuse",im:"langfuse/langfuse:2",ram:4,cpu:1,disk:3},
+                     {nm:"langfuse-db",im:"postgres:15",ram:2,cpu:1,disk:1} ]},
+        { id:"system", name:"system / free", kind:"bucket", bucket:"system", source:"native", framework:"generic",
+          ram:21, cpu:76, disk:63, note:"OS, kernel, other processes, and unused capacity — the honest remainder to 100%",
+          checks:[], ops:[], services:[] }
+      ] },
+    { name:"edge-1", host:"10.0.2.30", loginUser:"deploy", port:22, status:"ONLINE",
+      tags:["env:prod","role:edge"], spec:{ram:"8 GB",cpu:"2 vCPU",disk:"80 GB"},
+      consumers:[
+        { id:"landing", name:"landing", kind:"app", source:"native", framework:"springboot", runtime:"process", port:8080,
+          ram:12, cpu:4, disk:null, diskNote:"native process — no attributable disk footprint",
+          checks:[{n:"health",s:"up"},{n:"metrics",s:"up"}], ops:[],
+          services:[ {nm:"landing",im:"java -jar landing.jar (springboot)",ram:12,cpu:4,disk:null} ]},
+        { id:"system", name:"system / free", kind:"bucket", bucket:"system", source:"native", framework:"generic",
+          ram:88, cpu:96, disk:100, note:"OS, kernel, other processes, and unused capacity", checks:[], ops:[], services:[] }
+      ] }
+  ];
+
+  var state={ lens:"apps", showDocker:false, showSystem:false, tags:[] };
+
+  function tagMatch(m){ if(!state.tags.length) return true; return state.tags.some(function(t){ return m.tags.indexOf(t)>=0; }); }
+  function visibleConsumers(m){ return m.consumers.filter(function(c){
+    if(c.bucket==="docker") return state.showDocker; if(c.bucket==="system") return state.showSystem; return true; }); }
+  function findConsumer(cid){ for(var i=0;i<FLEET.length;i++){ for(var j=0;j<FLEET[i].consumers.length;j++){ if(FLEET[i].consumers[j].id===cid) return {m:FLEET[i],c:FLEET[i].consumers[j]}; } } return null; }
+
+  // ---------------- apps lens ----------------
+  function appCard(app,onToggle){
+    var badge=h("span",{class:"fw-badge fw-badge--"+app.framework,text:app.framework});
+    var actuatorless=app.framework==="http"?h("span",{class:"tag",text:"actuator-less"}):null;
+    var upChecks=(app.checks||[]).filter(function(c){return c.s==="up";}).length;
+    var pill=upChecks>0?h("span",{class:"pill pill--up",text:"UP"}):h("span",{class:"pill pill--unknown",text:"no data"});
+    var name=h("button",{type:"button",class:"app-name-toggle",title:"Filter fleet to "+app.name,text:app.name,
+      onclick:function(e){ e.stopPropagation(); onToggle(app.name); }});
+    var axes=h("div",{class:"d-axes mt-2"}, meter("RAM",app.ram), meter("CPU",app.cpu),
+      app.disk==null?h("div",{class:"meter"},h("div",{class:"meter-head"},h("span",{class:"meter-label",text:"Disk"}),
+        h("span",{class:"meter-val mono",text:"—"})),h("div",{class:"meter-sub mono",text:"native — n/a"})):meter("Disk",app.disk));
+    var checks=(app.checks||[]).length?h("div",{class:"run-chip-row mt-3"},app.checks.map(function(c){
+      return h("span",{class:"chip "+(c.s==="up"?"chip--ok":c.s==="down"?"chip--bad":"chip--neutral"),text:c.n}); })):null;
+    var ops=(app.ops||[]).length?h("div",{class:"run-chip-row mt-2"},app.ops.map(function(o){
+      return h("span",{class:"run-chip",text:o.n}); })):null;
+    var card=h("div",{class:"app-card"},
+      h("div",{class:"row-between"},
+        h("div",{class:"grow"}, name, h("div",{class:"row mt-2"},badge,actuatorless,pill)),
+        h("span",{class:"tag mono",text:app.runtime+" :"+app.port})),
+      axes, checks, ops);
+    card.addEventListener("click",function(e){ if(e.target.closest(".run-chip")||e.target.closest(".app-name-toggle")) return; openDrawer(app.id); });
+    return card;
+  }
+
+  function renderAppsMachine(m,onToggle){
+    var vis=visibleConsumers(m);
+    var panel=h("div",{class:"host-panel"}, axisMeter("RAM",vis,"ram"), axisMeter("CPU",vis,"cpu"), axisMeter("Disk",vis,"disk"));
+    var apps=vis.filter(function(c){ return c.kind==="app"||c.kind==="datastore"; });
+    var grid=apps.length?h("div",{class:"app-cards"},apps.map(function(a){ return appCard(a,onToggle); })):null;
+    return [panel, legend(vis), apps.length?h("h3",{class:"mt-4",text:"Consumers"}):null, grid];
+  }
+
+  // ---------------- databases lens ----------------
+  function datastoresOf(m){
+    var ded=[],shared=[];
+    m.consumers.forEach(function(c){
+      if(c.kind==="app"){ (c.services||[]).forEach(function(s){ if(s.role==="database")
+        ded.push({cid:c.id,owner:c.name,name:s.nm+" ("+c.name+")",ram:s.ram,cpu:s.cpu,disk:s.disk}); }); }
+      else if(c.framework==="datastore"){ shared.push(c); }
+    });
+    return {ded:ded,shared:shared};
+  }
+  function splitMeter(axis,items){
+    var total=0; items.forEach(function(i){ if(i[axis]!=null) total+=i[axis]; });
+    var track=h("div",{class:"meter-track axis-track"});
+    items.forEach(function(i){ var v=i[axis]; if(v==null||v<=0) return; var w=total>0?(v/total*100):0;
+      var seg=h("div",{class:"axis-seg",title:i.owner+" · "+pctText(v)+" of host"}); seg.style.width=w+"%"; seg.style.background=cvar(i.cid); track.appendChild(seg); });
+    var rows=items.map(function(i){ var share=total>0&&i[axis]!=null?Math.round(i[axis]/total*100):null;
+      var dot=h("span",{class:"legend-dot"}); dot.style.background=cvar(i.cid);
+      return h("span",{class:"row",style:"gap:6px"}, dot, i.owner+" "+(share==null?"—":share+"%")); });
+    return h("div",{class:"meter"},
+      h("div",{class:"meter-head"},h("span",{class:"meter-label",text:axis.toUpperCase()+" — "+pctText(total)+" of host"})),
+      track,
+      h("div",{class:"split-legend"}, rows));
+  }
+  function renderDbMachine(m){
+    var d=datastoresOf(m);
+    if(!d.ded.length&&!d.shared.length) return [h("div",{class:"empty",text:"No datastores detected on this host."})];
+    var out=[];
+    var totRam=0; d.ded.forEach(function(i){totRam+=i.ram||0;}); d.shared.forEach(function(i){totRam+=i.ram||0;});
+    out.push(h("p",{class:"small dim mt-2"},"Databases account for ",
+      h("span",{class:"mono",text:pctText(totRam)})," of host RAM. Same containers as the Apps view — a re-slice, not a move."));
+    if(d.ded.length){
+      out.push(h("div",{class:"card mt-3"},
+        h("div",{class:"row"}, h("span",{class:"band-title",text:"Dedicated"}),
+          h("span",{class:"tag",text:"one owner → resource is attributable, so we show the split"})),
+        h("div",{class:"d-axes mt-3"}, splitMeter("ram",d.ded), splitMeter("cpu",d.ded), splitMeter("disk",d.ded))));
+    }
+    if(d.shared.length){
+      out.push(h("div",{class:"card mt-3"},
+        h("div",{class:"row"}, h("span",{class:"band-title",text:"Shared"}),
+          h("span",{class:"tag",text:"many users, no owner → NO per-app split; we show who uses it"})),
+        d.shared.map(function(c){
+          var ub=(c.sharedBy||[]).map(function(a){ var dot=h("span",{class:"legend-dot"}); dot.style.background=cvar(a);
+            return h("span",{class:"row",style:"gap:4px;display:inline-flex"},dot,a); });
+          function ax(k){ var na=c[k]==null; return h("div",{class:"dax"},h("div",{class:"k",text:k.toUpperCase()}),
+            h("div",{class:"v"+(na?" na":""),text:pctText(c[k])})); }
+          var dot=h("span",{class:"legend-dot"}); dot.style.background=cvar(c.id);
+          var row=h("div",{class:"drow"}, dot,
+            h("div",null, h("div",{style:"font-weight:600"},c.name),
+              h("div",{class:"small dim"}, "used by ", ub)),
+            h("div",{class:"daxes"}, ax("ram"), ax("cpu"), ax("disk")));
+          row.addEventListener("click",function(){ openDrawer(c.id); });
+          return row;
+        })));
+    }
+    return out;
+  }
+
+  // ---------------- machine section ----------------
+  function machineSection(m,onToggle){
+    var dimmed=!tagMatch(m);
+    var body=dimmed?[h("div",{class:"empty",text:"Filtered out by tag — not polled."})]
+      :(state.lens==="apps"?renderAppsMachine(m,onToggle):renderDbMachine(m));
+    var sec=h("section",{class:"section monitor-machine"},
+      h("div",{class:"row-between"},
+        h("div",{class:"grow"}, h("h2",{text:m.host}),
+          h("p",{class:"small dim mono",text:m.loginUser+"@"+m.host+":"+m.port+"  ·  "+m.spec.ram+" · "+m.spec.cpu+" · "+m.spec.disk})),
+        h("span",{class:"chip chip--ok",text:m.status})),
+      body);
+    if(dimmed) sec.style.opacity=".55";
+    return sec;
+  }
+
+  // ---------------- drawer ----------------
+  function openDrawer(cid){
+    var f=findConsumer(cid); if(!f) return; var c=f.c, m=f.m;
+    var badges=[h("span",{class:"fw-badge fw-badge--"+c.framework,text:c.framework}),
+      h("span",{class:"tag",text:c.source}),
+      c.framework==="datastore"?h("span",{class:"tag",text:c.sharedBy?"shared":"dedicated"}):null,
+      c.bucket?h("span",{class:"tag",text:"hidden bucket"}):null];
+    var diskMeter=c.disk==null
+      ? h("div",{class:"meter"},h("div",{class:"meter-head"},h("span",{class:"meter-label",text:"Disk"}),h("span",{class:"meter-val mono",text:"—"})),
+          h("div",{class:"meter-sub mono",text:c.diskNote||"n/a"}))
+      : meter("Disk",c.disk);
+    var svc=(c.services||[]).length?[h("h3",{class:"mt-4",text:"Services"}),
+      h("div",{class:"mt-2"}, c.services.map(function(s){
+        return h("div",{class:"drow"},
+          h("div",null, h("div",{style:"font-weight:600"}, s.nm, s.badge?h("span",{class:"tag",style:"margin-left:6px",text:s.badge}):null),
+            h("div",{class:"small dim mono",text:s.im})),
+          h("div",{class:"daxes"},
+            h("div",{class:"dax"},h("div",{class:"k",text:"RAM"}),h("div",{class:"v",text:pctText(s.ram)})),
+            h("div",{class:"dax"},h("div",{class:"k",text:"CPU"}),h("div",{class:"v",text:pctText(s.cpu)})),
+            h("div",{class:"dax"},h("div",{class:"k",text:"DISK"}),h("div",{class:"v"+(s.disk==null?" na":""),text:pctText(s.disk)}))));
+      }))]:null;
+    var probes=(c.checks||[]).length?[h("h3",{class:"mt-4",text:"Probes"}),
+      h("div",{class:"run-chip-row mt-2"}, c.checks.map(function(p){ return h("span",{class:"chip "+(p.s==="up"?"chip--ok":"chip--neutral"),text:p.n}); })),
+      h("p",{class:"small faint mt-2",text:"Only probes that responded are shown — a springboot exposing just /actuator/health shows only health."})]:
+      [h("h3",{class:"mt-4",text:"Probes"}),h("p",{class:"small dim",text:c.note||"Aggregate bucket — not a monitored app."})];
+    var compose=c.composeFile?[h("h3",{class:"mt-4",text:"Compose"}),h("dl",{class:"kv mt-2"},h("dt",{text:"project file"}),h("dd",{class:"mono",text:c.composeFile}))]:
+      (c.source==="docker"?[h("h3",{class:"mt-4",text:"Compose"}),h("p",{class:"small dim mt-2"},"Grouped by ",h("span",{class:"mono",text:"com.docker.compose.project"})," label; file not reachable from this host (best-effort).")]:null);
+    var owner=c.framework==="datastore"?(c.sharedBy
+      ? h("dl",{class:"kv mt-2"},h("dt",{text:"used by"}),h("dd",{text:c.sharedBy.join(", ")+" — shared engine, resource not split per app"}))
+      : null):null;
+
+    var drawer=h("div",{class:"drawer",role:"dialog","aria-modal":"true","aria-label":c.name},
+      h("div",{class:"row-between"}, h("h2",{text:c.name}), h("button",{class:"btn btn--sm",onclick:closeDrawer},"Close")),
+      h("div",{class:"row mt-2"}, badges),
+      h("p",{class:"small dim mt-2",text:m.loginUser+"@"+m.host}),
+      h("div",{class:"d-axes mt-4"}, meter("RAM",c.ram), meter("CPU",c.cpu), diskMeter),
+      owner, svc, probes, compose);
+    var backdrop=h("div",{class:"drawer-backdrop",onclick:function(e){ if(e.target===backdrop) closeDrawer(); }},drawer);
+    var root=byId("modal-root"); clear(root); root.appendChild(backdrop);
+  }
+  function closeDrawer(){ clear(byId("modal-root")); }
+
+  // ---------------- screen ----------------
+  function chipBtn(label,on,onClick){ return h("button",{type:"button",class:"tag tag--filter"+(on?" tag--on":""),
+    "aria-pressed":on?"true":"false",text:label,onclick:onClick}); }
+
+  function render(){
+    var view=byId("view"); clear(view);
+    var vm=FLEET.filter(tagMatch); var apps=0;
+    vm.forEach(function(m){ visibleConsumers(m).forEach(function(c){ if(c.kind==="app") apps++; }); });
+
+    var head=h("div",{class:"page-head"},
+      h("div",null, h("h1",{text:"Monitor"}),
+        h("p",{class:"sub",text:"Fleet health, polled from your browser. Every consumer — app, datastore, bucket — on the same RAM/CPU/disk axes as its host. Filtered-out is not polled."})),
+      h("div",{class:"row monitor-controls"},
+        h("label",{class:"small dim",text:"Cadence"}),
+        h("select",{class:"mono"},h("option",{text:"Single"}),h("option",{text:"5s"}),h("option",{text:"30s"}),h("option",{text:"1m"})),
+        h("button",{class:"btn btn--sm btn--primary"},"Run now"),
+        h("span",{class:"small dim mono",text:"polling "+vm.length+(vm.length===1?" machine · ":" machines · ")+apps+" apps"})));
+
+    var lensBar=h("div",{class:"filter-chips"},
+      h("span",{class:"small dim",text:"View"}),
+      chipBtn("Apps",state.lens==="apps",function(){ state.lens="apps"; render(); }),
+      chipBtn("Databases",state.lens==="db",function(){ state.lens="db"; render(); }),
+      h("span",{class:"small dim",style:"margin-left:12px",text:"Show"}),
+      chipBtn("docker bucket",state.showDocker,function(){ state.showDocker=!state.showDocker; render(); }),
+      chipBtn("system / free",state.showSystem,function(){ state.showSystem=!state.showSystem; render(); }));
+
+    var tagBar=h("div",{class:"filter-chips"}, h("span",{class:"small dim",text:"Tags"}),
+      ["env:prod","role:web","role:edge"].map(function(t){
+        return chipBtn(t,state.tags.indexOf(t)>=0,function(){ var i=state.tags.indexOf(t); if(i<0) state.tags.push(t); else state.tags.splice(i,1); render(); }); }));
+
+    var onToggle=function(){ /* app-name pin — cosmetic in mock */ };
+    var body=h("div",null, FLEET.map(function(m){ return machineSection(m,onToggle); }));
+
+    view.appendChild(head); view.appendChild(lensBar); view.appendChild(tagBar); view.appendChild(body);
+    Array.prototype.forEach.call(view.querySelectorAll(".legend-chip[data-cid]"),function(el){
+      el.addEventListener("click",function(){ openDrawer(el.getAttribute("data-cid")); }); });
+    Array.prototype.forEach.call(view.querySelectorAll(".axis-seg[data-cid]"),function(el){
+      el.addEventListener("click",function(){ openDrawer(el.getAttribute("data-cid")); }); });
+
+    view.appendChild(h("p",{class:"small faint mt-6"},
+      "Mock, fake numbers. New vs the live Monitor: the host panel bars are segmented per-consumer (one colour each, held across all three axes); the Databases view; the docker/system buckets (toggle to fill bars to 100%); cards carry all three axes; native apps show disk —; probe list shows only what responded. Everything else is spec-012/029 verbatim."));
+  }
+
+  byId("themeBtn").addEventListener("click",function(){ var r=document.documentElement; var cur=r.getAttribute("data-theme");
+    var dark=matchMedia("(prefers-color-scheme: dark)").matches;
+    r.setAttribute("data-theme", cur==="dark"?"light":cur==="light"?"dark":(dark?"light":"dark")); });
+  document.addEventListener("keydown",function(e){ if(e.key==="Escape") closeDrawer(); });
+  render();
+})();
+</script>
