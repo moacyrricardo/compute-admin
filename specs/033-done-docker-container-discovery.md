@@ -1,5 +1,9 @@
 # 033 — Docker container discovery
 
+> **Status: done.** Branch `moacyrricardo/spec-033-docker-container-discovery`, stacked
+> on `moacyrricardo/spec-032-monitoring-axes-foundations` (merge after spec-032). No
+> Flyway migration and no new `RecipeType` — see "Divergences" below.
+
 > Resolves [concern 030](./030-todo-docker-container-monitoring.md) (docker-native
 > monitoring). Builds on the consumer contract in
 > [032](./032-todo-monitoring-axes-foundations.md), the discovery idempotency of
@@ -96,3 +100,39 @@ All new code cites `spec-033`.
   detection assumes the standard docker CLI + socket.
 - **Disk denominator** is the docker data-root filesystem, not `/` — stated so the % is
   interpreted correctly.
+
+## Divergences (as built)
+
+Faithful to the decisions; the deltas below are implementation choices forced by the
+"no schema, no new `RecipeType`, don't disturb spec-032" constraints of this stacked PR.
+
+- **Interim enablement flag.** The per-machine enablement gate (spec-035) is not built
+  yet, so docker discovery is guarded behind a single boolean property
+  `ca.discovery.docker.enabled` (default **false**). While disabled the
+  `DockerComposeDiscoverer` is a strict no-op — it proposes nothing and **never probes
+  docker** (asserted: zero commands sent). spec-035 supersedes this flag with the
+  per-machine UI model.
+- **No schema, no new type.** The classified consumers are persisted as JSON on the
+  recipe's existing un-audited `app_port_list` column as `{"dockerConsumers":[…]}` (told
+  apart from the native `[{appName,port}]` array by being an object). No Flyway migration
+  was added; the recipes are `MONITOR` (no new `RecipeType`); the gate/`GateArchTest` are
+  untouched.
+- **Consumer granularity.** A project's own datastore is emitted as its **own**
+  `DEDICATED` `DATABASE` consumer (`owner=<project>`), and the project's `APP` consumer
+  lists its **app** (non-datastore) containers as `services` — chosen to honour
+  "DEDICATED, owner=project" literally, since `ConsumerServiceView` (spec-032) carries no
+  per-service dedication field. A standalone datastore → `SHARED` (`usedBy` best-effort,
+  left empty in v1); the remainder → one `DOCKER` bucket consumer (empty `services`, per
+  spec-032 §5).
+- **Enumeration probe.** Uses the unfiltered `docker ps --format '{{json .}}'` (rather
+  than the label-filtered variant in the Implementation sketch) so standalone datastores
+  and the bucket remainder are visible in one read.
+- **Checks are fixed, project-agnostic reads.** Each project recipe carries the same
+  three param-free read-only checks (`docker stats --no-stream`, `docker ps -s`,
+  `docker system df -v`); the client attributes their output per container by name using
+  the consumer's `services`. Per-service HTTP liveness fan-out is deferred.
+- **Axes + fleet UI are spec-034.** Server assembly leaves `ram`/`cpu`/`disk` `null`; the
+  client parsers (`parseDockerStats`/`parseDockerPs`) feed those axes once spec-034
+  renders the consumer cards. For spec-033 the docker checks land as host-panel `MONITOR`
+  actions and `app.js` only makes an approved docker monitor legible (degrade-to-raw),
+  with no new headline bars.
