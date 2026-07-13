@@ -151,7 +151,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             if (family == Family.SPRINGBOOT && !respondsToActuator(ssh, target, listener.port())) {
                 family = Family.HTTP;
             }
-            String appName = appName(family, listener, cmdline, container);
+            String appName = appName(family, listener, cmdline, container, ssh, target);
             byFamily.computeIfAbsent(family, f -> new ArrayList<>())
                     .add(new AppPortItem(appName, listener.port(), runtime.label));
             if (family == Family.FASTAPI && respondsToMetrics(ssh, target, listener.port())) {
@@ -309,19 +309,25 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         return Family.GENERIC;
     }
 
-    private String appName(Family family, Listener listener, String cmdline, String container) {
+    private String appName(Family family, Listener listener, String cmdline, String container,
+                           SshExecutor ssh, SshTarget target) {
         if (container != null) {
             return sanitize(container, listener.port());
         }
         String derived = switch (family) {
-            case SPRINGBOOT, HTTP -> springBootName(cmdline);
+            case SPRINGBOOT, HTTP -> springBootName(cmdline, ssh, target, listener.pid());
             case FASTAPI -> fastApiName(cmdline);
             case GENERIC -> listener.process();
         };
         return sanitize(derived, listener.port());
     }
 
-    private String springBootName(String cmdline) {
+    /** Generic jar/dir names too vague to label an app — trigger a deeper probe instead. */
+    private static final java.util.Set<String> GENERIC_NAMES = java.util.Set.of(
+            "app", "application", "web", "api", "server", "service", "main", "demo",
+            "start", "run", "boot", "target", "build", "dist");
+
+    private String springBootName(String cmdline, SshExecutor ssh, SshTarget target, String pid) {
         Matcher name = SPRING_APP_NAME.matcher(cmdline);
         if (name.find()) {
             return name.group(1);
@@ -329,16 +335,110 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         // The executable jar is the token right AFTER `-jar` — not a `-cp`/`-classpath`
         // entry or a `-javaagent:`/`-agentpath:` jar (New Relic, OpenTelemetry, etc.),
         // which precede the main jar/class and would otherwise be picked as the app name.
+        String jarPath = jarPathAfterDashJar(cmdline);
+        String jarName = jarPath == null ? null : jarBaseName(jarPath);
+        if (jarName != null && !isGeneric(jarName)) {
+            return jarName;
+        }
+        // A generic (or missing) jar name — "app.jar", "web.jar". Reach further: the
+        // deploy directory (cheap, /proc/<pid>/cwd) usually IS the app name, then the jar
+        // manifest's Start-Class (the real app class; Main-Class is the boot loader).
+        String cwd = deployDirName(ssh, target, pid);
+        if (cwd != null && !isGeneric(cwd)) {
+            return cwd;
+        }
+        String fromManifest = manifestAppName(ssh, target, jarPath);
+        if (fromManifest != null) {
+            return fromManifest;
+        }
+        return jarName; // fall back to the generic jar name (else sanitize → app-<port>)
+    }
+
+    private boolean isGeneric(String n) {
+        return n == null || GENERIC_NAMES.contains(n.toLowerCase());
+    }
+
+    /** The path token right after {@code -jar}, or null (started via -cp + main class). */
+    private String jarPathAfterDashJar(String cmdline) {
         String[] tokens = cmdline.split("\\s+");
         for (int i = 0; i < tokens.length - 1; i++) {
             if (tokens[i].equals("-jar")) {
-                Matcher jar = JAR.matcher(tokens[i + 1]);
-                if (jar.find()) {
-                    return jar.group(1);
-                }
+                return tokens[i + 1];
             }
         }
-        return null; // no executable jar (e.g. started via -cp + main class) → app-<port>
+        return null;
+    }
+
+    /** {@code /opt/orders.jar} → {@code orders}. */
+    private String jarBaseName(String jarPath) {
+        Matcher jar = JAR.matcher(jarPath);
+        return jar.find() ? jar.group(1) : null;
+    }
+
+    /** Basename of {@code /proc/<pid>/cwd} (the deploy dir), or null. */
+    private String deployDirName(SshExecutor ssh, SshTarget target, String pid) {
+        List<String> out = Probes.lines(ssh, target, List.of("readlink", "/proc/" + pid + "/cwd"));
+        if (out.isEmpty()) {
+            return null;
+        }
+        String path = out.get(0).trim();
+        int slash = path.lastIndexOf('/');
+        String base = slash >= 0 ? path.substring(slash + 1) : path;
+        return base.isEmpty() ? null : base;
+    }
+
+    /**
+     * The app name from the jar's {@code META-INF/MANIFEST.MF} {@code Start-Class} (a
+     * Spring Boot fat jar's real main class; its {@code Main-Class} is only the boot
+     * loader), falling back to a non-loader {@code Main-Class} for a plain jar. Package
+     * is dropped, a trailing {@code Application}/{@code Kt} stripped, camelCase → kebab:
+     * {@code com.ex.BirthdayRsvpApplication} → {@code birthday-rsvp}. Null when {@code
+     * unzip} is absent or nothing usable is found.
+     */
+    private String manifestAppName(SshExecutor ssh, SshTarget target, String jarPath) {
+        // Only a plain jar path (no shell metacharacters) is passed, as an argv element.
+        if (jarPath == null || !jarPath.matches("[A-Za-z0-9._/-]+\\.jar")) {
+            return null;
+        }
+        List<String> raw = Probes.lines(ssh, target,
+                List.of("unzip", "-p", jarPath, "META-INF/MANIFEST.MF"));
+        if (raw.isEmpty()) {
+            return null;
+        }
+        // Unfold MANIFEST continuations (a line starting with a space continues the prior).
+        StringBuilder sb = new StringBuilder();
+        for (String line : raw) {
+            if (line.startsWith(" ") && sb.length() > 0) {
+                sb.append(line, 1, line.length());
+            } else {
+                sb.append('\n').append(line);
+            }
+        }
+        String startClass = null, mainClass = null;
+        for (String line : sb.toString().split("\n")) {
+            if (line.startsWith("Start-Class:")) {
+                startClass = line.substring("Start-Class:".length()).trim();
+            } else if (line.startsWith("Main-Class:")) {
+                mainClass = line.substring("Main-Class:".length()).trim();
+            }
+        }
+        String fqcn = startClass != null ? startClass : mainClass;
+        if (fqcn == null || fqcn.startsWith("org.springframework.boot.loader")) {
+            return null;
+        }
+        return classToAppName(fqcn);
+    }
+
+    /** {@code com.ex.BirthdayRsvpApplication} → {@code birthday-rsvp}. */
+    private String classToAppName(String fqcn) {
+        int dot = fqcn.lastIndexOf('.');
+        String simple = dot >= 0 ? fqcn.substring(dot + 1) : fqcn;
+        simple = simple.replaceAll("(Application|Kt)$", "");
+        if (simple.isEmpty()) {
+            return null;
+        }
+        String kebab = simple.replaceAll("([a-z0-9])([A-Z])", "$1-$2").toLowerCase();
+        return kebab.isEmpty() ? null : kebab;
     }
 
     private String fastApiName(String cmdline) {

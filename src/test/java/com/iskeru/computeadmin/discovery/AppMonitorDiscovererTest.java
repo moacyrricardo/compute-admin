@@ -135,6 +135,29 @@ class AppMonitorDiscovererTest {
     }
 
     @Test
+    void discover_GenericJarName_NamesFromDeployDir() {
+        // -jar /opt/app.jar → generic "app"; /proc/<pid>/cwd (the deploy dir) names it.
+        FakeSshExecutor ssh = new FakeSshExecutor(genericJarDeployDir());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+
+        assertThat(springboot.appPortList())
+                .containsExactly(new AppPortItem("birthday-rsvp", 8080, "process"));
+    }
+
+    @Test
+    void discover_GenericJarAndDir_NamesFromManifestStartClass() {
+        // Generic jar AND generic cwd → the fat jar's Start-Class (not the boot-loader
+        // Main-Class): package dropped, "Application" stripped, camelCase → kebab.
+        FakeSshExecutor ssh = new FakeSshExecutor(genericJarManifest());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+
+        assertThat(springboot.appPortList())
+                .containsExactly(new AppPortItem("payment-gateway", 8080, "process"));
+    }
+
+    @Test
     void discover_OnlyEverIssuesReadOnlyProbes() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
@@ -142,8 +165,8 @@ class AppMonitorDiscovererTest {
 
         assertThat(ssh.commands).isNotEmpty();
         assertThat(ssh.commands).allSatisfy(argv -> {
-            // Only ss / netstat / cat /proc / curl GETs — never a mutating verb.
-            assertThat(argv.get(0)).isIn("ss", "netstat", "cat", "curl");
+            // Only ss / netstat / cat / readlink / unzip / curl GETs — never a mutating verb.
+            assertThat(argv.get(0)).isIn("ss", "netstat", "cat", "readlink", "unzip", "curl");
             assertThat(argv).doesNotContainAnyElementsOf(MUTATING_TOKENS);
         });
         // The classifier really read /proc for the discovered PID.
@@ -232,6 +255,38 @@ class AppMonitorDiscovererTest {
                     ok("java -javaagent:/opt/newrelic/newrelic.jar -cp /app/lib/common.jar -jar /app/orders.jar --server.port=8080");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
             case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            default -> notFound();
+        };
+    }
+
+    private Function<List<String>, ExecResult> genericJarDeployDir() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))");
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/app.jar");
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "readlink /proc/1000/cwd" -> ok("/opt/birthday-rsvp");
+            default -> notFound();
+        };
+    }
+
+    private Function<List<String>, ExecResult> genericJarManifest() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))");
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /srv/app/app.jar");
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "readlink /proc/1000/cwd" -> ok("/srv/app");
+            case "unzip -p /srv/app/app.jar META-INF/MANIFEST.MF" -> ok(String.join("\n",
+                    "Manifest-Version: 1.0",
+                    "Main-Class: org.springframework.boot.loader.launch.JarLauncher",
+                    "Start-Class: com.acme.PaymentGatewayApplication"));
             default -> notFound();
         };
     }
