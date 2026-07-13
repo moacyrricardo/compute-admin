@@ -223,10 +223,11 @@ class DiscoveryServiceTest {
                     machine.getId(), alice.getId(), RecipeType.MONITOR, "monitor machine").orElseThrow();
             List<Action> vitals = actions.findByRecipe_IdOrderByName(monitor.getId());
 
-            // ...with the three read-only, param-free host-vitals actions, all
-            // PENDING_APPROVAL — MONITOR grants no auto-approval or read-only carve-out.
+            // ...with the four read-only, param-free host-vitals actions (cores/nproc
+            // is the spec-037 docker CPU-axis denominator), all PENDING_APPROVAL —
+            // MONITOR grants no auto-approval or read-only carve-out.
             assertThat(vitals).extracting(Action::getName)
-                    .containsExactlyInAnyOrder("cpu", "memory", "disk");
+                    .containsExactlyInAnyOrder("cpu", "memory", "disk", "cores");
             assertThat(vitals).allSatisfy(action -> {
                 assertThat(action.getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
                 assertThat(action.getApprovedByUserId()).isNull();
@@ -253,7 +254,7 @@ class DiscoveryServiceTest {
                 .toList();
         assertThat(monitors).hasSize(1);
         assertThat(actions.findByRecipe_IdOrderByName(monitors.get(0).getId()))
-                .extracting(Action::getName).containsExactlyInAnyOrder("cpu", "memory", "disk");
+                .extracting(Action::getName).containsExactlyInAnyOrder("cpu", "memory", "disk", "cores");
     }
 
     @Test

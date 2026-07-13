@@ -14,9 +14,10 @@ import static com.iskeru.computeadmin.discovery.Proposals.literal;
 
 /**
  * Proposes the universal host-vitals recipe {@code monitor machine}: a single
- * {@link RecipeType#MONITOR}-typed recipe with three read-only, param-free actions —
+ * {@link RecipeType#MONITOR}-typed recipe with four read-only, param-free actions —
  * <b>cpu</b> ({@code top -bn1}), <b>memory</b> ({@code free -m}, physical + swap),
- * and <b>disk</b> ({@code df -h}). It is the host-level counterpart to the app-monitor
+ * <b>disk</b> ({@code df -h}), and <b>cores</b> ({@code nproc}, the docker CPU-axis
+ * denominator, spec-037). It is the host-level counterpart to the app-monitor
  * family: a {@code MONITOR} action <strong>without</strong> an {@code APP_PORT_LIST}
  * param, which is how the dashboard (spec-024) routes it to the host panel rather than
  * an app card.
@@ -53,7 +54,14 @@ public class MonitorMachineDiscoverer implements RecipeDiscoverer {
                         List.of(literal("free"), literal("-m")), List.of()),
                 new ProposedAction("disk",
                         "Filesystem usage, human-readable (df -h). Read-only.", false,
-                        List.of(literal("df"), literal("-h")), List.of()));
+                        List.of(literal("df"), literal("-h")), List.of()),
+                // spec-037: the logical CPU count, the denominator for the docker
+                // consumer CPU axis (docker stats CPUPerc sums cores, so % of host =
+                // sum ÷ nproc). Named "cores" — not "cpu"/"load" — so the client's
+                // metricKind() never confuses it with the top -bn1 host-CPU action.
+                new ProposedAction("cores",
+                        "Logical CPU count (nproc). Read-only.", false,
+                        List.of(literal("nproc")), List.of()));
         return List.of(new ProposedRecipe(RecipeType.MONITOR, "monitor machine",
                 "Universal host vitals: CPU, memory + swap, and disk usage.", actions));
     }
