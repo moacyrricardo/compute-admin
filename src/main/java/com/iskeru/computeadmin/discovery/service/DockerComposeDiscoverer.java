@@ -36,14 +36,16 @@ import static com.iskeru.computeadmin.discovery.Proposals.literal;
  *
  * <p><strong>Classification (concern-030 option B).</strong> Each container's image is
  * matched against {@link DatastoreImages}. A project with a non-datastore (app) service
- * is an {@link ConsumerRole#APP}; its own datastore services are {@link
- * Dedication#DEDICATED} to it ({@code owner = project}). A datastore <em>not</em> in any
- * project (a bare {@code docker run redis}) is {@link Dedication#SHARED} (no single
- * owner; {@code usedBy} best-effort, left empty in v1). Everything else docker is routed
- * to the {@link Bucket#DOCKER} remainder. These land as the spec-032 consumer labels
- * ({@code source = DOCKER}, {@code role}, {@code dedication}, {@code owner}) the monitor
- * read surfaces; the native↔docker dedup keys on {@code appName} so a springboot app that
- * is both framework-classified and compose-labelled shows once, docker-sourced.
+ * is a single {@link ConsumerRole#APP} consumer whose {@code services} carry <em>all</em>
+ * its containers — app and datastore — each tagged with its {@code role}; a datastore
+ * service inside such a project is thereby <em>dedicated</em> to it (spec-038), surfaced
+ * by the Databases lens rather than as its own top-level consumer. A datastore <em>not</em>
+ * in any project (a bare {@code docker run redis}) is a {@link Dedication#SHARED} consumer
+ * (no single owner; {@code usedBy} best-effort, left empty in v1). Everything else docker
+ * is routed to the {@link Bucket#DOCKER} remainder. These land as the spec-032 consumer
+ * labels ({@code source = DOCKER}, {@code role}, {@code dedication}) the monitor read
+ * surfaces; the native↔docker dedup keys on {@code appName} so a springboot app that is
+ * both framework-classified and compose-labelled shows once, docker-sourced.
  *
  * <p><strong>Read-only, fixed probes.</strong> Enumeration runs only
  * {@code command -v docker} and {@code docker ps --format '{{json .}}'}; the proposed
@@ -122,35 +124,46 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
 
     // --- proposal assembly --------------------------------------------------
 
-    /** One compose project → a MONITOR recipe carrying its app + dedicated-db consumers. */
+    /**
+     * One compose project → a MONITOR recipe carrying a <strong>single</strong> consumer
+     * (spec-038). An app project is ONE {@link ConsumerRole#APP} consumer whose {@code
+     * services} list carries <em>all</em> of its containers — app services and datastore
+     * services alike — each tagged with its {@code role}. A project's dedicated datastore
+     * is thus a {@code role=DATABASE} <em>service inside its project</em> (dedicated to it
+     * by virtue of that role + parent project), <strong>not</strong> a separate top-level
+     * consumer — so the fleet Apps view shows one card per project and the Databases lens
+     * derives the Dedicated band from these services (matching the design mock). A
+     * datastore-only project (no app service) stays one {@link Dedication#SHARED}
+     * {@link ConsumerRole#DATABASE} consumer.
+     */
     private ProposedRecipe projectRecipe(String project, List<Container> members) {
-        List<DockerService> appServices = new ArrayList<>();
-        List<DockerService> dbServices = new ArrayList<>();
+        List<DockerService> services = new ArrayList<>();
+        boolean hasApp = false;
+        boolean hasDb = false;
         for (Container c : members) {
             boolean db = DatastoreImages.isDatastore(c.image());
-            DockerService svc = new DockerService(c.name(), c.image(), db ? ConsumerRole.DATABASE : ConsumerRole.APP);
-            (db ? dbServices : appServices).add(svc);
+            services.add(new DockerService(c.name(), c.image(), db ? ConsumerRole.DATABASE : ConsumerRole.APP));
+            hasApp |= !db;
+            hasDb |= db;
         }
 
-        List<DockerConsumer> consumers = new ArrayList<>();
-        if (!appServices.isEmpty()) {
-            // An app project: the app itself, plus each of its datastores DEDICATED to it.
-            consumers.add(new DockerConsumer(project, ConsumerRole.APP, null, null,
-                    List.of(), null, appServices));
-            for (DockerService db : dbServices) {
-                consumers.add(new DockerConsumer(db.name(), ConsumerRole.DATABASE, Dedication.DEDICATED,
-                        project, List.of(), null, List.of(db)));
-            }
-        } else if (!dbServices.isEmpty()) {
+        DockerConsumer consumer;
+        if (hasApp) {
+            // An app project: ONE consumer carrying every service (app + datastore). Each
+            // role=DATABASE service is dedicated to this project (owner = the project),
+            // surfaced by the Databases lens — no separate dedicated consumer (spec-038).
+            consumer = new DockerConsumer(project, ConsumerRole.APP, null, null,
+                    List.of(), null, services);
+        } else if (hasDb) {
             // A datastore-only compose project: no owning app service, so SHARED.
-            consumers.add(new DockerConsumer(project, ConsumerRole.DATABASE, Dedication.SHARED, null,
-                    List.of(), null, dbServices));
+            consumer = new DockerConsumer(project, ConsumerRole.DATABASE, Dedication.SHARED, null,
+                    List.of(), null, services);
         } else {
-            consumers.add(new DockerConsumer(project, ConsumerRole.OTHER, null, null,
-                    List.of(), null, List.of()));
+            consumer = new DockerConsumer(project, ConsumerRole.OTHER, null, null,
+                    List.of(), null, List.of());
         }
         return ProposedRecipe.ofDocker(project,
-                "Discovered docker compose project '" + project + "'.", dockerChecks(), consumers);
+                "Discovered docker compose project '" + project + "'.", dockerChecks(), List.of(consumer));
     }
 
     /** A standalone datastore container ({@code docker run redis}) → a SHARED consumer. */
