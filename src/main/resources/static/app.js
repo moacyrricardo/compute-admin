@@ -2135,13 +2135,30 @@
   // owner split per axis; shared datastores (many users, no owner) show "used by"
   // chips and NO per-app split. It is a re-slice of the SAME consumers, not a move.
 
+  // spec-038: a compose project is ONE consumer whose services carry its datastores, so
+  // the Dedicated band is derived from each app project's role=DATABASE SERVICES (owner =
+  // the project), one slice per datastore — preserving the per-datastore axis split. The
+  // Shared band stays the top-level DATABASE consumers (standalone datastores + datastore-
+  // only projects). It is a re-slice of the SAME containers the Apps view shows.
   function datastoresOf(consumers) {
     var ded = [], shared = [];
     consumers.forEach(function (c) {
-      if (c.role !== "DATABASE") return;
-      (c.dedication === "SHARED" ? shared : ded).push(c);
+      if (c.role === "DATABASE") { shared.push(c); return; }
+      (c.services || []).forEach(function (s) {
+        if (s.role !== "DATABASE") return;
+        ded.push({ id: c.id, owner: c.name, name: s.name, image: s.image,
+          ram: s.ram, cpu: s.cpu, disk: s.disk, _hue: c._hue });
+      });
     });
     return { ded: ded, shared: shared };
+  }
+
+  // A dedicated-datastore label: its own service name, prefixed with the owning project
+  // when the name doesn't already carry it — so two datastores of one project (e.g. a
+  // postgres + a redis) are told apart in the split (spec-038).
+  function dedLabel(i) {
+    if (i.owner && i.name && i.name.indexOf(i.owner) < 0) return i.owner + " / " + i.name;
+    return i.name || i.owner || "";
   }
 
   /** A segmented split of the dedicated datastores on one axis, coloured per owner. */
@@ -2152,7 +2169,7 @@
     items.forEach(function (i) {
       var v = i[axis];
       if (v == null || v <= 0) return;
-      var seg = h("div", { class: "axis-seg", title: (i.owner || i.name) + " · " + pctText(v) + " of host" });
+      var seg = h("div", { class: "axis-seg", title: dedLabel(i) + " · " + pctText(v) + " of host" });
       seg.style.width = (total > 0 ? (v / total * 100) : 0) + "%";
       seg.style.background = consumerColorVar(i);
       track.appendChild(seg);
@@ -2162,7 +2179,7 @@
       var dot = h("span", { class: "legend-dot" });
       dot.style.background = consumerColorVar(i);
       return h("span", { class: "row", style: "gap:6px" }, dot,
-        (i.owner || i.name) + " " + (share == null ? "—" : share + "%"));
+        dedLabel(i) + " " + (share == null ? "—" : share + "%"));
     });
     return h("div", { class: "meter" },
       h("div", { class: "meter-head" },
@@ -2458,9 +2475,14 @@
         h("div", { class: "k", text: label }),
         h("div", { class: "v" + (na ? " na" : ""), text: pctText(s[key]) }));
     }
+    // A role=DATABASE service is a datastore dedicated to this project (spec-038) — tag it
+    // so the drawer reads the datastore as a member of the project, not a stray container.
+    var roleTag = s.role === "DATABASE"
+      ? h("span", { class: "tag", style: "margin-left:6px", text: "database" })
+      : null;
     return h("div", { class: "drow" },
       h("div", { class: "grow" },
-        h("div", { style: "font-weight:600", text: s.name }),
+        h("div", { style: "font-weight:600" }, s.name, roleTag),
         h("div", { class: "small dim mono", text: s.image || "" })),
       h("div", { class: "daxes" }, ax("ram", "RAM"), ax("cpu", "CPU"), ax("disk", "DISK")));
   }
