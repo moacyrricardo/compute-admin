@@ -18,6 +18,7 @@ import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionSnapshot;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
 import com.iskeru.computeadmin.recipe.service.ParamValidationException;
+import com.iskeru.computeadmin.recipe.service.ScriptPinService;
 import com.iskeru.computeadmin.run.model.Run;
 import com.iskeru.computeadmin.run.model.RunStatus;
 import com.iskeru.computeadmin.run.repository.RunRepository;
@@ -53,6 +54,9 @@ import java.util.Map;
  *   <li>the action's <em>live</em> content hash must equal its
  *       {@code approvedSnapshotHash}, else {@link ActionModifiedException} (409) —
  *       re-checking the spec-004 binding at run time;</li>
+ *   <li>a pinned {@code CUSTOM} action's <em>live</em> script bytes must equal its
+ *       {@code approvedScriptHash}, else {@link ScriptModifiedException} (409) — the
+ *       independent content-pinning gate re-probed over SSH (spec-015);</li>
  *   <li>{@link ParamBinder#bind} validates params and yields the discrete argv,
  *       else {@link com.iskeru.computeadmin.recipe.service.ParamValidationException}
  *       (400).</li>
@@ -92,6 +96,7 @@ public class RunService {
     private final MachineService machineService;
     private final ActionService actionService;
     private final ParamBinder paramBinder;
+    private final ScriptPinService scriptPin;
     private final SshExecutor ssh;
     private final RunOutputHub hub;
     private final TaskExecutor runExecutor;
@@ -99,13 +104,14 @@ public class RunService {
     private final ApplicationEventPublisher events;
 
     public RunService(RunRepository runs, MachineService machineService, ActionService actionService,
-                      ParamBinder paramBinder, SshExecutor ssh, RunOutputHub hub,
-                      @Qualifier("runExecutor") TaskExecutor runExecutor, ObjectMapper json,
-                      ApplicationEventPublisher events) {
+                      ParamBinder paramBinder, ScriptPinService scriptPin, SshExecutor ssh,
+                      RunOutputHub hub, @Qualifier("runExecutor") TaskExecutor runExecutor,
+                      ObjectMapper json, ApplicationEventPublisher events) {
         this.runs = runs;
         this.machineService = machineService;
         this.actionService = actionService;
         this.paramBinder = paramBinder;
+        this.scriptPin = scriptPin;
         this.ssh = ssh;
         this.hub = hub;
         this.runExecutor = runExecutor;
@@ -122,6 +128,7 @@ public class RunService {
      * @throws ActionNotFoundException                                         404
      * @throws ActionNotApprovedException                                      409
      * @throws ActionModifiedException                                         409
+     * @throws ScriptModifiedException                                         409
      * @throws com.iskeru.computeadmin.recipe.service.ParamValidationException 400
      */
     @Transactional
@@ -142,6 +149,20 @@ public class RunService {
         // fan-out item list is a runtime value, not part of the content hash (spec-022).
         if (!ActionSnapshot.hash(action).equals(action.getApprovedSnapshotHash())) {
             throw new ActionModifiedException(actionId);
+        }
+        // Content gate (spec-015): a pinned CUSTOM action re-probes its wrapped script's
+        // bytes and refuses if they drifted (or became unreadable) since approval — the
+        // second, independent run-time gate beside the structural-drift check above. A
+        // non-pinned action (approvedScriptHash null: non-CUSTOM, or a legacy pre-015
+        // approval) skips the probe entirely. Thrown synchronously, before any QUEUED run
+        // is persisted or dispatched, so the caller gets a 409 and a drifted script never
+        // runs.
+        if (action.getApprovedScriptHash() != null) {
+            String live = scriptPin.probe(machine, ScriptPinService.scriptPath(action), action.isSudo())
+                    .orElseThrow(() -> new ScriptModifiedException(actionId));
+            if (!live.equals(action.getApprovedScriptHash())) {
+                throw new ScriptModifiedException(actionId);
+            }
         }
 
         SshTarget target = new SshTarget(machine.getHost(), machine.getPort(), machine.getLoginUser());

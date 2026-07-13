@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.recipe.service;
 import com.iskeru.computeadmin.common.CurrentUser;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
+import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.repository.ActionRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,10 +34,13 @@ public class ApprovalService {
 
     private final ActionService actionService;
     private final ActionRepository actions;
+    private final ScriptPinService scriptPin;
 
-    public ApprovalService(ActionService actionService, ActionRepository actions) {
+    public ApprovalService(ActionService actionService, ActionRepository actions,
+                           ScriptPinService scriptPin) {
         this.actionService = actionService;
         this.actions = actions;
+        this.scriptPin = scriptPin;
     }
 
     /** {@code DRAFT → PENDING_APPROVAL}. */
@@ -54,6 +58,14 @@ public class ApprovalService {
      * {@code PENDING_APPROVAL → APPROVED}. Binds {@code approvedSnapshotHash} to the
      * current content hash, and records {@code approvedAt} and the approver
      * ({@code approvedByUserId = } current user). Reachable only from REST/UI.
+     *
+     * <p>For a {@code CUSTOM} action (spec-015) it also <strong>pins the wrapped
+     * script's bytes</strong>: it probes the leading {@code LITERAL} path over SSH and
+     * binds {@code approvedScriptHash}, closing the approve-then-run TOCTOU window. The
+     * probe runs <em>before</em> any state mutation, so an unreadable script refuses
+     * approval ({@link ScriptUnreadableException}) with the action left untouched
+     * ({@code PENDING_APPROVAL}). Non-{@code CUSTOM} actions leave the script hash null.
+     * Approval of a {@code CUSTOM} action therefore now requires the box to be reachable.
      */
     @Transactional
     public Action approve(String actionId) {
@@ -61,8 +73,17 @@ public class ApprovalService {
         if (action.getApprovalState() != ApprovalState.PENDING_APPROVAL) {
             throw new IllegalApprovalTransitionException(action.getApprovalState(), "approve");
         }
+        // Pin the script FIRST (CUSTOM only) so an unreadable script refuses approval
+        // without mutating the action's approval state.
+        String scriptHash = null;
+        if (action.getRecipe().getType() == RecipeType.CUSTOM) {
+            scriptHash = scriptPin.probe(action.getRecipe().getMachine(),
+                            ScriptPinService.scriptPath(action), action.isSudo())
+                    .orElseThrow(() -> new ScriptUnreadableException(actionId));
+        }
         action.setApprovalState(ApprovalState.APPROVED);
         action.setApprovedSnapshotHash(ActionSnapshot.hash(action));
+        action.setApprovedScriptHash(scriptHash);
         action.setApprovedAt(Instant.now());
         action.setApprovedByUserId(CurrentUser.require().userId());
         return actions.save(action);
@@ -78,6 +99,7 @@ public class ApprovalService {
         }
         action.setApprovalState(ApprovalState.REVOKED);
         action.setApprovedSnapshotHash(null);
+        action.setApprovedScriptHash(null);
         action.setApprovedAt(null);
         action.setApprovedByUserId(null);
         return actions.save(action);

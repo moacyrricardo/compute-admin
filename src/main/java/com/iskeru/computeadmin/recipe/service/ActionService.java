@@ -192,6 +192,9 @@ public class ActionService {
         // must be re-reviewed and re-approved. Never left to callers.
         action.setApprovalState(ApprovalState.DRAFT);
         action.setApprovedSnapshotHash(null);
+        // Clear the pinned script hash alongside the snapshot hash so the two are always
+        // cleared together: a re-approval re-probes and re-pins the script (spec-015).
+        action.setApprovedScriptHash(null);
         action.setApprovedAt(null);
         action.setApprovedByUserId(null);
         return actions.save(action);
