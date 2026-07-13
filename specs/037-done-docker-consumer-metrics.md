@@ -1,6 +1,6 @@
 # 037 — Docker consumer metric polling
 
-> **Status: todo.** Branch `moacyrricardo/spec-037-docker-consumer-metrics`, stacked on
+> **Status: done.** Branch `moacyrricardo/spec-037-docker-consumer-metrics`, stacked on
 > `moacyrricardo/spec-034-fleet-monitor-ui-redesign` (merge after spec-034). No Flyway
 > migration. Linear blocked (no ticket).
 
@@ -118,3 +118,29 @@ host actions. **No Flyway migration.**
 - **Disk denominator** is the `/` filesystem as a proxy for the docker data-root
   (`/var/lib/docker`); when they differ, or `df -h` is unapproved, disk shows `—`
   (033's stated data-root caveat).
+
+## Divergence from the spec (as built)
+
+Implemented faithfully to the four decisions; the notes below are the only deltas:
+
+- **UP / probe-chip synthesis for docker consumers.** Beyond filling the axes, the
+  poll also sets each docker consumer's `_up` (a running container ⇒ UP), `_anyApproved`,
+  and a small `_checkStates` list (`docker stats` / `docker disk`, only the reads that
+  produced data) so 034's consumer card renders a live pill and responded-probe chips
+  rather than "no data" / "approve to see". The spec text implied the axes only; this
+  keeps the card honest and consistent with the native path's `applyConsumerReading`.
+- **Committed the headless render check** at `src/test/js/docker-consumer-metrics.render-check.js`
+  (there is no in-repo JS test runner, so it is not wired into `mvn`; run with
+  `node src/test/js/docker-consumer-metrics.render-check.js`). It loads the real
+  `app.js` in a minimal DOM stub and asserts a docker consumer with a parsed `docker
+  stats` reading renders numeric axes (ram 51% / cpu 50% / disk 3%) and UP — plus the
+  `dockerBytes` / `parseDfTotal` / `parseDockerVolumes` unit dialects.
+- **Denominator sourcing, as decided.** The CPU denominator is the new `cores` (`nproc`)
+  host vital (spec-023's `monitor machine` recipe gained a fourth action); the disk
+  denominator is the `/` row of the existing `df -h` disk vital. Both degrade to `—`
+  when unapproved/absent. Named volumes are attributed to a compose project by the
+  `<project>_…` name convention (the stated best-effort; not split across projects).
+- **Verification.** `node --check src/main/resources/static/app.js` clean; the full
+  `mvn test` suite is green — **249 tests, 0 failures, 0 errors, 0 skipped** (incl. the
+  ArchTests / `GateArchTest`); the headless render check passes. Gate + `mcp/` +
+  `*ArchTest`s untouched.
