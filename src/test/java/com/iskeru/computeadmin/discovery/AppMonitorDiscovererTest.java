@@ -43,23 +43,24 @@ class AppMonitorDiscovererTest {
         assertThat(recipes).allSatisfy(r -> assertThat(r.type()).isEqualTo(RecipeType.MONITOR));
 
         // java -jar /opt/orders.jar → springboot monitor, pre-filled (orders, 8080).
+        // The app-level cpu check (spec-032) follows the process probe in every family.
         ProposedRecipe springboot = recipe(recipes, "springboot monitor");
         assertThat(springboot.actions()).extracting(ProposedAction::name)
-                .containsExactly("health", "metrics", "beans", "info", "process");
+                .containsExactly("health", "metrics", "beans", "info", "process", "cpu");
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("orders", 8080, "process"));
 
         // python3 uvicorn billing.main:app → fastapi monitor, pre-filled (billing, 8000).
-        // No Prometheus on /metrics → the metrics action is not proposed (process + health).
+        // No Prometheus on /metrics → the metrics action is not proposed (process + cpu + health).
         ProposedRecipe fastapi = recipe(recipes, "fastapi monitor");
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
-                .containsExactly("process", "health");
+                .containsExactly("process", "cpu", "health");
         assertThat(fastapi.appPortList())
                 .containsExactly(new AppPortItem("billing", 8000, "process"));
 
-        // an unclassifiable daemon → generic app monitor, process-probe only.
+        // an unclassifiable daemon → generic app monitor, process + cpu probes only.
         ProposedRecipe generic = recipe(recipes, "generic app monitor");
-        assertThat(generic.actions()).extracting(ProposedAction::name).containsExactly("process");
+        assertThat(generic.actions()).extracting(ProposedAction::name).containsExactly("process", "cpu");
         assertThat(generic.appPortList())
                 .containsExactly(new AppPortItem("mydaemon", 5000, "process"));
     }
@@ -85,7 +86,7 @@ class AppMonitorDiscovererTest {
 
         // /metrics responds → the optional Prometheus probe is proposed alongside health.
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
-                .containsExactly("process", "health", "metrics");
+                .containsExactly("process", "cpu", "health", "metrics");
     }
 
     @Test
@@ -118,7 +119,8 @@ class AppMonitorDiscovererTest {
 
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("http app monitor");
         ProposedRecipe http = recipe(recipes, "http app monitor");
-        assertThat(http.actions()).extracting(ProposedAction::name).containsExactly("liveness", "process");
+        assertThat(http.actions()).extracting(ProposedAction::name)
+                .containsExactly("liveness", "process", "cpu");
         assertThat(http.appPortList()).containsExactly(new AppPortItem("app", 8080, "process"));
     }
 
@@ -155,6 +157,28 @@ class AppMonitorDiscovererTest {
 
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("payment-gateway", 8080, "process"));
+    }
+
+    @Test
+    void discover_AppLevelCpuProbe_IsBoundedReadOnlyProcessTreeProbe() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction cpu = springboot.actions().stream()
+                .filter(a -> a.name().equals("cpu")).findFirst().orElseThrow();
+
+        // Read-only, login-user (no sudo), and fans out over the app-port list like the
+        // other probes: the only bound param is the validated port (spec-032, S4-safe).
+        assertThat(cpu.sudo()).isFalse();
+        assertThat(cpu.paramDefs()).extracting(p -> p.kind())
+                .containsExactly(com.iskeru.computeadmin.recipe.model.ParamKind.APP_PORT_LIST);
+        assertThat(cpu.argTokens()).anySatisfy(t ->
+                assertThat(t.value()).isEqualTo("port"));
+
+        // The script is a fixed process-tree CPU read (ps, PID + children) — never mutating.
+        String script = cpu.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
+        assertThat(script).contains("ps ").contains("--ppid").contains("pcpu");
+        MUTATING_TOKENS.forEach(tok -> assertThat(script).doesNotContain(" " + tok + " "));
     }
 
     @Test

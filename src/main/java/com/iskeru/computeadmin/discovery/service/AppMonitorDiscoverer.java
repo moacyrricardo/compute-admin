@@ -58,7 +58,11 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  * ({@link DockerDiscoverer}) under one app card. {@code runtime = systemd} for a unit,
  * else {@code process}.
  *
- * <p>spec-025.
+ * <p>Every app-monitor family also gains an app-level {@code cpu} check (spec-032): a
+ * bounded, read-only process-tree CPU probe ({@link #CPU_PROBE_SCRIPT}), the first-class
+ * CPU metric-kind the redesigned fleet UI reads alongside the process probe's RSS.
+ *
+ * <p>spec-025; the app-level CPU check added in spec-032.
  */
 @Component
 public class AppMonitorDiscoverer implements RecipeDiscoverer {
@@ -111,6 +115,28 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             "  grep -E '^(VmRSS|Threads):' \"/proc/$pid/status\" 2>/dev/null",
             "  awk '{print \"utime=\"$14\" stime=\"$15\" starttime=\"$22}' \"/proc/$pid/stat\" 2>/dev/null",
             "  ls \"/proc/$pid/fd\" 2>/dev/null | wc -l | sed 's/^/fds=/'",
+            "done");
+
+    /**
+     * The fixed process-tree CPU probe (spec-032): from the listener port {@code $1}
+     * resolve the owning PID(s) via {@code ss}, then read each PID's <em>and its direct
+     * children's</em> {@code %cpu} via {@code ps} — the app's process tree (its PID plus
+     * children), which covers gunicorn/uvicorn worker fan-out and a Spring Boot app's
+     * helper processes. Bounded (a single {@code ps} level, no recursion), read-only, and
+     * run as the login user (no {@code sudo}); the port is the sole positional argument,
+     * never interpolated at authoring time (S4). Sampling is one-shot — {@code ps}'
+     * {@code %cpu} is lifetime-average, and the shared-memory/backend double-count for a
+     * multi-process app is summed naïvely; both caveats are documented, not solved, in v1
+     * (spec-032 Known Gaps, spec-023 gap).
+     */
+    private static final String CPU_PROBE_SCRIPT = String.join("\n",
+            "port=\"$1\"",
+            "pids=$(ss -ltnpH 2>/dev/null | grep -E \":$port \" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)",
+            "[ -z \"$pids\" ] && { echo \"no listener on port $port\"; exit 0; }",
+            "for pid in $pids; do",
+            "  echo \"## pid $pid\"",
+            "  ps -o pid=,ppid=,pcpu=,comm= -p \"$pid\" 2>/dev/null",
+            "  ps -o pid=,ppid=,pcpu=,comm= --ppid \"$pid\" 2>/dev/null",
             "done");
 
     /** ss line's owning process spec: {@code (("java",pid=1234,fd=10))}. */
@@ -473,13 +499,16 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                     endpointProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"),
                     endpointProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"),
                     endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"),
-                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."));
+                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."),
+                    cpuProbe());
             case FASTAPI -> fastApiActions(prometheus);
             case HTTP -> List.of(
                     endpointProbe("liveness", "HTTP liveness (GET / — no Actuator present).", "/"),
-                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."));
+                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."),
+                    cpuProbe());
             case GENERIC -> List.of(
-                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe only)."));
+                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe only)."),
+                    cpuProbe());
         };
         return new ProposedRecipe(RecipeType.MONITOR, family.recipeName, family.recipeDescription,
                 actions, apps);
@@ -488,6 +517,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private List<ProposedAction> fastApiActions(boolean prometheus) {
         List<ProposedAction> actions = new ArrayList<>();
         actions.add(processProbe("process", "RSS/CPU/threads/fds from /proc across worker PIDs (always probed)."));
+        actions.add(cpuProbe());
         actions.add(endpointProbe("health",
                 "FastAPI liveness (default /openapi.json — is this app answering).", "/openapi.json"));
         if (prometheus) {
@@ -514,6 +544,21 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private ProposedAction processProbe(String name, String description) {
         return new ProposedAction(name, description, false,
                 List.of(literal("sh"), literal("-c"), literal(PROCESS_PROBE_SCRIPT),
+                        literal("sh"), param(ParamBinder.PORT_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * The app-level CPU check (spec-032): a fixed process-tree CPU probe driven by
+     * {@link #CPU_PROBE_SCRIPT}, port as {@code $1}. Named {@code cpu} so it is the
+     * first-class app CPU metric-kind the fleet UI reads (the host CPU vitals probe of
+     * spec-023 is the host-level counterpart). Read-only, login-user, no {@code sudo} —
+     * gated like every action.
+     */
+    private ProposedAction cpuProbe() {
+        return new ProposedAction("cpu",
+                "Process-tree CPU% (the app's PID plus children) via ps. Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(CPU_PROBE_SCRIPT),
                         literal("sh"), param(ParamBinder.PORT_COMPONENT)),
                 List.of(appPortList(APP_LIST_PARAM)));
     }
