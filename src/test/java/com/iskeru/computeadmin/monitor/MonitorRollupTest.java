@@ -27,11 +27,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The fleet per-app rollup (spec-029) as a pure DTO assembly: {@link MonitorMachineView#of}
  * turns a machine's app-monitor recipes into one {@link MonitorAppView} per pre-filled
  * {@code (app-name, port)} item — sharing the recipe's fan-out probes as {@code checks},
- * correlated to the machine's app-ops by {@code app-name} — plus the pure metric helpers
- * ({@code memPctOfHost}, {@code parseHostMemTotalMb}, {@code frameworkOf}). No DB, no wire:
- * the assembly is a pure function of the read aggregate, so it is unit-testable directly.
+ * correlated to the machine's app-ops by {@code app-name} — plus the pure
+ * {@code frameworkOf} classifier. No DB, no wire: the assembly is a pure function of
+ * the read aggregate, so it is unit-testable directly.
  *
- * <p>spec-029.
+ * <p>spec-029; the mem-axis helpers ({@code memPctOfHost}/{@code parseHostMemTotalMb})
+ * dropped in spec-032 (catalog H8 — the client is the sole source of truth).
  */
 class MonitorRollupTest {
 
@@ -90,30 +91,6 @@ class MonitorRollupTest {
         assertThat(view.apps()).isEmpty();
         assertThat(view.hostActions()).extracting(v -> v.id()).containsExactly(cpu.getId());
         assertThat(view.appActions()).isEmpty();
-    }
-
-    @Test
-    void memPctOfHost_RoundsRatioToWholePercent_AndGuardsMissingOrZero() {
-        assertThat(MonitorDtos.memPctOfHost(400, 1600)).isEqualTo(25);   // 25.0 → 25
-        assertThat(MonitorDtos.memPctOfHost(300, 800)).isEqualTo(38);    // 37.5 → 38 (round half up)
-        assertThat(MonitorDtos.memPctOfHost(1, 3)).isEqualTo(33);        // 33.33% → 33
-        assertThat(MonitorDtos.memPctOfHost(1, 1000)).isEqualTo(0);      // 0.1% → 0
-        assertThat(MonitorDtos.memPctOfHost(null, 1600)).isNull();
-        assertThat(MonitorDtos.memPctOfHost(400, null)).isNull();
-        assertThat(MonitorDtos.memPctOfHost(400, 0)).isNull();           // divide-by-zero guard
-        assertThat(MonitorDtos.memPctOfHost(400, -1)).isNull();
-    }
-
-    @Test
-    void parseHostMemTotalMb_ReadsMemRowFromFreeMinusM_ElseNull() {
-        String free = "              total        used        free\n"
-                + "Mem:           7976        2100        3000\n"
-                + "Swap:          2047           0        2047\n";
-        assertThat(MonitorDtos.parseHostMemTotalMb(free)).isEqualTo(7976);
-        assertThat(MonitorDtos.parseHostMemTotalMb(null)).isNull();
-        assertThat(MonitorDtos.parseHostMemTotalMb("  ")).isNull();
-        assertThat(MonitorDtos.parseHostMemTotalMb("no mem line here")).isNull();
-        assertThat(MonitorDtos.parseHostMemTotalMb("Mem: 0 0 0")).isNull();
     }
 
     @Test

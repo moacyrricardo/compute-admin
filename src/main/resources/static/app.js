@@ -1671,7 +1671,11 @@
     return seen ? Math.round(total / 1024) : null;
   }
 
-  /** round(rssMb / hostTotalMb * 100), null-safe — mirrors MonitorDtos.memPctOfHost. */
+  /**
+   * round(rssMb / hostTotalMb * 100), null-safe. The client is the SOLE owner of the
+   * mem-%-of-host axis: spec-032 dropped the dead server-side MonitorDtos.memPctOfHost
+   * twin (catalog H8), so this is the single source of truth for the axis.
+   */
   function clientMemPct(rssMb, hostTotalMb) {
     if (rssMb == null || hostTotalMb == null || hostTotalMb <= 0) return null;
     return Math.round(rssMb / hostTotalMb * 100);
