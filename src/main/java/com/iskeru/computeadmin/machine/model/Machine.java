@@ -44,7 +44,9 @@ import java.util.UUID;
 @Entity
 @Table(name = "machine", uniqueConstraints = {
         @UniqueConstraint(name = "uq_machine_owner_host_port_user",
-                columnNames = {"owner_id", "host", "port", "login_user"})
+                columnNames = {"owner_id", "host", "port", "login_user"}),
+        @UniqueConstraint(name = "uq_machine_owner_name",
+                columnNames = {"owner_id", "name"})
 })
 @Audited
 @Getter
@@ -61,6 +63,16 @@ public class Machine {
             foreignKey = @ForeignKey(name = "fk_machine_owner"))
     @Audited(targetAuditMode = RelationTargetAuditMode.NOT_AUDITED)
     private AppUser owner;
+
+    /**
+     * User-provided, human-meaningful label (e.g. {@code web-prod-1}), unique per
+     * owner via {@code uq_machine_owner_name}. It is the MCP-facing identifier:
+     * {@code host}/{@code port}/{@code loginUser} stay UI-only so no infra/topology
+     * leaks into the LLM context (spec-028, resolving ARCH S9). {@code @Audited}
+     * config column like the others.
+     */
+    @Column(nullable = false, length = 255)
+    private String name;
 
     @Column(nullable = false, length = 255)
     private String host;
