@@ -43,8 +43,12 @@ merges and renames it).
 | 027 | Signal-driven machine unreachability | ⚪ todo | **concern** — the going-**OFFLINE**/UNREACHABLE counterpart to 019's instant going-**ONLINE** event: flip faster than the 5-min cron **without flapping** (leaning: a connect-failure triggers an immediate authoritative confirmation probe, not a direct flip). Builds on 019 (PR #30) |
 | 028 | Machine name & MCP identity hardening | ⚪ todo | **security** (ARCH **S9**): MCP identifies machines by `id`+user-provided `name`, hides `host`/`port`/`loginUser`; adds a required per-owner-unique **name** at registration; splits the MCP view (`id/name/tags/status`) from the full UI view; `register_machine` still takes host as input but stops echoing it |
 | 029 | Fleet monitoring dashboard | ✅ done | fleet view — per-machine sections, tag + app-name filters (filtered-out = unpolled), a synthetic `no-apps` host-only view, per-app **mem-% of host**, unified per-app cards (checks + ops), new read `GET /api/runs/{id}/children`; folds in the spec-025 actuator-liveness → `http app monitor` fallback |
-| 030 | Docker container monitoring | ⚪ todo | **concern** (options open) — the fleet Monitor (029) finds **none** of a box's containers because host `ss -ltnp` misses bridge-networked/portless/datastore containers behind `docker-proxy`/DNAT; enumerates options for Docker-native discovery (`docker ps`/`stats`/`inspect`) + two open doubts: gate discovery behind `docker ps`-allowed (recipe-depends-on-recipe), and how a Spring Boot **in** Docker should be monitored (container vs actuator vs unified lens) |
+| 030 | Docker container monitoring | 🟢 resolved | **concern** — graduated into specs **032–035** (2026-07); stays the problem framing, the *how* lives there |
 | 031 | Deferred follow-ups triage | ⚪ todo | **concern** (options open) — consolidates every deferred implementation note + spec-eval finding across built specs and merged PRs (#38/#39) into one worklist; each item re-asked **keep / drop / already-addressed**. Overlaps but does not replace the H-backlog below (see **H8**) |
+| 032 | Monitoring axes foundations | ⚪ todo | the **consumer contract** for RAM/CPU/disk-as-%-of-host: `MonitorConsumerView` (role/source/dedication/owner/usedBy/bucket) + app-level CPU metric-kind; extends 022; prereq for 033/034. Folds in the **H8** cleanup (single source of truth per axis) |
+| 033 | Docker container discovery | ⚪ todo | docker-native discovery — **compose project = app** (`com.docker.compose.project` label), datastore classification by image, `docker stats`/`ps -s`/`system df -v` metrics, springboot-in-docker shown once. `RecipeType.MONITOR`, gate untouched. **Resolves concern 030**; gated by 035 |
+| 034 | Fleet monitor UI/UX redesign | ⚪ todo | segmented tri-axis machine bars (one colour per consumer), all-three-axes cards, the **databases lens** (Dedicated owner-split / Shared used-by, one lens two bands), hidden docker/system buckets, categorical palette token group. spec-012 idiom; ref [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html). Builds on 029 + 032 |
+| 035 | Discovery enablement & UX | ⚪ todo | **per-family** discovery enablement (Docker/Systemd/Database…), **docker off by default** (socket = root-equivalent); a machine "Discovery" panel. Enablement ≠ the approval gate. **Resolves 030 doubt (1)**; gates 033 |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
@@ -113,20 +117,28 @@ thread-confined and the MCP SDK dispatches tool handlers off the request thread,
 `immediateExecution(true)` (tools run on the token-bound request thread) plus a test
 asserting the user resolves inside a tool call.
 
+## The docker-monitoring epic (specs 032–035)
+
+Concern **030** graduated into a four-spec build (the *how* now lives in the specs; 030
+keeps the problem framing). Dependency order — 033 and 034 parallelise once 032 lands:
+
+```
+032 axes foundations → ( 033 docker discovery  ·  034 monitor UI/UX ) → 035 discovery enablement
+```
+
+- **032** pins the shared **consumer contract** (RAM/CPU/disk as % of host; role/source/
+  dedication/owner/usedBy/bucket) so 033 (backend) and 034 (frontend) can build in
+  parallel; it also folds in the **H8** dead-helper cleanup.
+- **033** adds docker-native discovery keyed on the `com.docker.compose.project` label
+  (compose project = app), classifies datastores, and takes metrics from `docker stats` /
+  `ps -s` / `system df -v`. Gate untouched (`MONITOR` recipes only).
+- **034** is the UI/UX redesign — segmented tri-axis bars, the **databases lens**
+  (Dedicated owner-split vs Shared used-by), hidden docker/system buckets — in the
+  spec-012 idiom; design reference [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html).
+- **035** gates *whether* a discoverer may probe: **per-family enablement, docker off by
+  default** (the socket is root-equivalent). Enablement is not the approval gate.
+
 ## Open concerns
-
-Two authored concerns (options open, no decision yet) sit ahead of the next build:
-
-- **[030](./030-todo-docker-container-monitoring.md) — Docker container monitoring.**
-  The fleet Monitor (029) finds apps via the host's `ss -ltnp` (listening port → PID
-  → cmdline), which structurally misses bridge-networked containers, portless workers,
-  and datastores behind `docker-proxy`/DNAT. Lays out options for **Docker-native
-  discovery** (`docker ps` / `docker stats` / `docker inspect`) on top of the existing
-  `DockerDiscoverer` and the spec-022 conventions (`appName`/`APP_PORT_LIST`, fan-out
-  run mode, `RecipeType.MONITOR`), plus two open doubts to resolve before it becomes a
-  spec: (1) gate Docker discovery behind `docker ps` being approved first
-  (recipe-depends-on-recipe), and (2) the right lens for a Spring Boot running **in**
-  Docker (container vs actuator vs unified).
 
 - **[031](./031-todo-deferred-followups-triage.md) — Deferred follow-ups triage.**
   A single worklist of every deferred note and spec-eval finding across the built
