@@ -314,6 +314,11 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 /* ------------------------------------------------------- command / mono ---- */
 
 .command {
+  /* A block, not the default inline <code>: otherwise the background + padding
+     paint per wrapped line-box (ragged fragments) and overflow-x is ignored, so a
+     multi-line command spills past a narrow container (e.g. the review drawer). */
+  display: block;
+  max-width: 100%;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   background: var(--surface-2);
