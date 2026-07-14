@@ -24,6 +24,35 @@ drawer). Outputs are named `NN-slug.desktop.gif` / `NN-slug.mobile.gif`.
 - **mobile** — 390×844 (iPhone-class), `deviceScaleFactor` 2 — below the spec-043
   `--bp-sm` (480px) breakpoint, so the Menu nav + stacked/bottom-sheet layout render.
 
+## Recordings
+
+Produced from the `demo` profile driven by the `test-flow-headless` recorder (2026-07-14).
+Desktop = 1280×800, mobile = 390×844 (Menu nav + bottom-sheet drawer).
+
+### 1 · Add machine + discover
+| Desktop | Mobile |
+|---|---|
+| ![add machine + discover, desktop](out/01-add-machine-discover.desktop.gif) | ![add machine + discover, mobile](out/01-add-machine-discover.mobile.gif) |
+
+### 2 · Enable / approve the monitors
+| Desktop | Mobile |
+|---|---|
+| ![approve monitors, desktop](out/02-enable-monitor.desktop.gif) | ![approve monitors, mobile](out/02-enable-monitor.mobile.gif) |
+
+### 3 · Monitor fleet view
+| Desktop | Mobile |
+|---|---|
+| ![monitor fleet, desktop](out/03-monitor-fleet.desktop.gif) | ![monitor fleet, mobile](out/03-monitor-fleet.mobile.gif) |
+
+> **Caveats visible in the flow-3 recordings.**
+> - `api-prod-2` (pre-seeded, fully approved) shows **populated** RAM/CPU/disk bars with the
+>   per-app + other/system breakdown; `web-prod-1` (just onboarded on camera, only its first
+>   monitors approved in flow 2) shows its apps but **empty bars** — approving its remaining
+>   host-vitals would populate it. Re-record if you want both hosts full.
+> - api-prod-2's **native** `postgres` shows as an app, not in the Databases lens — the
+>   native-datastore classification gap (see [`fake-fleet.md`](./fake-fleet.md) and concern 040).
+>   web-prod-1's **docker** `postgres` does appear in the Databases *Shared* band.
+
 The target end-state the recordings depict is the fake fleet defined in
 [`fake-fleet.md`](./fake-fleet.md):
 - **web-prod-1** — apps `checkout-api` (springboot) + `web-frontend` (generic) + a
@@ -71,7 +100,7 @@ python3 demo/record.py --steps demo/steps.md --section 1 --viewport mobile  --ou
 
 ## Status
 
-**Built + validated (backend); recording pass still outstanding.**
+**Built, validated, and recorded** (all 6 GIFs in [`out/`](./out), embedded under [Recordings](#recordings)).
 - [x] Implement the `demo`-profile `CannedSshExecutor` + seeder per
       [`fake-fleet.md`](./fake-fleet.md) and validate its outputs against the live
       parsers (the contract table lists the exact parser for each command). Done in
@@ -81,7 +110,9 @@ python3 demo/record.py --steps demo/steps.md --section 1 --viewport mobile  --ou
 - [x] Confirm the demo-DB override exists so the demo never touches real `./data`.
       `application-demo.yml` points the datasource at `./data-demo` (Flyway still owns
       the schema). `./data-demo` is gitignored; reset the demo by deleting it.
-- [ ] First recording pass; commit the produced `demo/out/*.gif`.
+- [x] First recording pass; committed `demo/out/*.gif` (6 GIFs, see [Recordings](#recordings)).
+      Flow-3 caveats noted there (web-prod-1 bars empty until its host-vitals are approved;
+      native DB shows as an app).
 
 > **Known deviation from `fake-fleet.md` (native datastore role).** api-prod-2's native
 > `postgres` surfaces as a **native `role=APP` consumer** (source `NATIVE`), not a
