@@ -1,0 +1,16 @@
+# compute-admin demo profile (demo/ harness).
+# Boots the REAL app against a FAKE fleet: the demo module swaps in a canned
+# SshExecutor (@Primary CannedSshExecutor) and a DemoSeeder ApplicationRunner, both
+# @Profile("demo"), so nothing here touches a real host. See demo/fake-fleet.md.
+#
+# Run: PORT=8099 mvn -q spring-boot:run -Dspring-boot.run.profiles=demo
+server:
+  port: ${PORT:8080}
+
+spring:
+  # THROWAWAY database: never the real ./data. Delete ./data-demo to reset the demo.
+  datasource:
+    url: jdbc:h2:file:./data-demo/compute-admin;AUTO_SERVER=TRUE
+  # Flyway still owns the schema (same migrations as dev/prod).
+  flyway:
+    enabled: true
