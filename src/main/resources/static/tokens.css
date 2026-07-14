@@ -53,6 +53,13 @@
   --sp-6: 24px;
   --sp-8: 32px;
 
+  /* --- responsive breakpoints + touch (spec-043) -------------------------- */
+  /* Named for intent + to drive min-heights; CSS @media queries cannot read a
+     var() in the query itself, so the media blocks use the literal 480px/720px.
+     --bp-sm is the phone breakpoint; 720px stays the tablet/stacked-shell one. */
+  --bp-sm: 480px;
+  --tap-min: 44px;
+
   /* --- radius + elevation ------------------------------------------------- */
   --radius: 6px;
   --radius-sm: 4px;

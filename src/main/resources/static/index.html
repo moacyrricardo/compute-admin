@@ -18,6 +18,10 @@
     <div class="brand">
       <span class="dot" aria-hidden="true"></span>
       <span>compute-admin</span>
+      <!-- spec-043: collapses the primary nav on phones/tablets (≤720px).
+           Hidden above 720px via CSS; toggled by app.js (aria-expanded). -->
+      <button id="nav-toggle" class="btn btn--sm nav-toggle" type="button"
+              aria-expanded="false" aria-controls="nav">Menu</button>
     </div>
 
     <header class="topbar">
@@ -28,7 +32,7 @@
       </div>
     </header>
 
-    <nav class="nav" aria-label="Primary">
+    <nav id="nav" class="nav" aria-label="Primary">
       <a href="#/machines" data-nav="machines">Machines</a>
       <a href="#/monitor" data-nav="monitor">Monitor</a>
       <a href="#/blueprints" data-nav="blueprints">Blueprints</a>
