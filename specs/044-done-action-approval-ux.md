@@ -1,6 +1,7 @@
 # 044 — Action approval UX (drawer review, split-button, action grid, machine naming)
 
-**Status:** todo · no Linear issue (blocked for this repo; tracked as `spec-044`).
+**Status:** done · branch `moacyrricardo/spec-044-impl-action-approval-ux` (stacked on
+`moacyrricardo/catalog-hygiene-015-028`) · no Linear issue (blocked for this repo; tracked as `spec-044`).
 
 ## Context
 
@@ -99,6 +100,29 @@ navigation); approve/revoke/etc. work from the drawer and the card's split butto
 first-approval or `changedSinceApproval` action routes through the drawer before arming;
 actions display 2–3 across on desktop and 1 on a phone; every machine reads name-first
 with a working copy-host button.
+
+## How the implementation differed
+
+Faithful to the Decision and Implementation. Notes:
+
+- The standalone action page is the existing `screenApproval` function (the spec
+  referred to it as `screenActionDetail`); its review body was extracted into
+  `renderActionReview(action, ctx)` shared with the drawer, and it stays reachable
+  by URL as the fallback.
+- The backend supports `submit` / `approve` / `revoke` (no `reject`), so the split
+  menu offers only those valid verbs plus "See more…" — no invented transition.
+- `actionsList(machine, recipe, actions)` now takes the machine + recipe objects
+  (was `mid, rid`) so the card can open the drawer and refresh the machine detail
+  in place after a transition.
+- The review-safety guard's "first-time approval" is derived from `!action.approvedAt`
+  (never previously approved); that OR `changedSinceApproval` routes the primary
+  through "Review & approve" (opens the drawer), never a direct one-click approve.
+- Copy-host copies the raw `machine.host`; the button title shows the full
+  `loginUser@host:port`. Wired into the machines list and the machine-detail page
+  head (name-first crumbs also applied to the run-form).
+- Testing: added `src/test/js/action-approval-ux.render-check.js` (the `node <file>`
+  idiom, not wired into `mvn`). The full Maven suite stays green (263 tests) and the
+  gate / `*ArchTest` are untouched (this is a UI-only change).
 
 ## Related
 
