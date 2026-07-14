@@ -45,11 +45,14 @@ merges and renames it).
 | 029 | Fleet monitoring dashboard | ✅ done | fleet view — per-machine sections, tag + app-name filters (filtered-out = unpolled), a synthetic `no-apps` host-only view, per-app **mem-% of host**, unified per-app cards (checks + ops), new read `GET /api/runs/{id}/children`; folds in the spec-025 actuator-liveness → `http app monitor` fallback |
 | 030 | Docker container monitoring | 🟢 resolved | **concern** — graduated into specs **032–035** (2026-07); stays the problem framing, the *how* lives there |
 | 031 | Deferred follow-ups triage | ⚪ todo | **concern** (options open) — consolidates every deferred implementation note + spec-eval finding across built specs and merged PRs (#38/#39) into one worklist; each item re-asked **keep / drop / already-addressed**. Overlaps but does not replace the H-backlog below (see **H8**) |
-| 032 | Monitoring axes foundations | ⚪ todo | the **consumer contract** for RAM/CPU/disk-as-%-of-host: `MonitorConsumerView` (role/source/dedication/owner/usedBy/bucket) + app-level CPU metric-kind; extends 022; prereq for 033/034. Folds in the **H8** cleanup (single source of truth per axis) |
-| 033 | Docker container discovery | ⚪ todo | docker-native discovery — **compose project = app** (`com.docker.compose.project` label), datastore classification by image, `docker stats`/`ps -s`/`system df -v` metrics, springboot-in-docker shown once. `RecipeType.MONITOR`, gate untouched. **Resolves concern 030**; gated by 035 |
-| 034 | Fleet monitor UI/UX redesign | ⚪ todo | segmented tri-axis machine bars (one colour per consumer), all-three-axes cards, the **databases lens** (Dedicated owner-split / Shared used-by, one lens two bands), hidden docker/system buckets, categorical palette token group. spec-012 idiom; ref [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html). Builds on 029 + 032 |
-| 035 | Discovery enablement & UX | ⚪ todo | **per-family** discovery enablement (Docker/Systemd/Database…), **docker off by default** (socket = root-equivalent); a machine "Discovery" panel. Enablement ≠ the approval gate. **Resolves 030 doubt (1)**; gates 033 |
+| 032 | Monitoring axes foundations | ✅ done | the **consumer contract** for RAM/CPU/disk-as-%-of-host: `MonitorConsumerView` (role/source/dedication/owner/usedBy/bucket) + app-level CPU metric-kind; extends 022; prereq for 033/034. Folds in the **H8** cleanup (single source of truth per axis) |
+| 033 | Docker container discovery | ✅ done | docker-native discovery — **compose project = app** (`com.docker.compose.project` label), datastore classification by image, `docker stats`/`ps -s`/`system df -v` metrics, springboot-in-docker shown once. `RecipeType.MONITOR`, gate untouched. **Resolves concern 030**; gated by 035 |
+| 034 | Fleet monitor UI/UX redesign | ✅ done | segmented tri-axis machine bars (one colour per consumer), all-three-axes cards, the **databases lens** (Dedicated owner-split / Shared used-by, one lens two bands), hidden docker/system buckets, categorical palette token group. spec-012 idiom; ref [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html). Builds on 029 + 032 |
+| 035 | Discovery enablement & UX | ✅ done | **per-family** discovery enablement (Docker/Systemd/Database…), **docker off by default** (socket = root-equivalent); a machine "Discovery" panel. Enablement ≠ the approval gate. **Resolves 030 doubt (1)**; gates 033 |
 | 036 | Recipe & param discovery lifecycle | ⚪ todo | **concern** (options open) — lifecycle *beyond approval*: re-discovery adds/refreshes but never **retires** a vanished resource (lingers, incl. runnable APPROVED); no delete/hide/**suppress** (revoke is the only stop); fan-out lists are all-or-nothing and discoverers **flood** (all systemd units / all containers). Keyed on the gate-safety asymmetry: narrowing `APP_PORT_LIST` is gate-free, but the `app-name` ALLOWED_SET is hashed |
+| 037 | Docker consumer metric polling | ✅ done | fills the docker axes live — the param-free `docker stats`/`ps -s`/`system df -v` reads parsed client-side and normalized to % of host (RAM ÷ total, CPU ÷ nproc, disk ÷ data-root FS); adds the `nproc` **`cores`** host vital as the CPU denominator. Follow-up to 034 |
+| 038 | Compose-project grouping | ✅ done | one card per compose project — a project's datastores render as `services[]` of a single APP consumer (not scattered dedicated cards), and the Databases lens derives its Dedicated band from those services. Fixes the 033 "not composing" display |
+| 039 | Native consumer CPU axis | ✅ done | fills the native app CPU axis — `applyConsumerReading` parses the process-tree `%CPU` (÷ host cores, mirroring docker) so native apps show CPU instead of "no data". Disk stays `—` for native (no attributable footprint) |
 | 040 | Monitor as a runtime view over runs & model weight | ⚪ todo | **concern** (options open; leaning = **thin BE**) — monitor polls run through `POST /runs` but are invisible (Runs UI is a `localStorage` log; no server run-**list** endpoint), and a classification taxonomy (032 enums, 033/038 grouping) accreted server-side though only discovery-over-SSH + the gate genuinely force it (**S9 does not**). Options: surface runs (B) / thin toward UI-or-BFF assembly (C, the leaning) / backend read-model (D). Revisits 032/033/038 |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
@@ -139,6 +142,12 @@ keeps the problem framing). Dependency order — 033 and 034 parallelise once 03
   spec-012 idiom; design reference [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html).
 - **035** gates *whether* a discoverer may probe: **per-family enablement, docker off by
   default** (the socket is root-equivalent). Enablement is not the approval gate.
+
+Three follow-ups made the docker/native axes actually live (all ✅ done): **037** polls
+the docker metric reads into the axes (+ the `nproc` `cores` denominator), **038** groups
+a compose project into one card (datastores as `services[]`, feeding the Databases lens),
+and **039** fills the native app CPU axis from the process-tree probe. Concern **040**
+then steps back to ask how much of this classification should live in the backend at all.
 
 ## Open concerns
 
