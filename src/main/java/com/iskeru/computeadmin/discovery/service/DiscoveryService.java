@@ -7,6 +7,7 @@ import com.iskeru.computeadmin.discovery.DockerConsumer;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.event.MachineReachedEvent;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
@@ -27,6 +28,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Orchestrates recipe discovery: resolve one of the current user's machines, run
@@ -52,7 +54,13 @@ import java.util.Map;
  * the proposal now differs from what was approved, that is <em>surfaced</em>
  * (never auto-adopted, never duplicated). Approval stays UI-only.
  *
- * <p>spec-006; idempotency in spec-021.
+ * <p><strong>Family enablement (spec-035).</strong> Before probing, the discoverer list
+ * is filtered by the machine's enabled {@link DiscovererFamily} set
+ * ({@link DiscoveryEnablementService}); a disabled family is skipped entirely — no probe,
+ * no proposal. Docker is default-off (root-equivalent socket). This is upstream of the
+ * approval gate: an enabled family still only proposes {@code PENDING_APPROVAL} actions.
+ *
+ * <p>spec-006; idempotency in spec-021; family enablement in spec-035.
  */
 @Service
 public class DiscoveryService {
@@ -89,6 +97,7 @@ public class DiscoveryService {
     private final RecipeService recipeService;
     private final ActionService actionService;
     private final ApprovalService approvalService;
+    private final DiscoveryEnablementService enablementService;
     private final SshExecutor ssh;
     private final List<RecipeDiscoverer> discoverers;
     private final TransactionTemplate tx;
@@ -97,6 +106,7 @@ public class DiscoveryService {
 
     public DiscoveryService(MachineService machineService, RecipeService recipeService,
                             ActionService actionService, ApprovalService approvalService,
+                            DiscoveryEnablementService enablementService,
                             SshExecutor ssh, List<RecipeDiscoverer> discoverers,
                             PlatformTransactionManager transactionManager,
                             ApplicationEventPublisher events, ObjectMapper json) {
@@ -104,6 +114,7 @@ public class DiscoveryService {
         this.recipeService = recipeService;
         this.actionService = actionService;
         this.approvalService = approvalService;
+        this.enablementService = enablementService;
         this.ssh = ssh;
         this.discoverers = discoverers;
         this.tx = new TransactionTemplate(transactionManager);
@@ -132,9 +143,17 @@ public class DiscoveryService {
      */
     public List<DiscoveredRecipe> discover(String machineId) {
         Machine machine = machineService.requireMachine(machineId);
+        // Per-machine enablement (spec-035): skip a disabled family entirely — no probe,
+        // no proposal. Docker is default-off (root-equivalent socket); the read-only
+        // families the login user can already run stay on. This gate is upstream of, and
+        // distinct from, the approval gate — enabled discoverers still only propose.
+        Set<DiscovererFamily> enabled = enablementService.enabledFamilies(machineId);
         // Probe phase — no open transaction; collect proposals in memory.
         List<ProposedRecipe> proposals = new ArrayList<>();
         for (RecipeDiscoverer discoverer : discoverers) {
+            if (!enabled.contains(discoverer.family())) {
+                continue;
+            }
             proposals.addAll(discoverer.discover(machine, ssh));
         }
         // The probe phase connected over SSH — the box is reachable, so announce it;
