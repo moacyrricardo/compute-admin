@@ -1,5 +1,8 @@
 # 035 — Discovery enablement & UX
 
+> **Status: done.** Branch `moacyrricardo/spec-035-discovery-enablement-and-ux`
+> (Linear blocked for this repo — no issue id; `spec-035` commit subjects).
+
 > Closes doubt **(1)** of [concern 030](./030-todo-docker-container-monitoring.md)
 > (should docker discovery be gated behind `docker ps` being allowed?). Gates the
 > [docker discoverer](./033-todo-docker-container-discovery.md) and generalises to the
@@ -84,3 +87,30 @@ All new code cites `spec-035`.
   cadence remains the connectivity/monitor job's concern.
 - Generalising the per-family model to all discoverers is in scope, but only docker is
   default-off; revisiting whether any existing family should also be opt-in is deferred.
+
+## How the implementation differed from the spec
+
+Faithful to the decision; the notable choices/divergences:
+
+- **Store: the table option.** Chose `discovery_enablement (machine, family, enabled)`
+  over a JSON set on `Machine` — a named FK + unique `(machine_id, family)`, only
+  deviations persisted (a machine with no row falls back to the family default). Flyway
+  **`V14__discovery_enablement.sql`** (main was at V13). Not `@Audited` — an operational
+  capability toggle, like `Run` (no `_aud` table).
+- **Family taxonomy.** `DiscovererFamily` = `NGINX, DOCKER, DATABASE, CRON, SYSTEMD` plus
+  **`HOST`** (universal host-vitals, spec-023) and **`APP`** (native app monitor, spec-025)
+  — the spec's "native host+app discovery" made two explicit default-on families. Only
+  `DOCKER` is default-off; both docker discoverers (spec-026 `DockerDiscoverer` and
+  spec-033 `DockerComposeDiscoverer`) share it.
+- **Interim flag superseded.** The spec-033 `ca.discovery.docker.enabled` `@Value` and its
+  guard were removed from `DockerComposeDiscoverer`; docker now runs when the `DOCKER`
+  family is enabled for the machine. Its intent (docker default-off) migrated into
+  `DiscovererFamily.DOCKER.defaultEnabled() == false`. Tests that assert docker proposals
+  opt the machine in via `DiscoveryEnablementService`.
+- **API shape.** `GET .../discovery` returns `{ families[], proposals[] }` where proposals
+  reuse the 004 `RecipeView`/`ActionView` (all recipes on the machine); `PUT
+  .../discovery/{family}` returns the full refreshed state (one round-trip for the UI).
+  The family path segment is parsed case-insensitively; an unknown family is a 400.
+- **UI.** The Discovery section renders the family toggles (reusing the `tag--filter`
+  chip idiom) + the docker note; the existing recipe/proposal groups remain below as the
+  proposals surface rather than being duplicated inside the panel.
