@@ -1,5 +1,6 @@
 package com.iskeru.computeadmin.discovery;
 
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 
@@ -24,7 +25,13 @@ import java.util.List;
  * injects every implementation as a {@code List<RecipeDiscoverer>} into
  * {@link DiscoveryService}.
  *
- * <p>spec-006.
+ * <p><strong>Enablement (spec-035).</strong> Each discoverer belongs to a
+ * {@link DiscovererFamily}; {@link DiscoveryService} probes it only when that family is
+ * enabled for the machine (docker default-off, the rest default-on). A disabled family
+ * is skipped entirely — never probed — so this is upstream of, and distinct from, the
+ * approval gate.
+ *
+ * <p>spec-006; family enablement in spec-035.
  */
 public interface RecipeDiscoverer {
 
@@ -34,4 +41,10 @@ public interface RecipeDiscoverer {
      * not installed. Must never issue a mutating command.
      */
     List<ProposedRecipe> discover(Machine machine, SshExecutor ssh);
+
+    /**
+     * The enablement family this discoverer belongs to (spec-035). Discoverers in the
+     * same family (e.g. the two docker discoverers) share one per-machine toggle.
+     */
+    DiscovererFamily family();
 }

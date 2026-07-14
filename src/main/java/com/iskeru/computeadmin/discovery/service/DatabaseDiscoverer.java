@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery.service;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.ssh.SshExecutor;
@@ -33,6 +34,11 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  */
 @Component
 public class DatabaseDiscoverer implements RecipeDiscoverer {
+
+    @Override
+    public DiscovererFamily family() {
+        return DiscovererFamily.DATABASE;
+    }
 
     /** Fixed backup destination; a real path is chosen by the operator at approval. */
     private static final String BACKUP_DIR = "/var/backups/compute-admin";

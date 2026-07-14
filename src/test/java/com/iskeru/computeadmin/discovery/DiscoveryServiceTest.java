@@ -4,8 +4,10 @@ import com.iskeru.computeadmin.auth.model.AppUser;
 import com.iskeru.computeadmin.auth.repository.AppUserRepository;
 import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.discovery.service.CronDiscoverer;
 import com.iskeru.computeadmin.discovery.service.DatabaseDiscoverer;
+import com.iskeru.computeadmin.discovery.service.DiscoveryEnablementService;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveredRecipe;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconcileOutcome;
@@ -65,9 +67,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
 @Import({DiscoveryService.class, RecipeService.class, ActionService.class, ApprovalService.class,
-        ScriptPinService.class, MachineService.class, NginxDiscoverer.class, DockerDiscoverer.class,
-        DatabaseDiscoverer.class, CronDiscoverer.class, MonitorMachineDiscoverer.class,
-        DiscoveryServiceTest.FakeSshConfig.class})
+        ScriptPinService.class, MachineService.class, DiscoveryEnablementService.class,
+        NginxDiscoverer.class, DockerDiscoverer.class, DatabaseDiscoverer.class, CronDiscoverer.class,
+        MonitorMachineDiscoverer.class, DiscoveryServiceTest.FakeSshConfig.class})
 class DiscoveryServiceTest {
 
     /** Verbs that would mean an action template — not a probe — was executed. */
@@ -102,6 +104,9 @@ class DiscoveryServiceTest {
 
     @Autowired
     private MachineService machineService;
+
+    @Autowired
+    private DiscoveryEnablementService enablement;
 
     @Autowired
     private SshExecutor ssh;
@@ -141,6 +146,9 @@ class DiscoveryServiceTest {
     void discover_PersistsProposalsAsPendingApprovalAndNeverApproves() {
         List<DiscoveredRecipe> discovered = asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
+            // Docker discovery is default-off (spec-035); this test asserts the docker
+            // recipe/actions, so opt this machine into the DOCKER family first.
+            enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
             return discoveryService.discover(machine.getId());
         });
 
@@ -261,6 +269,7 @@ class DiscoveryServiceTest {
     void reDiscover_ApprovedIdentical_SurvivesUnchanged() {
         asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
+            enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
             discoveryService.discover(machine.getId());
 
             Recipe docker = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
@@ -282,6 +291,7 @@ class DiscoveryServiceTest {
     void reDiscover_ApprovedDiffers_IsSurfacedNotDuplicated() {
         asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
+            enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
             discoveryService.discover(machine.getId());
 
             Recipe docker = recipes.findByMachine_IdAndMachine_Owner_IdAndTypeAndName(
@@ -312,6 +322,7 @@ class DiscoveryServiceTest {
     void reDiscover_NotYetApprovedDiffers_IsRefreshedInPlace() {
         asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
+            enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
             discoveryService.discover(machine.getId());
 
             // Never approved; a new container appears before review.

@@ -4,6 +4,7 @@ import com.iskeru.computeadmin.discovery.AppPortItem;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
@@ -66,6 +67,11 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  */
 @Component
 public class AppMonitorDiscoverer implements RecipeDiscoverer {
+
+    @Override
+    public DiscovererFamily family() {
+        return DiscovererFamily.APP;
+    }
 
     /** How each classified app is realised on the box (spec-022 label convention). */
     private enum Runtime {

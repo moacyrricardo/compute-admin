@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery.service;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.ssh.SshExecutor;
@@ -35,6 +36,11 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  */
 @Component
 public class NginxDiscoverer implements RecipeDiscoverer {
+
+    @Override
+    public DiscovererFamily family() {
+        return DiscovererFamily.NGINX;
+    }
 
     private static final String AVAILABLE_DIR = "/etc/nginx/sites-available";
     private static final String ENABLED_DIR = "/etc/nginx/sites-enabled";

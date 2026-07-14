@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery.service;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.ssh.SshExecutor;
@@ -26,6 +27,11 @@ import static com.iskeru.computeadmin.discovery.Proposals.literal;
  */
 @Component
 public class CronDiscoverer implements RecipeDiscoverer {
+
+    @Override
+    public DiscovererFamily family() {
+        return DiscovererFamily.CRON;
+    }
 
     @Override
     public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {

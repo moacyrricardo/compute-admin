@@ -18,11 +18,13 @@ import static com.iskeru.computeadmin.discovery.FakeSshExecutor.ok;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * {@link DockerComposeDiscoverer} against a fake executor (spec-033): the interim
- * enablement guard (never probes when disabled), compose-project grouping, datastore
- * classification (DEDICATED to a project, SHARED when standalone), the DOCKER bucket
- * remainder, and the fixed read-only checks. Every proposal is a {@code MONITOR}
- * recipe — no new {@code RecipeType}.
+ * {@link DockerComposeDiscoverer} against a fake executor (spec-033): compose-project
+ * grouping, datastore classification (DEDICATED to a project, SHARED when standalone),
+ * the DOCKER bucket remainder, and the fixed read-only checks. Every proposal is a
+ * {@code MONITOR} recipe — no new {@code RecipeType}. Per-machine enablement gating
+ * (whether this discoverer is invoked at all) is superseded to spec-035 and covered by
+ * {@link DiscoveryGatingTest}; this discoverer always probes when {@code discover} is
+ * called.
  *
  * <p>spec-033.
  */
@@ -42,33 +44,22 @@ class DockerComposeDiscovererTest {
         return "{\"Names\":\"" + names + "\",\"Image\":\"" + image + "\",\"Labels\":\"" + labels + "\"}";
     }
 
-    private DockerComposeDiscoverer discoverer(boolean enabled) {
-        return new DockerComposeDiscoverer(enabled, json);
-    }
-
-    @Test
-    void discover_Disabled_ProposesNothingAndNeverProbesDocker() {
-        FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
-
-        List<ProposedRecipe> recipes = discoverer(false).discover(machine(), ssh);
-
-        assertThat(recipes).isEmpty();
-        // The interim guard means docker is never touched at all — not even command -v.
-        assertThat(ssh.commands).isEmpty();
+    private DockerComposeDiscoverer discoverer() {
+        return new DockerComposeDiscoverer(json);
     }
 
     @Test
     void discover_DockerNotInstalled_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
 
-        assertThat(discoverer(true).discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer().discover(machine(), ssh)).isEmpty();
     }
 
     @Test
     void discover_GroupsComposeProject_IsOneConsumerWithDatastoreServices() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
 
-        List<ProposedRecipe> recipes = discoverer(true).discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer().discover(machine(), ssh);
 
         ProposedRecipe orders = recipe(recipes, "orders");
         assertThat(orders.type()).isEqualTo(RecipeType.MONITOR);
@@ -97,7 +88,7 @@ class DockerComposeDiscovererTest {
     void discover_StandaloneDatastore_IsShared_AndNonDatastoreGoesToBucket() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
 
-        List<ProposedRecipe> recipes = discoverer(true).discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer().discover(machine(), ssh);
 
         // The bare redis is a SHARED datastore consumer (no owning project).
         DockerConsumer redis = consumer(recipe(recipes, "cache"), "cache");
@@ -116,7 +107,7 @@ class DockerComposeDiscovererTest {
     void discover_NoContainers_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(""));
 
-        assertThat(discoverer(true).discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer().discover(machine(), ssh)).isEmpty();
     }
 
     private Function<List<String>, ExecResult> dockerWith(String psJson) {

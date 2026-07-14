@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery.service;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.ssh.SshExecutor;
@@ -32,6 +33,11 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  */
 @Component
 public class DockerDiscoverer implements RecipeDiscoverer {
+
+    @Override
+    public DiscovererFamily family() {
+        return DiscovererFamily.DOCKER;
+    }
 
     private static final int MAX_TAIL = 10_000;
 

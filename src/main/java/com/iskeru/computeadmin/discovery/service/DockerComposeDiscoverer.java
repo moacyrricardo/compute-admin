@@ -8,13 +8,13 @@ import com.iskeru.computeadmin.discovery.DockerConsumer.DockerService;
 import com.iskeru.computeadmin.discovery.ProposedAction;
 import com.iskeru.computeadmin.discovery.ProposedRecipe;
 import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.monitor.model.Bucket;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
 import com.iskeru.computeadmin.monitor.model.Dedication;
 import com.iskeru.computeadmin.ssh.SshExecutor;
 import com.iskeru.computeadmin.ssh.SshTarget;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -55,13 +55,13 @@ import static com.iskeru.computeadmin.discovery.Proposals.literal;
  * lands {@code PENDING_APPROVAL} through the unchanged gate; there is no new
  * {@code RecipeType}.
  *
- * <p><strong>Interim enablement guard (spec-033 → spec-035).</strong> Until spec-035
- * builds the per-machine docker-discovery enablement UX, this discoverer is gated behind
- * {@code ca.discovery.docker.enabled} (default {@code false}). While disabled it is a
- * strict no-op — it proposes nothing and <em>never probes docker</em>, so it is never run
- * speculatively on a box. spec-035 supersedes this flag with the per-machine model.
+ * <p><strong>Enablement (spec-035).</strong> This discoverer belongs to the
+ * {@link DiscovererFamily#DOCKER} family, which is <em>default-off</em> because the
+ * docker socket is root-equivalent. {@link DiscoveryService} runs it only when docker
+ * discovery is enabled <em>for that machine</em>, so it is never probed speculatively —
+ * superseding the interim {@code ca.discovery.docker.enabled} global flag it shipped with.
  *
- * <p>spec-033.
+ * <p>spec-033; per-machine enablement supersedes the interim flag in spec-035.
  */
 @Component
 public class DockerComposeDiscoverer implements RecipeDiscoverer {
@@ -69,21 +69,19 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
     private static final String PROJECT_LABEL = "com.docker.compose.project";
     private static final String SERVICE_LABEL = "com.docker.compose.service";
 
-    private final boolean enabled;
     private final ObjectMapper json;
 
-    public DockerComposeDiscoverer(
-            @Value("${ca.discovery.docker.enabled:false}") boolean enabled, ObjectMapper json) {
-        this.enabled = enabled;
+    public DockerComposeDiscoverer(ObjectMapper json) {
         this.json = json;
     }
 
     @Override
+    public DiscovererFamily family() {
+        return DiscovererFamily.DOCKER;
+    }
+
+    @Override
     public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        // Interim guard (spec-035 supersedes): disabled ⇒ never touch docker at all.
-        if (!enabled) {
-            return List.of();
-        }
         SshTarget target = Probes.target(machine);
         if (!Probes.commandExists(ssh, target, "docker")) {
             return List.of();

@@ -5,6 +5,8 @@ import com.iskeru.computeadmin.auth.model.AppUser;
 import com.iskeru.computeadmin.auth.repository.AppUserRepository;
 import com.iskeru.computeadmin.common.AuthContext;
 import com.iskeru.computeadmin.common.CurrentUser;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
+import com.iskeru.computeadmin.discovery.service.DiscoveryEnablementService;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService;
 import com.iskeru.computeadmin.discovery.service.DockerComposeDiscoverer;
 import com.iskeru.computeadmin.machine.model.Machine;
@@ -35,7 +37,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 
 import java.util.List;
 import java.util.function.Supplier;
@@ -53,17 +54,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * role/dedication/owner intact. Re-discovery reconciles by {@code (machine, MONITOR,
  * project)} — one recipe per project, no duplicate.
  *
- * <p>Runs with {@code ca.discovery.docker.enabled=true} (the interim opt-in, spec-035).
+ * <p>Docker discovery is default-off (spec-035), so each test opts the machine into the
+ * {@link DiscovererFamily#DOCKER} family via {@link DiscoveryEnablementService} before
+ * discovering — the per-machine enablement that superseded the interim
+ * {@code ca.discovery.docker.enabled} flag.
  *
  * <p>spec-033.
  */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("test")
-@TestPropertySource(properties = "ca.discovery.docker.enabled=true")
 @Import({DiscoveryService.class, RecipeService.class, ActionService.class, ApprovalService.class,
         ScriptPinService.class, MachineService.class, MonitorService.class, DockerComposeDiscoverer.class,
-        DockerComposeReconcileTest.FakeSshConfig.class})
+        DiscoveryEnablementService.class, DockerComposeReconcileTest.FakeSshConfig.class})
 class DockerComposeReconcileTest {
 
     private static String row(String names, String image, String labels) {
@@ -99,6 +102,9 @@ class DockerComposeReconcileTest {
     private MonitorService monitorService;
 
     @Autowired
+    private DiscoveryEnablementService enablement;
+
+    @Autowired
     private RecipeRepository recipes;
 
     @Autowired
@@ -115,6 +121,7 @@ class DockerComposeReconcileTest {
     void discover_PersistsDockerConsumers_SurfacedByMonitorRead_WithClassification() {
         MonitorMachineView view = asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
+            enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
             discoveryService.discover(machine.getId());
 
             // The compose project persisted as one (machine, MONITOR, "orders") recipe,
@@ -152,6 +159,7 @@ class DockerComposeReconcileTest {
     void reDiscover_IsIdempotent_OneRecipePerProject() {
         String machineId = asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
+            enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
             discoveryService.discover(machine.getId());
             discoveryService.discover(machine.getId());
             return machine.getId();
