@@ -1,5 +1,6 @@
 target/
 data/
+data-demo/
 .env
 .env.properties
 *.log
