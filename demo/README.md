@@ -53,6 +53,19 @@ Desktop = 1280×800, mobile = 390×844 (Menu nav + bottom-sheet drawer).
 >   native-datastore classification gap (see [`fake-fleet.md`](./fake-fleet.md) and concern 040).
 >   web-prod-1's **docker** `postgres` does appear in the Databases *Shared* band.
 
+### 4 · MCP — register custom scripts (simulated harness)
+
+![MCP harness registering run.sh / kill.sh](out/04-mcp-custom-scripts.gif)
+
+A **simulated** MCP-client conversation — rendered by [`mcp-terminal.py`](./mcp-terminal.py)
+(Pillow → ffmpeg; no live MCP session) — showing an agent register a `CUSTOM`
+`app-control` recipe with `start` (`/opt/app/run.sh`) and `stop` (`/opt/app/kill.sh`) via
+`add_recipe` / `add_action`, then be **refused** by `run_action` because the actions are
+`PENDING_APPROVAL` and **approval is UI-only** (there is no MCP approve tool — GateArchTest).
+It is grounded in the real tool names, the S9 machine view (host/port/login hidden), and the
+gate invariant; edit the `CONVO` list in `mcp-terminal.py` to change the script. Regenerate:
+`python3 demo/mcp-terminal.py --out demo/out/04-mcp-custom-scripts.gif`.
+
 The target end-state the recordings depict is the fake fleet defined in
 [`fake-fleet.md`](./fake-fleet.md):
 - **web-prod-1** — apps `checkout-api` (springboot) + `web-frontend` (generic) + a
