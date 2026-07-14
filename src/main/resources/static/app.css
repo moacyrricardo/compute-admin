@@ -114,6 +114,11 @@ p { margin: 0; }
   grid-area: view;
   padding: var(--sp-6);
   max-width: 960px;
+  /* A grid item defaults to min-width:auto, so a wide `white-space:pre` child (an
+     SSH key, a fingerprint) would set the page's min width and force horizontal
+     scroll. min-width:0 lets the column shrink so inner overflow-x:auto boxes
+     scroll internally instead of widening the whole page. */
+  min-width: 0;
 }
 
 .userbox { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
@@ -765,6 +770,11 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
   .btn, .tag--filter, .run-chip, .legend-chip, .app-name-toggle {
     min-height: var(--tap-min);
   }
+
+  /* On a phone, wrap a long unbreakable value (SSH key / fingerprint / install
+     snippet) instead of a cramped horizontal-scroll box — the Copy button carries
+     the exact text, so a mid-string wrap is fine and avoids sideways scroll. */
+  .command--scroll { white-space: pre-wrap; word-break: break-all; }
 }
 
 @media (max-width: 480px) and (prefers-reduced-motion: no-preference) {
