@@ -426,6 +426,19 @@
 
   function sudoBadge() { return h("span", { class: "badge-sudo", text: "sudo" }); }
 
+  /**
+   * spec-044: a small copy-host control shown beside a machine's name. Machines
+   * read name-first; this puts the connection target one click away. Copies the
+   * raw host (the S9 UI view already exposes it; MCP views stay name/id-only).
+   */
+  function copyHostButton(machine) {
+    var target = machine.loginUser + "@" + machine.host + ":" + machine.port;
+    return h("button", {
+      type: "button", class: "btn btn--sm", title: "Copy " + target,
+      onclick: function (e) { if (e && e.stopPropagation) e.stopPropagation(); copy(machine.host); }
+    }, "Copy host");
+  }
+
   // --------------------------------------------------------------- mount ----
 
   function mount(node) {
@@ -491,7 +504,7 @@
           listWrap.appendChild(h("ul", { class: "list" }, visible.map(function (m) {
             return h("li", null, h("div", { class: "row-between" },
               h("div", { class: "grow" },
-                link("#/machines/" + m.id, m.name),
+                h("div", { class: "row" }, link("#/machines/" + m.id, m.name), copyHostButton(m)),
                 h("div", { class: "small dim mono mt-2", text: m.loginUser + "@" + m.host + ":" + m.port }),
                 h("div", { class: "row mt-2" }, (m.tags || []).map(function (t) {
                   return h("span", { class: "tag", text: t });
@@ -643,7 +656,7 @@
           crumbs(link("#/machines", "Machines"),
             h("span", { text: machine.name })),
           pageHead(machine.name, machine.loginUser + "@" + machine.host + ":" + machine.port,
-            [statusChip, testBtn]),
+            [statusChip, copyHostButton(machine), testBtn]),
           h("div", { class: "row" }, (machine.tags || []).map(function (t) {
             return h("span", { class: "tag", text: t });
           })),
@@ -971,7 +984,7 @@
         var action = ctx.action, machine = ctx.machine;
         if (action.approvalState !== "APPROVED") {
           return h("div", null,
-            crumbs(link("#/machines", "Machines"), link("#/machines/" + p.mid, machine.host),
+            crumbs(link("#/machines", "Machines"), link("#/machines/" + p.mid, machine.name),
               h("span", { text: action.name })),
             pageHead("Run " + action.name),
             h("div", { class: "banner banner--warn" }, h("div", { class: "banner-body" },
@@ -1072,7 +1085,7 @@
         runBtn.disabled = !params.every(function (def) { return validateParam(def, values[def.name]); });
 
         return h("div", null,
-          crumbs(link("#/machines", "Machines"), link("#/machines/" + p.mid, machine.host),
+          crumbs(link("#/machines", "Machines"), link("#/machines/" + p.mid, machine.name),
             link("#/machines/" + p.mid + "/recipes/" + p.rid + "/actions/" + p.aid, action.name),
             h("span", { text: "Run" })),
           pageHead("Run " + action.name, "Enter parameters. Each is validated against its rule before the run is allowed.",
