@@ -119,13 +119,28 @@ p { margin: 0; }
 .userbox { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
 .userbox .email { color: var(--text-dim); }
 
+/* spec-043: the "Menu" toggle only exists on the stacked (≤720px) shell. */
+.nav-toggle { display: none; }
+
+/* ---- tablet / stacked shell (≤720px) --------------------------------------
+   The two-column shell collapses to one column and the primary nav hides
+   behind the Menu toggle, revealed as a vertical list when .nav--open. */
 @media (max-width: 720px) {
   .shell {
     grid-template-columns: 1fr;
     grid-template-areas: "brand" "topbar" "nav" "view";
   }
   .brand, .nav { border-right: none; }
-  .nav { flex-direction: row; flex-wrap: wrap; }
+  .brand { flex-wrap: wrap; }
+  .nav-toggle { display: inline-flex; margin-left: auto; }
+
+  /* Collapsed by default; the toggle adds .nav--open to reveal it. */
+  .nav { display: none; }
+  .nav.nav--open { display: flex; flex-direction: column; }
+  /* Comfortable tap targets for the revealed menu links. */
+  .nav a { display: flex; align-items: center; min-height: var(--tap-min); }
+
+  .view { padding: var(--sp-4); }
 }
 
 /* -------------------------------------------------------------- headings --- */
@@ -705,3 +720,57 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 .drow .dax .k { font-size: var(--fs-xs); color: var(--text-faint); }
 .drow .dax .v { font-size: var(--fs-sm); font-weight: var(--fw-semibold); font-family: var(--font-mono); }
 .drow .dax .v.na { color: var(--text-faint); font-weight: var(--fw-regular); }
+
+/* ------------------------------------------------- phones (≤480px) spec-043 -
+   Mobile-usable reflow: same screens/IA, stacked to a single column with
+   touch-sized controls. Everything goes through the existing tokens so both
+   themes are preserved (no hard-coded colours below). */
+@media (max-width: 480px) {
+  .view { padding: var(--sp-3); }
+
+  /* Dense grids / side-by-side rows stack to one column. */
+  .app-cards { grid-template-columns: 1fr; }
+  .row-between { flex-direction: column; align-items: stretch; }
+
+  /* Monitor filter + control clusters take their own full-width rows. */
+  .filter-chips, .monitor-controls { width: 100%; }
+  .monitor-controls { justify-content: flex-start; }
+
+  /* The per-consumer axis meters stack rather than squeezing to 30% each. */
+  .d-axes .meter { flex: 1 1 100%; }
+
+  /* Forms: inputs go full-width (override the desktop auto-width number field). */
+  .field input, .field select, .field textarea { width: 100%; }
+  input[type="number"] { width: 100%; }
+
+  /* Guard against sideways overflow from the tri-axis segmented bars: the
+     mono command preview already scrolls via .command { overflow-x:auto }. */
+  .host-panel { grid-template-columns: 1fr; overflow-x: auto; }
+  img { max-width: 100%; }
+
+  /* The consumer detail drawer becomes a bottom sheet: full width, anchored to
+     the bottom edge, sliding up instead of in from the right. */
+  .drawer-backdrop { align-items: flex-end; }
+  .drawer {
+    width: 100%;
+    height: auto;
+    max-height: 85vh;
+    padding: var(--sp-4);
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+
+  /* Comfortable touch targets for the interactive primitives. */
+  .btn, .tag--filter, .run-chip, .legend-chip, .app-name-toggle {
+    min-height: var(--tap-min);
+  }
+}
+
+@media (max-width: 480px) and (prefers-reduced-motion: no-preference) {
+  .drawer { animation: sheet-up 0.2s ease; }
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
