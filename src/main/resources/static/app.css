@@ -653,6 +653,66 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 }
 .drawer h3 { color: var(--text-dim); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.04em; }
 
+/* ------------------------------------------- action cards + split (spec-044) -
+   Recipe actions render as a responsive grid (2–3 up on desktop, 1 col ≤--bp-sm)
+   instead of full-width rows; each card carries a split-approve control (a
+   .btn-group of a primary .btn + a caret .btn toggling a .menu of secondary
+   verbs). Theme-aware via tokens only — no hard-coded colours. */
+.action-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--sp-3);
+}
+.action-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.action-card:hover { border-color: var(--accent); }
+.action-card-foot { margin-top: auto; }
+
+.btn-group { position: relative; display: inline-flex; align-items: stretch; }
+.btn-group > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-group > .btn--caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding-left: var(--sp-2);
+  padding-right: var(--sp-2);
+}
+.menu {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  right: 0;
+  min-width: 160px;
+  z-index: 160;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.menu-item:hover { background: var(--surface-2); }
+.menu-item--danger { color: var(--s-bad); }
+
 /* --------------------------------------------- consumer fleet (spec-034) --- */
 /* The redesign renders every consumer on the same three host-relative axes.
    Reuses the .meter / .host-panel / .app-card / .drawer components verbatim;
@@ -735,6 +795,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 
   /* Dense grids / side-by-side rows stack to one column. */
   .app-cards { grid-template-columns: 1fr; }
+  .action-cards { grid-template-columns: 1fr; }  /* spec-044: cards 1-up on phones */
   .row-between { flex-direction: column; align-items: stretch; }
 
   /* Monitor filter + control clusters take their own full-width rows. */

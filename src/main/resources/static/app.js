@@ -348,6 +348,84 @@
     }
   }
 
+  // --------------------------------------------------------- split button ---
+  // spec-044: a .btn-group of a primary .btn plus a caret .btn that toggles a
+  // .menu of secondary actions. Keyboard-accessible (aria-expanded on the caret,
+  // Escape closes), closes on outside-click, and — because only one menu may be
+  // open at a time and the router calls closeAllMenus() — never leaks an open
+  // menu across a route change. textContent-only, like everything else here.
+
+  var openMenuCloser = null;
+  function closeAllMenus() {
+    var c = openMenuCloser;
+    openMenuCloser = null;
+    if (c) c();
+  }
+
+  /**
+   * splitButton({ primary, items }) — `primary` is a prebuilt .btn (button OR
+   * link); `items` is [{ label, onClick, cls }]. With no items the caret/menu is
+   * omitted and the bare primary is returned.
+   */
+  function splitButton(opts) {
+    var group = h("div", { class: "btn-group" });
+    group.appendChild(opts.primary);
+    var items = opts.items || [];
+    if (!items.length) return group;
+
+    var menu = h("div", { class: "menu hidden", role: "menu" });
+    var caret = h("button", {
+      type: "button", class: "btn btn--caret",
+      "aria-haspopup": "true", "aria-expanded": "false", "aria-label": "More actions"
+    }, "▾");
+
+    function closeMenu() {
+      menu.classList.add("hidden");
+      caret.setAttribute("aria-expanded", "false");
+      document.removeEventListener("click", onDoc, true);
+      if (openMenuCloser === closeMenu) openMenuCloser = null;
+    }
+    function onDoc(e) { if (!group.contains(e.target)) closeMenu(); }
+    function openMenu() {
+      closeAllMenus();
+      menu.classList.remove("hidden");
+      caret.setAttribute("aria-expanded", "true");
+      document.addEventListener("click", onDoc, true);
+      openMenuCloser = closeMenu;
+      var first = menu.querySelector("button");
+      if (first) first.focus();
+    }
+    caret.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (menu.classList.contains("hidden")) openMenu(); else closeMenu();
+    });
+    caret.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeMenu();
+    });
+
+    items.forEach(function (it) {
+      var mi = h("button", {
+        type: "button", role: "menuitem",
+        class: "menu-item" + (it.cls ? " menu-item--" + it.cls : "")
+      }, it.label);
+      mi.addEventListener("click", function (e) {
+        e.stopPropagation();
+        closeMenu();
+        it.onClick();
+      });
+      menu.appendChild(mi);
+    });
+    menu.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { closeMenu(); caret.focus(); }
+    });
+
+    group.appendChild(caret);
+    group.appendChild(menu);
+    return group;
+  }
+
+  function sudoBadge() { return h("span", { class: "badge-sudo", text: "sudo" }); }
+
   // --------------------------------------------------------------- mount ----
 
   function mount(node) {
@@ -557,7 +635,7 @@
                 g.recipe.description ? h("p", { class: "small dim mt-2", text: g.recipe.description }) : null,
                 g.recipe.sourceBlueprintId ? h("p", { class: "xs faint mt-2",
                   text: "from blueprint " + g.recipe.sourceBlueprintId + " v" + g.recipe.sourceBlueprintVersion }) : null,
-                actionsList(mid, g.recipe.id, g.actions));
+                actionsList(machine, g.recipe, g.actions));
             })
           : empty("No recipes yet. Run discovery to propose recipes for the services on this host.");
 
@@ -575,24 +653,82 @@
     });
   }
 
-  function actionsList(mid, rid, actions) {
+  /**
+   * spec-044: recipe actions render as a responsive grid of cards (2–3 across on
+   * desktop, 1 column on phones) rather than full-width rows. Each card carries
+   * the identity (name, state chip, sudo badge, description) and the split-approve
+   * control; clicking through opens the review drawer in place — no navigation.
+   */
+  function actionsList(machine, recipe, actions) {
     if (!actions.length) return empty("No actions in this recipe.");
-    return h("ul", { class: "list mt-3" }, actions.map(function (a) {
-      var right = h("div", { class: "row" }, chip(a.approvalState),
-        a.sudo ? h("span", { class: "badge-sudo", text: "sudo" }) : null);
-      var links = h("div", { class: "row mt-2" },
-        link("#/machines/" + mid + "/recipes/" + rid + "/actions/" + a.id, "Review / approve", "btn btn--sm"),
-        a.approvalState === "APPROVED"
-          ? link("#/machines/" + mid + "/recipes/" + rid + "/actions/" + a.id + "/run", "Run", "btn btn--sm btn--ok")
-          : null);
-      return h("li", null,
-        h("div", { class: "row-between" },
-          h("div", { class: "grow" },
-            h("strong", { text: a.name }),
-            a.description ? h("p", { class: "small dim mt-2", text: a.description }) : null),
-          right),
-        links);
+    return h("div", { class: "action-cards mt-3" }, actions.map(function (a) {
+      return actionCard(machine, recipe, a);
     }));
+  }
+
+  function actionCard(machine, recipe, a) {
+    return h("div", { class: "action-card" },
+      h("div", { class: "row-between" },
+        h("strong", { class: "grow", text: a.name }),
+        h("div", { class: "row" }, chip(a.approvalState), a.sudo ? sudoBadge() : null)),
+      a.description ? h("p", { class: "small dim mt-2", text: a.description }) : null,
+      h("div", { class: "action-card-foot mt-3" }, approvalSplit(machine, recipe, a)));
+  }
+
+  /**
+   * The per-action split-approve control. The PRIMARY button is the one valid
+   * primary transition for the current state (DRAFT→Submit, PENDING→Approve,
+   * APPROVED→Run); the caret menu lists the other valid verbs plus "See more…"
+   * (the review drawer). Only transitions the backend actually supports appear.
+   *
+   * Review-safety guard: a one-click Approve is offered only for a routine
+   * re-approval of an UNCHANGED action (previously approved, `changedSinceApproval`
+   * false). A first-time approval (no `approvedAt`) or any `changedSinceApproval`
+   * action makes the primary "Review & approve", which OPENS THE DRAWER first so a
+   * human sees the exact command before it is armed — it does not approve directly.
+   */
+  function approvalSplit(machine, recipe, action) {
+    var mid = machine.id, rid = recipe.id;
+    var onDone = function () { screenMachineDetail({ mid: mid }); };
+    var openReview = function () { openActionDrawer(machine, recipe, action); };
+    var seeMore = { label: "See more…", onClick: openReview };
+    var s = action.approvalState;
+
+    if (s === "DRAFT") {
+      return splitButton({
+        primary: h("button", { class: "btn btn--primary",
+          onclick: function () { actVerb(action, "submit", onDone); } }, "Submit"),
+        items: [seeMore]
+      });
+    }
+    if (s === "PENDING_APPROVAL") {
+      var mustReview = !action.approvedAt || action.changedSinceApproval;
+      var primary = mustReview
+        ? h("button", { class: "btn btn--primary", onclick: openReview }, "Review & approve")
+        : h("button", { class: "btn btn--ok",
+            onclick: function () { actVerb(action, "approve", onDone); } }, "Approve");
+      return splitButton({ primary: primary, items: [seeMore] });
+    }
+    if (s === "APPROVED") {
+      var runHash = "#/machines/" + mid + "/recipes/" + rid + "/actions/" + action.id + "/run";
+      return splitButton({
+        primary: h("a", { href: runHash, class: "btn btn--primary" }, "Run"),
+        items: [
+          { label: "Revoke", cls: "danger", onClick: function () { actVerb(action, "revoke", onDone); } },
+          seeMore
+        ]
+      });
+    }
+    // REVOKED (terminal — no re-approval): only a review link.
+    return splitButton({ primary: h("button", { class: "btn", onclick: openReview }, "Review"), items: [] });
+  }
+
+  /** POST an approval transition, toast, then run the caller's refresh. */
+  function actVerb(action, verb, onDone) {
+    api("POST", "/actions/" + action.id + "/" + verb).then(function () {
+      toast("Action " + verb + "d");
+      if (onDone) onDone();
+    }).catch(function (err) { toast(err.message); });
   }
 
   /**
@@ -661,102 +797,162 @@
     });
   }
 
-  // ----- Approval screen (centrepiece) --------------------------------------
+  // ----- Action review (drawer body + standalone page) ----------------------
+
+  /**
+   * spec-044: the review body — the changed/awaiting/revoked banners, the exact
+   * command a human signs off on, the parameter rules and the provenance card.
+   * Shared verbatim by the review DRAWER (openActionDrawer) and the standalone
+   * approval PAGE (screenApproval), so both show identical facts. Returns an
+   * array of nodes (no crumbs/page-head — those differ between the two hosts).
+   */
+  function renderActionReview(action, ctx) {
+    var recipe = ctx.recipe;
+    var params = (action.paramDefs || []);
+    var paramSection = params.length
+      ? h("div", { class: "card" },
+          h("h2", { text: "Parameters" }),
+          h("p", { class: "small dim mt-2", text: "Typed, validated inputs bound into the PARAM slots at run time." }),
+          h("div", { class: "param-rule mt-3" }, params.reduce(function (acc, def) {
+            acc.push(h("span", { class: "name", text: def.name }));
+            acc.push(h("span", { class: "rule", text: paramRuleText(def) }));
+            return acc;
+          }, [])))
+      : null;
+
+    // "changed since approval" guard, backed by the spec-004 content hash.
+    // The API exposes it as `changedSinceApproval` when the approved snapshot
+    // no longer matches the current content (edits otherwise reset to DRAFT).
+    var changedBanner = action.changedSinceApproval
+      ? h("div", { class: "banner banner--bad", role: "alert" },
+          h("div", { class: "banner-body" },
+            h("strong", { text: "Changed since approval — re-review. " }),
+            "This action's command or parameters differ from the approved snapshot. Approve again to allow runs."))
+      : null;
+
+    var pending = action.approvalState === "PENDING_APPROVAL"
+      ? h("div", { class: "banner banner--warn", role: "note" },
+          h("div", { class: "banner-body" },
+            h("strong", { text: "Awaiting approval. " }),
+            "MCP can see this action but cannot run it until you approve here."))
+      : null;
+
+    var revoked = action.approvalState === "REVOKED"
+      ? h("div", { class: "banner banner--warn", role: "note" },
+          h("div", { class: "banner-body" },
+            h("strong", { text: "Revoked. " }),
+            "This action can no longer run and cannot be re-approved directly. "
+              + "Re-enabling it means editing the action, which returns it to draft to be submitted and approved afresh."))
+      : null;
+
+    return [
+      changedBanner,
+      pending,
+      revoked,
+      action.description ? h("p", { class: "dim", text: action.description }) : null,
+      h("div", { class: "card mt-4" },
+        h("h2", { text: "Command" }),
+        h("p", { class: "small dim mt-2", text: "Exactly what will run. LITERAL tokens are plain; PARAM slots are underlined and bound from validated input." }),
+        h("div", { class: "mt-3" }, renderCommand(action, null)),
+        action.sudo
+          ? h("p", { class: "small mt-3" }, sudoBadge(),
+              h("span", { class: "dim", text: " runs with passwordless sudo on the target (spec risk S5)." }))
+          : null),
+      paramSection,
+      h("div", { class: "card" },
+        h("h2", { text: "Provenance" }),
+        h("dl", { class: "kv mt-3" },
+          h("dt", { text: "Approval state" }), h("dd", null, chip(action.approvalState)),
+          h("dt", { text: "Approved by" }), h("dd", { text: action.approvedByUserId || "—" }),
+          h("dt", { text: "Approved at" }), h("dd", { text: fmtTime(action.approvedAt) }),
+          recipe && recipe.sourceBlueprintId ? h("dt", { text: "Blueprint source" }) : null,
+          recipe && recipe.sourceBlueprintId
+            ? h("dd", { class: "mono", text: recipe.sourceBlueprintId + " v" + recipe.sourceBlueprintVersion })
+            : null))
+    ];
+  }
+
+  /**
+   * The full transition buttons for the review surfaces (drawer + standalone
+   * page). Unlike the card's split button there is no review-safety guard here:
+   * both surfaces already show the exact command, so direct Approve is honest.
+   * REVOKED is terminal — the backend permits no REVOKED→APPROVED, so no control
+   * is offered rather than a button that always 409s (the revoked banner explains).
+   */
+  function transitionButtons(mid, rid, action, onDone) {
+    var controls = [];
+    var s = action.approvalState;
+    if (s === "DRAFT") {
+      controls.push(h("button", { class: "btn btn--primary",
+        onclick: function () { actVerb(action, "submit", onDone); } }, "Submit for approval"));
+    }
+    if (s === "PENDING_APPROVAL") {
+      controls.push(h("button", { class: "btn btn--ok",
+        onclick: function () { actVerb(action, "approve", onDone); } }, "Approve"));
+    }
+    if (s === "APPROVED") {
+      controls.push(link("#/machines/" + mid + "/recipes/" + rid + "/actions/" + action.id + "/run", "Run action", "btn btn--primary"));
+      controls.push(h("button", { class: "btn btn--danger",
+        onclick: function () { actVerb(action, "revoke", onDone); } }, "Revoke"));
+    }
+    return controls;
+  }
+
+  /**
+   * spec-044: the review DRAWER — mirrors openConsumerDrawer (a right-side sheet
+   * ≥720px, a bottom sheet ≤480px per spec-043). Opens in place from a machine
+   * page; a transition re-renders the machine detail (cards reflect the new
+   * state) and closing restores focus to the triggering control.
+   */
+  function openActionDrawer(machine, recipe, action) {
+    var mid = machine.id, rid = recipe.id;
+    var ctx = { machine: machine, recipe: recipe, action: action };
+    var restoreFocus = document.activeElement;
+
+    function closeActionDrawer() {
+      document.removeEventListener("keydown", onKey);
+      closeDrawer();
+      if (restoreFocus && restoreFocus.focus) restoreFocus.focus();
+    }
+    function onKey(e) { if (e.key === "Escape") closeActionDrawer(); }
+    function done() {
+      document.removeEventListener("keydown", onKey);
+      closeDrawer();
+      screenMachineDetail({ mid: mid });
+    }
+
+    var controls = transitionButtons(mid, rid, action, done);
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": action.name },
+      h("div", { class: "row-between" },
+        h("h2", { text: action.name }),
+        h("button", { class: "btn btn--sm", onclick: closeActionDrawer }, "Close")),
+      h("div", { class: "row mt-2" }, chip(action.approvalState), action.sudo ? sudoBadge() : null),
+      h("p", { class: "small dim mt-2", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
+      renderActionReview(action, ctx),
+      controls.length ? h("div", { class: "row mt-4" }, controls) : null);
+    var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
+      if (e.target === backdrop) closeActionDrawer();
+    } }, drawer);
+    var root = byId("modal-root");
+    clear(root);
+    root.appendChild(backdrop);
+    document.addEventListener("keydown", onKey);
+  }
+
+  // ----- Approval screen (standalone URL fallback / deep link) ---------------
 
   function screenApproval(p) {
     mountAsync(function () {
       return loadActionContext(p).then(function (ctx) {
         var action = ctx.action, machine = ctx.machine, recipe = ctx.recipe;
-
-        function act(verb) {
-          api("POST", "/actions/" + action.id + "/" + verb).then(function () {
-            toast("Action " + verb + "d");
-            screenApproval(p);
-          }).catch(function (err) { toast(err.message); });
-        }
-
-        var controls = [];
-        if (action.approvalState === "DRAFT") {
-          controls.push(h("button", { class: "btn btn--primary", onclick: function () { act("submit"); } }, "Submit for approval"));
-        }
-        if (action.approvalState === "PENDING_APPROVAL") {
-          controls.push(h("button", { class: "btn btn--ok", onclick: function () { act("approve"); } }, "Approve"));
-        }
-        if (action.approvalState === "APPROVED") {
-          controls.push(link("#/machines/" + p.mid + "/recipes/" + p.rid + "/actions/" + p.aid + "/run", "Run action", "btn btn--primary"));
-          controls.push(h("button", { class: "btn btn--danger", onclick: function () { act("revoke"); } }, "Revoke"));
-        }
-        // REVOKED is terminal: the backend permits no REVOKED -> APPROVED transition
-        // (re-enabling means editing the action, which resets it to DRAFT). We offer no
-        // control here rather than a button that always 409s. The revoked banner below
-        // explains the dead-end.
-
-        var params = (action.paramDefs || []);
-        var paramSection = params.length
-          ? h("div", { class: "card" },
-              h("h2", { text: "Parameters" }),
-              h("p", { class: "small dim mt-2", text: "Typed, validated inputs bound into the PARAM slots at run time." }),
-              h("div", { class: "param-rule mt-3" }, params.reduce(function (acc, def) {
-                acc.push(h("span", { class: "name", text: def.name }));
-                acc.push(h("span", { class: "rule", text: paramRuleText(def) }));
-                return acc;
-              }, [])))
-          : null;
-
-        // "changed since approval" guard, backed by the spec-004 content hash.
-        // The API exposes it as `changedSinceApproval` when the approved snapshot
-        // no longer matches the current content (edits otherwise reset to DRAFT).
-        var changedBanner = action.changedSinceApproval
-          ? h("div", { class: "banner banner--bad", role: "alert" },
-              h("div", { class: "banner-body" },
-                h("strong", { text: "Changed since approval — re-review. " }),
-                "This action's command or parameters differ from the approved snapshot. Approve again to allow runs."))
-          : null;
-
-        var pending = action.approvalState === "PENDING_APPROVAL"
-          ? h("div", { class: "banner banner--warn", role: "note" },
-              h("div", { class: "banner-body" },
-                h("strong", { text: "Awaiting approval. " }),
-                "MCP can see this action but cannot run it until you approve here."))
-          : null;
-
-        var revoked = action.approvalState === "REVOKED"
-          ? h("div", { class: "banner banner--warn", role: "note" },
-              h("div", { class: "banner-body" },
-                h("strong", { text: "Revoked. " }),
-                "This action can no longer run and cannot be re-approved directly. "
-                  + "Re-enabling it means editing the action, which returns it to draft to be submitted and approved afresh."))
-          : null;
-
+        var controls = transitionButtons(p.mid, p.rid, action, function () { screenApproval(p); });
         return h("div", null,
           crumbs(link("#/machines", "Machines"),
-            link("#/machines/" + p.mid, machine.host),
+            link("#/machines/" + p.mid, machine.name),
             h("span", { text: action.name })),
           pageHead(action.name, recipe ? recipe.name : null, [chip(action.approvalState),
-            action.sudo ? h("span", { class: "badge-sudo", text: "sudo" }) : null]),
-          changedBanner,
-          pending,
-          revoked,
-          action.description ? h("p", { class: "dim", text: action.description }) : null,
-          h("div", { class: "card mt-4" },
-            h("h2", { text: "Command" }),
-            h("p", { class: "small dim mt-2", text: "Exactly what will run. LITERAL tokens are plain; PARAM slots are underlined and bound from validated input." }),
-            h("div", { class: "mt-3" }, renderCommand(action, null)),
-            action.sudo
-              ? h("p", { class: "small mt-3" }, h("span", { class: "badge-sudo", text: "sudo" }),
-                  h("span", { class: "dim", text: " runs with passwordless sudo on the target (spec risk S5)." }))
-              : null),
-          paramSection,
-          h("div", { class: "card" },
-            h("h2", { text: "Provenance" }),
-            h("dl", { class: "kv mt-3" },
-              h("dt", { text: "Approval state" }), h("dd", null, chip(action.approvalState)),
-              h("dt", { text: "Approved by" }), h("dd", { text: action.approvedByUserId || "—" }),
-              h("dt", { text: "Approved at" }), h("dd", { text: fmtTime(action.approvedAt) }),
-              recipe && recipe.sourceBlueprintId ? h("dt", { text: "Blueprint source" }) : null,
-              recipe && recipe.sourceBlueprintId
-                ? h("dd", { class: "mono", text: recipe.sourceBlueprintId + " v" + recipe.sourceBlueprintVersion })
-                : null)),
+            action.sudo ? sudoBadge() : null]),
+          renderActionReview(action, ctx),
           h("div", { class: "row mt-4" }, controls));
       });
     });
@@ -2752,6 +2948,8 @@
   function route() {
     runViewCleanup();
     closeNav();
+    closeAllMenus();   // spec-044: no split-button menu leaks across a navigation
+    closeDrawer();     // spec-044: a review drawer left open closes on route change
     if (!Session.token()) { showLogin(); return; }
     showShell();
     var parsed = parseHash();
