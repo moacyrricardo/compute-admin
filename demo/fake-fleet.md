@@ -64,8 +64,8 @@ first run — argv and formats are authoritative in the code, not here).
 | Probe (command substring) | Canned output (per host, shaped for the fleet above) | Source (format authority) |
 |---|---|---|
 | connectivity / auto-tag: `uname`, `cat /etc/os-release` | `Linux` + a Ubuntu os-release block | `discovery` auto-tag probe (spec-018) |
-| app listeners: `ss -ltnp` | web-prod-1: rows for :8080 (java), :3000 (node), :5432→**absent** (docker-proxy hides it); api-prod-2: :8080 (java), :9000 (python), :5432 (postgres) | `AppMonitorDiscoverer` + `ss`→PID→cmdline classifier (spec-025) |
-| pid identity: `cat /proc/<pid>/cgroup`, `/proc/<pid>/cmdline` | cmdlines that classify `checkout-api`/`orders-api`→springboot, `web-frontend`/`billing-worker`→generic; postgres on api-prod-2→database | spec-025 classifier |
+| app listeners: `ss -ltnp` | web-prod-1: rows for :8080 (comm `java`), :3000 (comm `web-frontend`), :5432→**absent** (docker-proxy hides it); api-prod-2: :8080 (comm `java`), :9000 (comm `billing-worker`), :5432 (comm `postgres`). NB: for a **generic** app the `ss` comm **is** the consumer name, so the generic listeners carry the app name directly (`web-frontend`, `billing-worker`, `postgres`); the `java` listeners get their name from the cmdline below. | `AppMonitorDiscoverer` + `ss`→PID→cmdline classifier (spec-025) |
+| pid identity: `cat /proc/<pid>/cgroup`, `/proc/<pid>/cmdline` | cgroup `0::/` on every pid → `Runtime.PROCESS` → `source=NATIVE`. cmdlines carry `-Dspring.application.name=checkout-api`/`orders-api` → **springboot**; `web-frontend`/`billing-worker` cmdlines are node/python (no java) → **generic**; api-prod-2 postgres → **generic `role=APP`** (no native DB classifier — see the deviation note below). | spec-025 classifier |
 | docker present: `command -v docker` | web-prod-1: `/usr/bin/docker`; api-prod-2: **empty** (exit ≠0, no docker) | `Probes.commandExists`, `DockerComposeDiscoverer` (spec-033) |
 | docker inventory: `docker ps --format '{{json .}}'` | web-prod-1: one line for the `postgres` container (image `postgres:16`, **no** `com.docker.compose.project` label → standalone datastore → SHARED); api-prod-2: n/a | `DockerComposeDiscoverer.containers` / `parseLabels` (spec-033) |
 | host RAM: `free -m` | `Mem:` line with total/used so RAM% + spec-041 other/system land (e.g. web-prod-1 `16000` total / `9000` used) | `parseMem` (app.js) |
@@ -76,10 +76,18 @@ first run — argv and formats are authoritative in the code, not here).
 | app CPU: `ps -o pcpu` (process tree) | per-app %CPU so the native CPU axis fills (spec-039) | `parseAppCpu` (spec-039, app.js) |
 | docker metrics: `docker stats --no-stream --format '{{json .}}'`, `docker ps -s`, `docker system df -v` | web-prod-1 postgres container CPU%/mem/disk so the docker datastore axes fill (spec-037) | `parseDockerStats`/`parseDockerPs`/`parseDockerVolumes` (spec-033/037, app.js) |
 
-> **Native shared DB (api-prod-2):** produced by the native database discoverer + the
-> `ss` :5432 postgres listener classifying as `role=DATABASE`, `SHARED`. Confirm which
-> discoverer emits the native datastore consumer when implementing (the docker path is
-> `DockerComposeDiscoverer`; the native path is the `ss`/DB classifier).
+> **Native shared DB (api-prod-2) — implemented reality / DEVIATION.** There is **no
+> native-datastore consumer path** in the code: the `ss` :5432 `postgres` listener is
+> classified by `AppMonitorDiscoverer` as a **`generic` app**, and
+> `MonitorConsumerView.ofNativeApp` hard-codes `role=APP` — `role=DATABASE` + `SHARED`
+> are produced **only** by the docker path (`DockerComposeDiscoverer` →
+> `ofDockerConsumer`, which also hard-codes `source=DOCKER`). So the closest achievable
+> native datastore is a **native `role=APP` consumer named `postgres`** (source
+> `NATIVE`, correct): it shows in the **Apps** lens, not the Databases **Shared** band.
+> Only web-prod-1's docker postgres populates the Databases lens. The demo still shows
+> two postgres datastores with the intended **docker vs native source contrast**; only
+> the role differs. Adding a native `role=DATABASE` classifier is a code change out of
+> scope for the demo harness.
 
 ## Alternative (no canned layer): two throwaway sshd containers
 
