@@ -13,29 +13,104 @@ properties, and no download/release path for the (already-built) executable jar.
 
 ---
 
-### 1 · Exceptions → `WebApplicationException` (kill the mappers)
+### 1 · Exceptions → the web layer: delete the 19 mappers
 
-`common/` holds **19 `*ExceptionMapper` `@Provider` classes (521 lines)**, each a 1:1 map
-of a service exception to `Response.status(X).entity(Map.of("error","<code>")).build()`.
-The **19** matching exceptions all `extends RuntimeException`; **none** extends
-`WebApplicationException`. Status + error-code are the only per-exception variation — the
-mapper class itself is pure boilerplate.
+**Current state — a split-brain error model.** Two patterns coexist for turning a
+service failure into an HTTP error:
 
-**Options**
-- **A** — each exception `extends WebApplicationException` and builds its `Response`
-  (status + `{"error":code}`) in its constructor; RESTEasy returns it directly ⇒ **delete
-  all 19 mappers**. Con: exceptions gain a `jakarta.ws.rs` dependency — couples `service/`
-  to the web layer (a layering smell; an ArchTest may forbid it).
-- **B** — a small base `AppException extends WebApplicationException` (status + errorCode
-  fields) that the 19 subclass; one place builds the body. Same 19-mapper delete, less
-  duplication, same layering coupling.
-- **C** — keep exceptions web-agnostic; replace the 19 mappers with **one** generic mapper
-  that reads a `@ResponseStatus`-style annotation or a `HasHttpStatus` marker interface on
-  the exception. Keeps `service/` free of `ws.rs`; deletes 18 of 19 mapper classes.
+- **404 / 409 / 401 / 502** (18 codes): a custom exception in `service/` that
+  `extends RuntimeException`, **plus** a dedicated `*ExceptionMapper` `@Provider` in
+  `common/` doing `Response.status(X).entity(Map.of("error","<code>")).build()`. That is
+  the **19 mappers, 521 lines**. Status spread: **8× `NOT_FOUND`, 8× `CONFLICT`, 1×
+  `UNAUTHORIZED`, 1× `BAD_REQUEST`, 1× `BAD_GATEWAY`**. 18 are byte-for-byte uniform; the
+  outlier is `SshExecutionExceptionMapper` (adds a `detail` field, 502, with a rationale).
+- **400 Bad Request** (validation): services `throw new jakarta.ws.rs.BadRequestException(…)`
+  **directly** — **59 call sites across 7 services** — with **no** custom exception and
+  **no** mapper (RESTEasy maps the JAX-RS built-in for free).
 
-**Impact** — A/B: remove ~19 classes / ~521 lines; modify 19 exceptions (+3–6 lines each,
-~+80–115); add 0–1 base class → **≈ −18 classes, ≈ −400 lines**. C: remove 19 mappers, add
-1 mapper + 1 marker; modify 19 exceptions (+1 line each) → ≈ −17 classes, ≈ −470 lines.
+So `service/` **already imports `jakarta.ws.rs`** (7 files) and already throws web-layer
+exceptions. ARCH.md's `api → service` direction says service shouldn't depend on the web
+layer — but that boundary is **already crossed** for the 400 path, and **no ArchTest
+enforces it** (only the Gate/MachineEvent ArchTests exist). The 19-mapper tax exists only
+because the *other* statuses took the custom-exception route instead of the
+`BadRequestException` route. **The real decision is which of the two existing patterns
+wins** — not whether to have mappers (both options below delete ~18 of them).
+
+---
+
+**Option 1 — exceptions carry their own `Response` (extend `WebApplicationException`).**
+Finish the pattern the 400 path already uses. Each custom exception extends
+`WebApplicationException` (directly, *A*) or a shared base `AppException` holding
+`(Status, errorCode)` (*B*), building its body in the constructor so RESTEasy returns it
+with **no mapper**:
+
+```java
+// base (option B)
+public class AppException extends WebApplicationException {
+  public AppException(Response.Status s, String code) {
+    super(Response.status(s).entity(new ErrorResponse(code)).build());
+  }
+}
+// each of the 19 collapses to one line of intent:
+public class MachineNotFoundException extends AppException {
+  public MachineNotFoundException(String id) { super(NOT_FOUND, "machine_not_found"); }
+}
+```
+
+- **Deletes all 19 mappers.** `SshExecutionException` becomes `super(BAD_GATEWAY, …)` with
+  its `detail` (an `ErrorResponse(String error, String detail)` or a 1-off subclass).
+- **Consistency:** matches the 59 existing `BadRequestException` throws (both are
+  `WebApplicationException`); the 400 path *could* also fold into
+  `ParamValidationException extends AppException(BAD_REQUEST, "param_validation_failed")` so
+  every error flows one way.
+- **Layering:** pushes `jakarta.ws.rs` into more `service/` classes — but service already
+  imports it (7 files today), so this **deepens an existing crossing**, it doesn't create a
+  new one. If a clean service↔web boundary is ever wanted, this is the wrong direction.
+- **Impact:** −19 mapper classes (~521 lines); +`AppException` +`ErrorResponse` (~30);
+  modify 19 exceptions to extend the base with a 1-line super (~+40); mapper-asserting tests
+  move to asserting the endpoint status/body. **Net ≈ −18 classes, ~−450 lines.** Effort:
+  **low**, purely mechanical.
+
+**Option 2 — keep `service/` web-agnostic; one generic mapper.** The principled-layering
+direction: an exception knows a *status intent* + code but not JAX-RS. A single
+`AppExceptionMapper` reads a marker and builds the one `Response`:
+
+```java
+public interface HasError { int status(); String code(); }   // plain int → no ws.rs in service/
+@Provider @Component
+class AppExceptionMapper implements ExceptionMapper<RuntimeException> {
+  public Response toResponse(RuntimeException e) {
+    if (e instanceof HasError h) return Response.status(h.status()).entity(new ErrorResponse(h.code())).build();
+    throw e; // let anything else fall through to the container's 500
+  }
+}
+```
+
+- **Deletes 18 of 19 mappers** (keeps this one generic mapper; `SshExecutionException`'s
+  `detail` handled by an optional-detail method on the marker, or its own mapper).
+- **The consistency catch:** to be *actually* principled, this also means unwinding the
+  **59 `BadRequestException` throws** into web-agnostic exceptions — otherwise `service/`
+  still imports `ws.rs` and the layering goal isn't met, leaving option 2's only real gain
+  over option 1 as "1 mapper instead of 0" while exceptions stay ws.rs-free (a marginal
+  purity win). Unwinding the 400 path is a **much larger, riskier** change (7 services, 59
+  sites) than the 19 mappers.
+- **Layering:** the intended-clean direction — *iff* the `BadRequestException` throws are
+  also converted; otherwise mostly cosmetic.
+- **Impact (mappers only):** −18 mapper classes; +1 mapper +1 marker +`ErrorResponse`
+  (~45); modify 19 exceptions to implement the marker (~+40). **Net ≈ −16 classes, ~−440
+  lines.** *To be principled*, add: unwind 59 `BadRequestException` sites → new/curated
+  exceptions + modify 7 services. Effort: **low** for the mappers, **moderate-high** if the
+  400 path is included.
+
+**Deciding table** — both delete ~18 mappers; the choice is the *layering stance*:
+
+| | Option 1 (extend WAE) | Option 2 (web-agnostic + 1 mapper) |
+|---|---|---|
+| Mapper classes left | **0** | **1** (generic) |
+| `service/` ↔ `ws.rs` | deepens the existing crossing | clean **only if** the 59 `BadRequestException` throws are also unwound |
+| Fits today's 400 path | **matches it** | **contradicts it** (unless the 400 path is converted too) |
+| Effort | low | low (mappers) → **moderate-high** (to be principled) |
+| Net classes / lines | ≈ **−18 / −450** | ≈ −16 / −440 (mappers only), more if the 400 path is included |
 
 ### 2 · DTOs over generic `Response`/`Request` — *mostly already done*
 
@@ -88,7 +163,7 @@ has **no** download / `java -jar` / release section.
 
 | # | Item | Classes Δ | Lines Δ | Risk |
 |---|------|-----------|---------|------|
-| 1 | exceptions → `WebApplicationException` | **−17 to −18** | **~−400 to −470** | low (behaviour identical; watch `service/`↔web layering) |
+| 1 | exceptions → web layer (opt 1) / generic mapper (opt 2) | **−16 to −18** | **~−440 to −450** | low (behaviour identical; the `service/`↔web boundary is *already* crossed, so opt 1 adds no new smell; opt 2 is only "clean" if the 400 path is also unwound) |
 | 2 | DTOs over `Response`/`Request` | +1 (`ErrorResponse`) | ~+5 | none — already done |
 | 3 | yaml → properties | 0 | ~net-neutral (±15) | low (check nested lists/profile groups) |
 | 4 | uber jar + release + README | +1 (workflow) | ~+70–100 | low |
@@ -97,11 +172,17 @@ has **no** download / `java -jar` / release section.
 
 ## Open Questions
 
-1. **§1 layering:** does ARCH.md permit `jakarta.ws.rs` imports in `service/` exceptions
-   (options A/B), or must exceptions stay web-agnostic (option C)? An ArchTest may already
-   forbid the import.
-2. **§1 completeness:** do any of the 19 mappers do more than status + `{"error":code}`
-   (logging, headers, i18n)? (Sampled several — no — but confirm all 19 before deleting.)
+1. **§1 — the layering stance (the real decision).** ARCH.md says `api → service`, yet
+   `service/` **already** imports `jakarta.ws.rs` and throws `BadRequestException` at 59
+   sites, and **no ArchTest enforces** the boundary. So the question isn't "is ws.rs allowed
+   in service?" (it already is) — it's: **embrace it** (option 1: extend WAE, delete all 19
+   mappers, consistent with the 400 path) **or reverse it** (option 2: web-agnostic
+   exceptions + one generic mapper, which to be principled also means unwinding the 59
+   `BadRequestException` throws — a much bigger change)?
+2. **§1 completeness — confirmed:** 18 of 19 mappers are status + `{"error":code}` only;
+   the lone outlier is `SshExecutionExceptionMapper` (adds a `detail` field, 502, with a
+   documented rationale) — either option handles it as a one-off. No logging/headers/i18n
+   in any mapper.
 3. **§3:** does any YAML config use nested lists/maps or profile-group syntax that
    `.properties` handles poorly?
 4. **§4:** release on every `v*` tag or manual `workflow_dispatch`? Attach only the jar or
