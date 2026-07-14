@@ -518,15 +518,16 @@
     mountAsync(function () {
       return Promise.all([
         api("GET", "/machines/" + mid),
-        api("GET", "/recipes?machineId=" + encodeURIComponent(mid))
+        api("GET", "/recipes?machineId=" + encodeURIComponent(mid)),
+        api("GET", "/machines/" + mid + "/discovery")
       ]).then(function (res) {
-        var machine = res[0], recipes = res[1];
+        var machine = res[0], recipes = res[1], discovery = res[2];
         return Promise.all(recipes.map(function (r) {
           return api("GET", "/recipes/" + r.id + "/actions").then(function (actions) {
             return { recipe: r, actions: actions };
           });
         })).then(function (groups) {
-          return { machine: machine, groups: groups };
+          return { machine: machine, groups: groups, discovery: discovery };
         });
       }).then(function (data) {
         var machine = data.machine;
@@ -578,6 +579,7 @@
           h("div", { class: "row" }, (machine.tags || []).map(function (t) {
             return h("span", { class: "tag", text: t });
           })),
+          discoverySection(p, mid, (data.discovery && data.discovery.families) || []),
           groups);
       });
     });
@@ -601,6 +603,45 @@
           right),
         links);
     }));
+  }
+
+  /**
+   * The per-machine Discovery panel (spec-035): a family toggle list plus, for any
+   * guarded family, its one-line capability note (docker: root-equivalent). Enabling a
+   * family only lets its discoverers probe and propose — every proposed action still
+   * needs approval to run, so the toggles sit above the recipe/proposal groups below.
+   */
+  function discoverySection(p, mid, families) {
+    var chips = families.map(function (f) {
+      return h("button", {
+        type: "button",
+        class: "tag tag--filter" + (f.enabled ? " tag--on" : ""),
+        "aria-pressed": f.enabled ? "true" : "false",
+        text: f.label,
+        onclick: function () { toggleFamily(p, mid, f); }
+      });
+    });
+    var notes = families.filter(function (f) { return f.note; }).map(function (f) {
+      return h("p", { class: "small faint mt-2", text: f.label + " — " + f.note });
+    });
+    return h("div", { class: "section" },
+      h("h2", { text: "Discovery" }),
+      h("p", { class: "small dim",
+        text: "Choose which discoverer families may probe this machine. Enabling a family "
+          + "only lets it propose recipes; every proposed action still needs approval to run." }),
+      chips.length ? h("div", { class: "filter-chips mt-2" }, chips) : empty("No discoverer families."),
+      notes);
+  }
+
+  /** PUT the flipped family enablement, then re-render the detail to reflect the new state. */
+  function toggleFamily(p, mid, f) {
+    var next = !f.enabled;
+    api("PUT", "/machines/" + mid + "/discovery/" + f.key.toLowerCase(), { enabled: next })
+      .then(function () {
+        toast(f.label + " discovery " + (next ? "enabled" : "disabled"));
+        screenMachineDetail(p);
+      })
+      .catch(function (err) { toast(err.message); });
   }
 
   // ----- helper: load one action with its machine + recipe context ----------
