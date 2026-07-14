@@ -1,6 +1,7 @@
 # 043 — Mobile-responsive UI (usable on cellphones)
 
-**Status:** todo · no Linear issue (blocked for this repo; tracked as `spec-043`).
+**Status:** done · branch `moacyrricardo/spec-043-mobile-responsive-ui` (PR #61) ·
+no Linear issue (blocked for this repo; tracked as `spec-043`).
 
 ## Context
 
@@ -97,6 +98,25 @@ navigation; the Monitor bars, legend, filter chips, cadence controls, and consum
 drawer are all readable and operable; app-cards and list/row-between rows are single
 column; every button/link/chip is comfortably tappable (≥44 px). Existing desktop layout
 (>720 px) is unchanged.
+
+## How the implementation differed
+
+Faithful to the Decision/Implementation — no divergence in scope or approach.
+Minor concrete choices made during the build:
+
+- The `--tap-min: 44px` token (marked "optional" in the spec) was added and used
+  for the `min-height` of `.btn`, `.tag--filter`, `.run-chip`, `.legend-chip`,
+  `.app-name-toggle` (phone block) and the revealed nav links (≤720px block).
+- The Menu toggle lives inside `.brand` (pushed right with `margin-left:auto`),
+  reusing `.btn.btn--sm` so it inherits the token styling; hidden above 720px.
+- The mono command preview needed **no** new wrapper — `renderCommand` already
+  emits `.command`, which carries `overflow-x:auto`. Overflow safety was added
+  where it was actually missing: `.host-panel` gets `grid-template-columns:1fr`
+  + `overflow-x:auto` on phones, and `img { max-width:100% }`.
+- The bottom-sheet drawer gets a `sheet-up` slide-in keyframe, guarded by
+  `prefers-reduced-motion: no-preference`.
+- No `*ArchTest`, Java, or data-model files were touched; the full suite (263
+  tests) and both JS render-checks stay green.
 
 ## Related
 
