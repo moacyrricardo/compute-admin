@@ -34,6 +34,17 @@ public class CannedSshExecutor implements SshExecutor {
     @Override
     public void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink) {
         ExecResult result = exec(target, argv, sudo);
+        // Demo-only: a real SSH round-trip takes tens-to-hundreds of ms, during which
+        // the client's `GET /runs/{id}/output` SSE subscription attaches. The canned
+        // executor is otherwise near-instant (~2ms), so a run can COMPLETE before the
+        // client subscribes — the subscription then waits forever for output that
+        // already flushed, and the monitor never repaints with live data. Emulate a
+        // little latency so the subscribe wins the race, matching production timing.
+        try {
+            Thread.sleep(500L);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         if (result.stdout() != null && !result.stdout().isEmpty()) {
             sink.onStdout(result.stdout());
         }
