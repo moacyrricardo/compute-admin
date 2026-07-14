@@ -55,11 +55,12 @@ The target end-state the recordings depict is the fake fleet defined in
 ```bash
 # 0. prerequisites: firefox, geckodriver, ffmpeg on PATH; a fresh DB
 #    (the demo profile seeds its own users/machines — do NOT point at real ./data)
-# 1. boot the app with the demo profile on a dedicated port + throwaway DB dir
-PORT=8099 mvn -q spring-boot:run \
-  -Dspring-boot.run.profiles=demo \
-  -Dspring-boot.run.arguments="--ca.db.dir=./data-demo"
-# 2. wait for `Started Application`; log in with the seeded demo user (see fake-fleet.md)
+# 1. boot the app with the demo profile on a dedicated port. The demo profile's own
+#    datasource already points at the throwaway ./data-demo (application-demo.yml), so
+#    there is no separate DB-dir flag — it never touches the real ./data.
+PORT=8099 mvn -q spring-boot:run -Dspring-boot.run.profiles=demo
+# 2. wait for `Started Application`; the DemoSeeder logs `[demo] …` and pre-seeds
+#    api-prod-2. Log in with the seeded demo user (see fake-fleet.md).
 # 3. record each flow at BOTH viewports — agent per steps.md §N, or:
 python3 demo/record.py --steps demo/steps.md --section 1 --viewport desktop --out demo/out/01-add-machine-discover.desktop.gif
 python3 demo/record.py --steps demo/steps.md --section 1 --viewport mobile  --out demo/out/01-add-machine-discover.mobile.gif
@@ -70,13 +71,26 @@ python3 demo/record.py --steps demo/steps.md --section 1 --viewport mobile  --ou
 
 ## Status
 
-**Prepared, not built/validated.** Outstanding before the first real run:
-- [ ] Implement the `demo`-profile `CannedSshExecutor` + seeder per
+**Built + validated (backend); recording pass still outstanding.**
+- [x] Implement the `demo`-profile `CannedSshExecutor` + seeder per
       [`fake-fleet.md`](./fake-fleet.md) and validate its outputs against the live
-      parsers (the contract table lists the exact parser for each command).
-- [ ] Confirm the `--ca.db.dir`/demo-DB override exists (or add one) so the demo never
-      touches real `./data`.
+      parsers (the contract table lists the exact parser for each command). Done in
+      `src/main/java/com/iskeru/computeadmin/demo/` (`CannedSshExecutor`, `DemoFleet`,
+      `DemoSeeder`), all `@Profile("demo")`. Validated end-to-end over the REST API:
+      register→discover→approve→`GET /api/monitor`→poll; RAM/CPU/disk outputs parse.
+- [x] Confirm the demo-DB override exists so the demo never touches real `./data`.
+      `application-demo.yml` points the datasource at `./data-demo` (Flyway still owns
+      the schema). `./data-demo` is gitignored; reset the demo by deleting it.
 - [ ] First recording pass; commit the produced `demo/out/*.gif`.
+
+> **Known deviation from `fake-fleet.md` (native datastore role).** api-prod-2's native
+> `postgres` surfaces as a **native `role=APP` consumer** (source `NATIVE`), not a
+> `role=DATABASE` one: the code has no native-database consumer path
+> (`MonitorConsumerView.ofNativeApp` always sets `role=APP`; `role=DATABASE`/`SHARED`
+> come only from the docker path). So the Databases lens **Shared** band shows only
+> web-prod-1's docker postgres; api-prod-2's postgres appears in the Apps lens. Source
+> (docker vs native) and the SHARED docker datastore are exactly as specified. See the
+> note under the contract table in [`fake-fleet.md`](./fake-fleet.md).
 
 ## Maintenance — what to check when the app changes
 
