@@ -548,16 +548,6 @@
             testBtn.textContent = "Test connection";
           });
         });
-        var discoverBtn = h("button", { class: "btn" }, "Discover recipes");
-        discoverBtn.addEventListener("click", function () {
-          discoverBtn.disabled = true;
-          discoverBtn.textContent = "Discovering…";
-          api("POST", "/machines/" + mid + "/discover").then(function () {
-            toast("Discovery complete");
-            screenMachineDetail(p);
-          }).catch(function (err) { toast(err.message); discoverBtn.disabled = false; discoverBtn.textContent = "Discover recipes"; });
-        });
-
         var groups = data.groups.length
           ? data.groups.map(function (g) {
               return h("div", { class: "section" },
@@ -575,7 +565,7 @@
           crumbs(link("#/machines", "Machines"),
             h("span", { text: machine.name })),
           pageHead(machine.name, machine.loginUser + "@" + machine.host + ":" + machine.port,
-            [statusChip, testBtn, discoverBtn]),
+            [statusChip, testBtn]),
           h("div", { class: "row" }, (machine.tags || []).map(function (t) {
             return h("span", { class: "tag", text: t });
           })),
@@ -624,11 +614,23 @@
     var notes = families.filter(function (f) { return f.note; }).map(function (f) {
       return h("p", { class: "small faint mt-2", text: f.label + " — " + f.note });
     });
+    var discoverBtn = h("button", { class: "btn btn--sm" }, "Discover recipes");
+    discoverBtn.addEventListener("click", function () {
+      discoverBtn.disabled = true;
+      discoverBtn.textContent = "Discovering…";
+      api("POST", "/machines/" + mid + "/discover").then(function () {
+        toast("Discovery complete");
+        screenMachineDetail(p);
+      }).catch(function (err) { toast(err.message); discoverBtn.disabled = false; discoverBtn.textContent = "Discover recipes"; });
+    });
     return h("div", { class: "section" },
-      h("h2", { text: "Discovery" }),
+      h("div", { class: "row-between" },
+        h("h2", { text: "Discovery" }),
+        discoverBtn),
       h("p", { class: "small dim",
-        text: "Choose which discoverer families may probe this machine. Enabling a family "
-          + "only lets it propose recipes; every proposed action still needs approval to run." }),
+        text: "Choose which discoverer families may probe this machine, then run discovery. "
+          + "Enabling a family only lets it propose recipes; every proposed action still needs "
+          + "approval to run." }),
       chips.length ? h("div", { class: "filter-chips mt-2" }, chips) : empty("No discoverer families."),
       notes);
   }
