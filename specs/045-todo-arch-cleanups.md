@@ -168,7 +168,47 @@ has **no** download / `java -jar` / release section.
 | 3 | yaml → properties | 0 | ~net-neutral (±15) | low (check nested lists/profile groups) |
 | 4 | uber jar + release + README | +1 (workflow) | ~+70–100 | low |
 
-**Total ≈ −16 to −17 net classes, ~−320 to −390 net lines**, dominated by §1.
+**Total ≈ −16 net classes, ~−350 net lines**, dominated by §1.
+
+## Recommendation (leaning — this stays a concern; the call is yours)
+
+- **§1 → Option 1 (extend `WebApplicationException`), variant B (a shared `AppException`
+  base).** Option 2's layering purity is *illusory* until the 59 `BadRequestException`
+  throws are also unwound — a much larger change this cleanup should not smuggle in.
+  Option 1 is consistent with what the code already does at 400, deletes **all 19** mappers
+  (0 left), and is the lowest-effort path. If a genuinely clean `service/`↔web boundary is
+  ever wanted, make it its **own** architectural spec (unwind *all* `ws.rs` from `service/`,
+  the 400 path included) — not this one.
+- **§2 → close it.** Already satisfied; its only artifact is the `ErrorResponse` record,
+  which rides along inside §1. No standalone work.
+- **§3 → do it, lowest priority.** Pure preference, net-neutral, mechanical — the smallest
+  ROI of the four. Quick win; verify no profile-group / nested-list YAML first.
+- **§4 → do it, highest external value.** The jar already builds; a release workflow + a
+  README "Download & run" is the only thing between the project and a `java -jar` download.
+  Recommend: on a `v*` tag, publish a GitHub Release with the jar **+ a checksum**.
+
+## Suggested derivative specs
+
+Split into **three** specs (not four — §2 folds into §1). Numbers assigned at authoring
+time (`/new-spec`); suggested slugs:
+
+1. **`unified-error-model`** (§1 + §2) — *the real refactor.* Add `AppException(Status,
+   code)` + `ErrorResponse`; convert the 19 exceptions to the base; **delete the 19
+   mappers**; preserve `SshExecutionException`'s `detail`. Optional stretch: fold the 59
+   `BadRequestException` throws into a `ParamValidationException` for one uniform path.
+   **≈ −18 classes / −450 lines.** Size **M** — many files, but mechanical; zero behaviour
+   change (test: identical statuses/bodies before/after).
+2. **`config-to-properties`** (§3) — convert the 3 YAML files to `.properties`. Size **XS**.
+   Independent.
+3. **`release-pipeline`** (§4) — `release.yml` on `v*` (build → GitHub Release with jar +
+   checksum), pin `<finalName>`, README "Download & run". Size **S**. Independent; highest
+   user-facing value.
+
+All three are **independent / parallelizable**. Suggested order by value: **§4 release
+first** (unblocks distribution) → **§1** (the substantive cleanup) → **§3** last
+(cosmetic). A deliberately-separate, larger **`service-web-boundary`** spec is the home for
+Option 2's full ambition if the team ever wants it — explicitly out of scope for these
+three.
 
 ## Open Questions
 
