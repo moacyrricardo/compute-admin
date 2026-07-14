@@ -1,6 +1,7 @@
 # 041 — Host system/other usage segment (real RAM/CPU/disk on app-less machines)
 
-**Status:** todo · no Linear issue (blocked for this repo; tracked as `spec-041`).
+**Status:** done · branch `moacyrricardo/spec-041-host-system-usage-segment` (PR #56) ·
+no Linear issue (blocked for this repo; tracked as `spec-041`).
 
 ## Context
 
@@ -95,3 +96,25 @@ the RAM/CPU/disk bars show a non-empty **other/system** segment reflecting real 
   usage / OTHER segment" example of that concern.
 - spec-034 (fleet monitor UI — the segmented bars + buckets), spec-023
   (`monitor machine` host vitals), spec-032 (`Bucket` / `ConsumerRole.OTHER`).
+
+## How the implementation differed
+
+Faithful to the Decision/Implementation. Notes:
+
+- **Server SYSTEM-bucket reconciliation.** The server does not emit a SYSTEM bucket for a
+  bare native host, so the OTHER segment is synthesized client-side unconditionally
+  (`computeOther` in `app.js`). Should a server-provided SYSTEM bucket ever appear in a
+  machine's consumers, `paint()` drops it from the revealed buckets whenever the synthetic
+  OTHER is present, so system usage renders as exactly **one** segment (no double-count).
+- **`--c-system` made visible.** It was `transparent` (a leftover from when the SYSTEM
+  bucket was invisible), which would have rendered the new segment invisible. Changed to a
+  distinct stone hue (light/dark) so the OTHER segment actually shows; only SYSTEM-bucket
+  consumers use this token, so nothing else is affected. The genuinely-free remainder is
+  still the hatched `axis-seg--free` tail, unchanged.
+- **CPU/disk used sources.** Host CPU-in-use = `100 − idle` from the re-added `top -bn1`
+  parser (`parseHostCpu`); disk used = the root/data-root `Use%` column (`parseDfUsedPct`).
+  Both degrade to `—` when unparseable/unapproved; the per-consumer CPU denominator remains
+  `nproc` as before.
+- **Testing.** The check is a new `src/test/js/host-system-segment.render-check.js` (node),
+  matching the existing render-check idiom; not wired into `mvn`. The full Maven suite
+  (incl. all ArchTests) stays green: 249 tests, 0 failures.
