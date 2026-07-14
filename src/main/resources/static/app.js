@@ -2740,8 +2740,18 @@
     }
   }
 
+  // spec-043: on phones the primary nav is collapsed behind the "Menu" toggle.
+  // Collapse it again on every route change so tapping a link closes the menu.
+  function closeNav() {
+    var toggle = byId("nav-toggle");
+    var nav = byId("nav");
+    if (nav) nav.classList.remove("nav--open");
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+  }
+
   function route() {
     runViewCleanup();
+    closeNav();
     if (!Session.token()) { showLogin(); return; }
     showShell();
     var parsed = parseHash();
@@ -2846,6 +2856,19 @@
     location.hash = "";
     showLogin();
   });
+
+  // spec-043: mobile nav toggle. Plain DOM wiring (no innerHTML) — flips the
+  // .nav--open class and the button's aria-expanded. Closing on navigation is
+  // handled by closeNav() in route().
+  (function wireNavToggle() {
+    var toggle = byId("nav-toggle");
+    var nav = byId("nav");
+    if (!toggle || !nav) return;
+    toggle.addEventListener("click", function () {
+      var open = nav.classList.toggle("nav--open");
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  })();
 
   window.addEventListener("hashchange", route);
   route();
