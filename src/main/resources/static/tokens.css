@@ -63,17 +63,18 @@
 
   /* --- categorical consumer palette (spec-034) ---------------------------- */
   /* The one data-colour group spec-012 deliberately lacked (it is semantic-only).
-     ~5 categorical hues for named consumers plus a NEUTRAL for the docker bucket;
-     system/free is the transparent remainder. One colour per consumer, held
-     constant across all three axes. It is ALWAYS paired with a labelled legend so
-     colour is never the sole signal (WCAG AA — the house rule). */
+     ~5 categorical hues for named consumers plus a NEUTRAL for the docker bucket
+     and a distinct STONE for the "other / system" segment (spec-041). Only the
+     genuinely-free remainder stays transparent (drawn as the hatched tail). One
+     colour per consumer, held constant across all three axes. It is ALWAYS paired
+     with a labelled legend so colour is never the sole signal (WCAG AA — house rule). */
   --c-1: #6366f1;
   --c-2: #0d9488;
   --c-3: #a855f7;
   --c-4: #e11d48;
   --c-5: #d97706;
   --c-docker: #64748b;
-  --c-system: transparent;
+  --c-system: #78716c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -102,6 +103,6 @@
     --c-4: #fb7185;
     --c-5: #fbbf24;
     --c-docker: #94a3b8;
-    --c-system: transparent;
+    --c-system: #a8a29e;
   }
 }
