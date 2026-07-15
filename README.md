@@ -94,7 +94,34 @@ content-pinning (015), cloud import (009, parked), and the 027/028 hardening spe
 Architecture is specified in [ARCH.md](./ARCH.md); each feature lands as a numbered
 spec — see the [spec catalog](./specs/catalog.md) for status.
 
-## Running
+## Download & run
+
+Grab the executable jar from the latest [Release](../../releases) — no build
+toolchain required, just a JRE (Java 25+). Each release ships
+`compute-admin.jar` and a `compute-admin.jar.sha256` checksum.
+
+```bash
+# Download both assets from the latest release, then verify the checksum:
+sha256sum -c compute-admin.jar.sha256
+
+# Run it (ready when the log shows `Started Application`):
+java -jar compute-admin.jar
+```
+
+Runtime knobs:
+
+- **`PORT`** — HTTP port (default `8080`).
+- **Profile** — `java -jar compute-admin.jar --spring.profiles.active=<profile>`.
+- **Database** — an H2 **file** DB at `./data/compute-admin`, created on first
+  boot; Flyway owns the schema.
+- **Health** — `GET /api/health` returns JSON `{status, version}`; the static UI
+  shell is served at `/`.
+
+The app prints its public SSH key on first boot for you to install on target
+machines' `authorized_keys`. For a source build (dev) instead of the binary, use
+the section below.
+
+## Running (dev)
 
 ```bash
 mvn spring-boot:run -Dspring-boot.run.profiles=dev
