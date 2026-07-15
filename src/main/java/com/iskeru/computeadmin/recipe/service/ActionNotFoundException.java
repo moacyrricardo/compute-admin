@@ -15,6 +15,6 @@ import jakarta.ws.rs.core.Response;
 public class ActionNotFoundException extends AppException {
 
     public ActionNotFoundException(String id) {
-        super(Response.Status.NOT_FOUND, "action_not_found");
+        super("Action not found: " + id, Response.Status.NOT_FOUND, "action_not_found");
     }
 }

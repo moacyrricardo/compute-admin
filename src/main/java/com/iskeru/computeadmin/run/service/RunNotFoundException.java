@@ -13,6 +13,6 @@ import jakarta.ws.rs.core.Response;
 public class RunNotFoundException extends AppException {
 
     public RunNotFoundException(String id) {
-        super(Response.Status.NOT_FOUND, "run_not_found");
+        super("Run not found: " + id, Response.Status.NOT_FOUND, "run_not_found");
     }
 }

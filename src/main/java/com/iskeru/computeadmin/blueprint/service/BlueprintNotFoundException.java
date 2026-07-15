@@ -14,6 +14,6 @@ import jakarta.ws.rs.core.Response;
 public class BlueprintNotFoundException extends AppException {
 
     public BlueprintNotFoundException(String id) {
-        super(Response.Status.NOT_FOUND, "blueprint_not_found");
+        super("Blueprint not found: " + id, Response.Status.NOT_FOUND, "blueprint_not_found");
     }
 }

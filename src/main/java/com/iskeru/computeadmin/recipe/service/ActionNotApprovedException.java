@@ -14,6 +14,6 @@ import jakarta.ws.rs.core.Response;
 public class ActionNotApprovedException extends AppException {
 
     public ActionNotApprovedException(String id) {
-        super(Response.Status.CONFLICT, "action_not_approved");
+        super("Action not approved: " + id, Response.Status.CONFLICT, "action_not_approved");
     }
 }

@@ -14,6 +14,6 @@ import jakarta.ws.rs.core.Response;
 public class RecipeNotFoundException extends AppException {
 
     public RecipeNotFoundException(String id) {
-        super(Response.Status.NOT_FOUND, "recipe_not_found");
+        super("Recipe not found: " + id, Response.Status.NOT_FOUND, "recipe_not_found");
     }
 }

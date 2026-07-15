@@ -15,6 +15,6 @@ import jakarta.ws.rs.core.Response;
 public class MachineNameTakenException extends AppException {
 
     public MachineNameTakenException(String name) {
-        super(Response.Status.CONFLICT, "machine_name_taken");
+        super("Machine name already in use: " + name, Response.Status.CONFLICT, "machine_name_taken");
     }
 }
