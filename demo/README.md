@@ -98,7 +98,7 @@ The target end-state the recordings depict is the fake fleet defined in
 # 0. prerequisites: firefox, geckodriver, ffmpeg on PATH; a fresh DB
 #    (the demo profile seeds its own users/machines — do NOT point at real ./data)
 # 1. boot the app with the demo profile on a dedicated port. The demo profile's own
-#    datasource already points at the throwaway ./data-demo (application-demo.yml), so
+#    datasource already points at the throwaway ./data-demo (application-demo.properties), so
 #    there is no separate DB-dir flag — it never touches the real ./data.
 PORT=8099 mvn -q spring-boot:run -Dspring-boot.run.profiles=demo
 # 2. wait for `Started Application`; the DemoSeeder logs `[demo] …` and pre-seeds
@@ -121,7 +121,7 @@ python3 demo/record.py --steps demo/steps.md --section 1 --viewport mobile  --ou
       `DemoSeeder`), all `@Profile("demo")`. Validated end-to-end over the REST API:
       register→discover→approve→`GET /api/monitor`→poll; RAM/CPU/disk outputs parse.
 - [x] Confirm the demo-DB override exists so the demo never touches real `./data`.
-      `application-demo.yml` points the datasource at `./data-demo` (Flyway still owns
+      `application-demo.properties` points the datasource at `./data-demo` (Flyway still owns
       the schema). `./data-demo` is gitignored; reset the demo by deleting it.
 - [x] First recording pass; committed `demo/out/*.gif` (6 GIFs, see [Recordings](#recordings)).
       Flow-3 caveats noted there (web-prod-1 bars empty until its host-vitals are approved;
