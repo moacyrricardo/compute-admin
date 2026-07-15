@@ -1,6 +1,7 @@
 # 046 — Unified error model (delete the 19 exception mappers)
 
-**Status:** todo · no Linear issue (blocked; tracked as `spec-046`). Graduated from concern
+**Status:** done · branch `moacyrricardo/spec-046-unified-error-model` · no Linear issue
+(blocked; tracked as `spec-046`). Graduated from concern
 [045](./045-todo-arch-cleanups.md) §1 + §2.
 
 ## Context
@@ -63,6 +64,28 @@ Explicitly **out of scope**: unwinding the 59 direct `BadRequestException` throw
   `jakarta.ws.rs` via `AppException`. Removing `ws.rs` from `service/` entirely is a
   separate, larger `service-web-boundary` spec (concern 045, Option 2).
 - Wire format intentionally unchanged (no RFC-7807/problem+json migration here).
+
+## How the implementation differed
+
+Faithful to the decision. Two refinements worth recording:
+
+- **A third `AppException` constructor.** Beyond the spec's `(status, code)` and
+  `(status, code, detail)`, a message-first `(String message, status, code)` was
+  added so `UnauthorizedException` keeps its internal reason ("Invalid email or
+  password", "Missing JWT", …) on `getMessage()` **without** leaking it to the wire
+  — the 401 body stays `{"error":"unauthorized"}`. This preserves the existing
+  `AuthServiceTest` message assertions and the anti-enumeration property. The SSH
+  `(status, code, detail)` path already sets the message to the detail, so run-output
+  capture (which reads `getMessage()`) is unchanged.
+- **`SshExecutionException` no longer chains its cause.** `AppException`'s
+  constructors take no `Throwable`, so the wrapped `IOException` cause is dropped.
+  Nothing consumed the cause (the run path reads only `getMessage()`; no test
+  asserts it), and the 502 wire body + message are identical.
+
+Converted 19 exceptions, deleted 19 `*ExceptionMapper` classes, added the typed
+`ErrorResponse` and `AppException` plus a parametric `AppExceptionTest`. Full suite
+green (283 tests); `grep "implements ExceptionMapper"` → 0. The 59 direct
+`BadRequestException` throws stay as-is (out of scope).
 
 ## Related
 
