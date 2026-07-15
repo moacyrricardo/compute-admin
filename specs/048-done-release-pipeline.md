@@ -1,6 +1,7 @@
 # 048 — Release pipeline (tagged uber-jar + download docs)
 
-**Status:** todo · no Linear issue (blocked; tracked as `spec-048`). Graduated from concern
+**Status:** done · branch `moacyrricardo/spec-048-release-pipeline` · no Linear issue
+(blocked; tracked as `spec-048`). Graduated from concern
 [045](./045-todo-arch-cleanups.md) §4.
 
 ## Context
@@ -47,6 +48,18 @@ SHA-256 checksum) as a Release asset, give the jar a **stable filename**, and ad
 - Releases fire only on `v*` tags (+ manual dispatch), not on every push — intentional.
 - Pom `version` stays `-SNAPSHOT` (informational); the *release* version is the tag. If a
   matching pom version is wanted, set it at tag time (deferred).
+
+## How the implementation differed
+
+Faithful to the decision. Notable resolutions of the spec's open choices:
+
+- **Tests in the release build:** skipped (`mvn -B -ntp package -DskipTests`), as the
+  spec's leaning suggested — `tests.yml` already gates every push, so the release stays
+  fast.
+- **Publish mechanism:** used `softprops/action-gh-release@v2` (the spec's first option)
+  rather than the `gh release create` alternative; release name = `${{ github.ref_name }}`.
+- No change to the pom `version` (stays `-SNAPSHOT`, per Known Gaps). No signing/SBOM/
+  container image (out of scope).
 
 ## Related
 
