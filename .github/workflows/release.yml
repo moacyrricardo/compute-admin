@@ -1,0 +1,48 @@
+name: release
+
+# Publish a GitHub Release with the executable uber-jar on every `v*` tag
+# (e.g. `v1.0.0`), plus a manual `workflow_dispatch` re-run. Tests already gate
+# every push via `tests.yml`, so the release build skips them to stay fast
+# (spec-048).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# A second push to the same tag supersedes an in-flight release build.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+# Needed to create the release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build uber-jar
+        run: mvn -B -ntp package -DskipTests
+
+      - name: Checksum
+        # The stable finalName (pom.xml) fixes the asset name; the tag carries
+        # the version.
+        run: sha256sum target/compute-admin.jar > compute-admin.jar.sha256
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            target/compute-admin.jar
+            compute-admin.jar.sha256
