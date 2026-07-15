@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Runs under the {@code test} profile so the full-context boot uses the
  * in-memory datasource from {@code application-test.yml} rather than the
- * file-based dev DB in {@code application.yml} — keeping the run hermetic. Every
+ * file-based dev DB in {@code application.properties} — keeping the run hermetic. Every
  * later {@code *WebTest} inherits this by declaring {@code @ActiveProfiles("test")}.
  *
  * <p>spec-001.
