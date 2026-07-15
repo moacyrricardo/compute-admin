@@ -106,11 +106,16 @@ is the `@RevisionEntity(CurrentUserRevisionListener.class)`;
 `CurrentUser`. Config pins `…envers.audit_table_suffix=_aud` and
 `store_data_at_delete=true`.
 
-**Exceptions.** Domain exception is a tiny `extends RuntimeException` **in the
-`service` package** with a one-line Javadoc stating its HTTP mapping. Its
-`*ExceptionMapper` (`@Provider @Component`) lives in **`common/`**, one per
-exception, returning `Map.of("error", "<snake_code>")`. Plain 400s throw the
-built-in `jakarta.ws.rs.BadRequestException`.
+**Exceptions.** Domain exception is a tiny `extends common/AppException` **in the
+`service` package** with a one-line Javadoc stating its HTTP mapping. `AppException
+extends WebApplicationException`, so each exception **carries its own response** —
+the constructor is a one-line `super(status, "<snake_code>")` (or `super(message,
+status, "<snake_code>")` to keep a descriptive `getMessage()` for logs, and
+`super(status, "<snake_code>", detail)` to also put a `{"detail":…}` on the wire).
+JAX-RS renders the embedded response directly, so there are **no `*ExceptionMapper`
+providers** — the single typed `ErrorResponse` body (`{"error":"<snake_code>"}`,
+plus `{"detail":…}` for the SSH case) replaces the old one-mapper-per-exception
+pattern. Plain 400s throw the built-in `jakarta.ws.rs.BadRequestException`.
 
 **Validation is manual.** Guard clauses in the service throw
 `BadRequestException`/domain exceptions. **No Bean Validation** — no

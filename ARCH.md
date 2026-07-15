@@ -132,7 +132,7 @@ cancellable streamed runs — the channel-close seam behind run cancellation
 | JPA entity | (noun) | `Machine`, `Recipe`, `Action`, `Run` |
 | DTO record bundle | `*Dtos` (nested records) | `RecipeDtos.ActionInput` |
 | Read-model / view DTO | `*View` (nested in `*Dtos`) | `MonitorAppView`, `AppOpView`, `ChildRunView` |
-| Domain exception + mapper | `*Exception` / `*ExceptionMapper` | `ActionNotApprovedException` |
+| Domain exception (self-mapping) | `*Exception` `extends common/AppException` | `ActionNotApprovedException` |
 | Port / adapter | `*Executor` / `*Provider` / `*Discoverer` | `SshExecutor` |
 | MCP tool handler | `*Tool` | `RunActionTool`, `ListMachinesTool` |
 | Scheduled task | `*Job` | `ConnectivityCheckJob` |
