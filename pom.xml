@@ -143,6 +143,10 @@
     </dependencies>
 
     <build>
+        <!-- Stable, version-independent artifact name so `mvn package` yields
+             target/compute-admin.jar — the release asset name is fixed and the
+             git tag (not the filename) carries the version (spec-048). -->
+        <finalName>compute-admin</finalName>
         <plugins>
             <!-- JDK 23+ disabled implicit annotation processing, so Lombok must be
                  declared as an explicit processor path (spec-011 introduced the
