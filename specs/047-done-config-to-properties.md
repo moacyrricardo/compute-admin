@@ -1,7 +1,7 @@
 # 047 — Config to `.properties` (drop YAML)
 
-**Status:** todo · no Linear issue (blocked; tracked as `spec-047`). Graduated from concern
-[045](./045-todo-arch-cleanups.md) §3.
+**Status:** done · branch `moacyrricardo/spec-047-config-to-properties` · no Linear issue
+(blocked; tracked as `spec-047`). Graduated from concern [045](./045-todo-arch-cleanups.md) §3.
 
 ## Context
 
@@ -38,6 +38,21 @@ identical; only the serialization format changes.
   slightly more verbose — accepted (the whole point is the format preference).
 - No config *values* change; this is not a config-hardening spec.
 
+## How the implementation differed
+
+Faithful to the spec. The pre-check found **no** YAML-only constructs — no multi-document
+`---` blocks, no `spring.config.activate.on-profile` sections, no `spring.profiles.group.*`;
+the three files were already per-profile, so the conversion was a straight scalar/dotted-key
+translation with no per-profile splitting or group expansion needed. Keys and values are
+byte-for-byte equivalent (`spring.datasource.password=` for the empty string,
+`spring.config.import=optional:file:./.env[.properties]`, `ca.version=@project.version@` left
+for Maven resource filtering). Two stale prose references to the renamed files were updated in
+the same commit as a direct consequence of the rename (`HealthWebTest` Javadoc, `demo/README.md`).
+Out of scope per the spec's file list: the test-only `src/test/resources/application-test.yml`
+was left as YAML (the spec names only the three `src/main/resources` files). Verified by booting
+the `dev` and default profiles (both reached `Started Application`) and `mvn test` (263 tests,
+all green).
+
 ## Related
 
-concern [045](./045-todo-arch-cleanups.md) (§3), spec-035 (`application-demo.yml`).
+concern [045](./045-todo-arch-cleanups.md) (§3), spec-035 (`application-demo.properties`).
