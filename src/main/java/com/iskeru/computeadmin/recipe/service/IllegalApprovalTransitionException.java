@@ -15,6 +15,7 @@ import jakarta.ws.rs.core.Response;
 public class IllegalApprovalTransitionException extends AppException {
 
     public IllegalApprovalTransitionException(ApprovalState from, String transition) {
-        super(Response.Status.CONFLICT, "illegal_approval_transition");
+        super("Illegal approval transition '" + transition + "' from state " + from,
+                Response.Status.CONFLICT, "illegal_approval_transition");
     }
 }

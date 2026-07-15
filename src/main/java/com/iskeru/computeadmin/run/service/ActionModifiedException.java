@@ -18,6 +18,6 @@ import jakarta.ws.rs.core.Response;
 public class ActionModifiedException extends AppException {
 
     public ActionModifiedException(String id) {
-        super(Response.Status.CONFLICT, "action_modified");
+        super("Action modified since approval: " + id, Response.Status.CONFLICT, "action_modified");
     }
 }

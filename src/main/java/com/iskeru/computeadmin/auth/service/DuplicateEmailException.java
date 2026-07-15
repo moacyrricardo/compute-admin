@@ -14,6 +14,6 @@ import jakarta.ws.rs.core.Response;
 public class DuplicateEmailException extends AppException {
 
     public DuplicateEmailException(String email) {
-        super(Response.Status.CONFLICT, "email_taken");
+        super("Email already registered: " + email, Response.Status.CONFLICT, "email_taken");
     }
 }

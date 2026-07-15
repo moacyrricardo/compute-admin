@@ -12,6 +12,6 @@ import jakarta.ws.rs.core.Response;
 public class PairingNotFoundException extends AppException {
 
     public PairingNotFoundException(String userCode) {
-        super(Response.Status.NOT_FOUND, "pairing_not_found");
+        super("Pairing request not found: " + userCode, Response.Status.NOT_FOUND, "pairing_not_found");
     }
 }

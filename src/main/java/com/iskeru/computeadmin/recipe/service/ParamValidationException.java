@@ -17,6 +17,6 @@ import jakarta.ws.rs.core.Response;
 public class ParamValidationException extends AppException {
 
     public ParamValidationException(String message) {
-        super(Response.Status.BAD_REQUEST, "param_validation_failed");
+        super(message, Response.Status.BAD_REQUEST, "param_validation_failed");
     }
 }

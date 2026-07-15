@@ -19,6 +19,6 @@ import jakarta.ws.rs.core.Response;
 public class ScriptModifiedException extends AppException {
 
     public ScriptModifiedException(String id) {
-        super(Response.Status.CONFLICT, "script_modified");
+        super("Script modified since approval: " + id, Response.Status.CONFLICT, "script_modified");
     }
 }

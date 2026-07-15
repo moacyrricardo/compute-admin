@@ -13,6 +13,6 @@ import jakarta.ws.rs.core.Response;
 public class TokenNotFoundException extends AppException {
 
     public TokenNotFoundException(String id) {
-        super(Response.Status.NOT_FOUND, "token_not_found");
+        super("Personal token not found: " + id, Response.Status.NOT_FOUND, "token_not_found");
     }
 }

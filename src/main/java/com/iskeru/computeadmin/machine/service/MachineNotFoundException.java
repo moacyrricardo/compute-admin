@@ -13,6 +13,6 @@ import jakarta.ws.rs.core.Response;
 public class MachineNotFoundException extends AppException {
 
     public MachineNotFoundException(String id) {
-        super(Response.Status.NOT_FOUND, "machine_not_found");
+        super("Machine not found: " + id, Response.Status.NOT_FOUND, "machine_not_found");
     }
 }

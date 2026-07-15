@@ -15,6 +15,7 @@ import jakarta.ws.rs.core.Response;
 public class MachineAlreadyRegisteredException extends AppException {
 
     public MachineAlreadyRegisteredException(String host, int port, String loginUser) {
-        super(Response.Status.CONFLICT, "machine_already_registered");
+        super("Machine already registered: " + loginUser + "@" + host + ":" + port,
+                Response.Status.CONFLICT, "machine_already_registered");
     }
 }

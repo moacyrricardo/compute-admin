@@ -16,6 +16,7 @@ import jakarta.ws.rs.core.Response;
 public class ScriptUnreadableException extends AppException {
 
     public ScriptUnreadableException(String id) {
-        super(Response.Status.CONFLICT, "script_unreadable");
+        super("Script could not be read to pin at approval: " + id,
+                Response.Status.CONFLICT, "script_unreadable");
     }
 }
