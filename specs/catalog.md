@@ -61,7 +61,7 @@ merges and renames it).
 | 045 | Architecture cleanups | 🟢 resolved | **concern** — researched four cleanups (exception mappers, DTO/Response, yaml, packaging), recommendation accepted; **graduated into 046/047/048** (2026-07). Stays the research + rationale of record |
 | 046 | Unified error model | ⚪ todo | from 045 §1+§2: a shared `AppException extends WebApplicationException` (+ typed `ErrorResponse`) that carries its own `Response`, so the **19** `*ExceptionMapper` classes (521 lines) are **deleted**; wire format unchanged. Matches the existing 400 `BadRequestException` path; the 59 direct 400 throws + a clean service↔web boundary are deferred. ≈ −18 classes / −450 lines |
 | 047 | Config to `.properties` | ⚪ todo | from 045 §3: convert the 3 YAML config files (65 lines) to `.properties`; keys/behaviour identical; check for profile-groups/multi-doc first. **XS** |
-| 048 | Release pipeline | ⚪ todo | from 045 §4: a `v*`-tag GitHub Release workflow (build → jar + sha256 asset), a stable `<finalName>compute-admin`, and a README **Download & run** (`java -jar`) section. The uber jar already builds via the spring-boot plugin. **S**; highest external value |
+| 048 | Release pipeline | ✅ done | on branch `moacyrricardo/spec-048-release-pipeline` — from 045 §4: a `v*`-tag GitHub Release workflow (build → jar + sha256 asset), a stable `<finalName>compute-admin`, and a README **Download & run** (`java -jar`) section. The uber jar already builds via the spring-boot plugin. **S**; highest external value |
 | 009 | Cloud import (discovery provider) | ⏸ parked | fast-follow after the core |
 
 ## Build order
