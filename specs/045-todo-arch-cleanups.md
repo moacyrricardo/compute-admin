@@ -1,9 +1,21 @@
 # 045 — Architecture cleanups (JAX-RS ergonomics, config format, packaging & release)
 
-> **Concern** — options open, no decision. Four independent, mostly-mechanical cleanups
-> found on a code read. **None changes runtime behaviour or the approval gate.** Grouped
-> so they can be triaged/sequenced together; each could graduate to its own small spec.
-> Impact figures below are researched against `main` (spec-044), not guesses.
+> **⚠ GRADUATED (2026-07-14) — this concern is resolved.** The recommendation below was
+> accepted and split into three specs:
+> - **[046](./046-todo-unified-error-model.md) `unified-error-model`** — §1 + §2 (extend
+>   `WebApplicationException` via a shared `AppException`, delete the 19 mappers).
+> - **[047](./047-todo-config-to-properties.md) `config-to-properties`** — §3.
+> - **[048](./048-todo-release-pipeline.md) `release-pipeline`** — §4.
+>
+> The "options open" framing is **superseded**: **§1 is decided as Option 1** (Option 2 / a
+> clean `service/`↔web boundary is deferred to a separate future `service-web-boundary`
+> spec). This file remains as the **research + rationale of record** for those three specs.
+>
+> ---
+>
+> *(original framing)* **Concern** — four independent, mostly-mechanical cleanups found on a
+> code read. **None changes runtime behaviour or the approval gate.** Impact figures below
+> are researched against `main` (spec-044), not guesses.
 
 ## Problem
 
