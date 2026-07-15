@@ -36,8 +36,9 @@ jobs:
 
       - name: Checksum
         # The stable finalName (pom.xml) fixes the asset name; the tag carries
-        # the version.
-        run: sha256sum target/compute-admin.jar > compute-admin.jar.sha256
+        # the version. Checksum the BARE filename (cd into target/) so a user who
+        # downloads the jar + .sha256 side-by-side can `sha256sum -c` directly.
+        run: cd target && sha256sum compute-admin.jar > ../compute-admin.jar.sha256
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
