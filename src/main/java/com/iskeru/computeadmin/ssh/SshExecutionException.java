@@ -1,16 +1,26 @@
 package com.iskeru.computeadmin.ssh;
 
+import com.iskeru.computeadmin.common.AppException;
+import jakarta.ws.rs.core.Response;
+
 /**
- * Wraps a failure to connect, authenticate, or run a command over SSH. Unchecked
- * so the {@link SshExecutor} port stays exception-free in its signature; callers
- * (the connectivity job, the run engine) decide how to react — the job maps it to
- * an {@code UNREACHABLE} status.
+ * Wraps a failure to connect, authenticate, or run a command over SSH. When it
+ * escapes a resource method (e.g. a discovery probe against an unreachable or
+ * not-yet-authorized machine) it maps to a clean <strong>HTTP 502 Bad
+ * Gateway</strong> {@code {"error":"ssh_failed","detail":…}} — the failure is in
+ * the target box, not this service, so 502 is the honest status. The {@code detail}
+ * (and {@code getMessage()}) is the {@code loginUser@host:port} target — the
+ * operator's own machine, so not sensitive.
  *
- * <p>spec-003.
+ * <p>Runs already handle SSH failures internally (recorded as a FAILED run); the
+ * 502 covers the paths that let the exception propagate — today, discovery.
+ *
+ * <p>spec-003; carries its own response since spec-046.
  */
-public class SshExecutionException extends RuntimeException {
+public class SshExecutionException extends AppException {
 
     public SshExecutionException(SshTarget target, Throwable cause) {
-        super("SSH command failed against " + target.loginUser() + "@" + target.host() + ":" + target.port(), cause);
+        super(Response.Status.BAD_GATEWAY, "ssh_failed",
+                "SSH command failed against " + target.loginUser() + "@" + target.host() + ":" + target.port());
     }
 }

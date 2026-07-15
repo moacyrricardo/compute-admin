@@ -1,16 +1,19 @@
 package com.iskeru.computeadmin.auth.service;
 
+import com.iskeru.computeadmin.common.AppException;
+import jakarta.ws.rs.core.Response;
+
 /**
  * Thrown by {@link AuthService#register} when the normalized email already belongs
- * to a user. A pre-check raises this so registration returns a clean 409 rather
- * than surfacing a raw unique-constraint violation. Maps to <strong>HTTP 409</strong>
- * via {@code DuplicateEmailExceptionMapper}.
+ * to a user. A pre-check raises this so registration returns a clean <strong>HTTP
+ * 409</strong> {@code {"error":"email_taken"}} rather than surfacing a raw
+ * unique-constraint violation.
  *
- * <p>spec-014.
+ * <p>spec-014; carries its own response since spec-046.
  */
-public class DuplicateEmailException extends RuntimeException {
+public class DuplicateEmailException extends AppException {
 
     public DuplicateEmailException(String email) {
-        super("Email already registered: " + email);
+        super(Response.Status.CONFLICT, "email_taken");
     }
 }
