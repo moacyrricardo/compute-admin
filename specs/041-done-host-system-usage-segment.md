@@ -94,6 +94,11 @@ the RAM/CPU/disk bars show a non-empty **other/system** segment reflecting real 
 
 - spec-040 (monitor runtime view & model weight) — this is the concrete "show real
   usage / OTHER segment" example of that concern.
+- **spec-049 (app-folder & footprint detection) amends this spec's `computeOther`
+  disk math**: once 049 attributes a deployed native app's `du` footprint as its own
+  disk segment, `OTHER = host_used − Σ attributed` must subtract those bytes too, or
+  the app double-counts (its own segment + inside OTHER). No change lands here until
+  049 is built; recorded so the done-record stays honest.
 - spec-034 (fleet monitor UI — the segmented bars + buckets), spec-023
   (`monitor machine` host vitals), spec-032 (`Bucket` / `ConsumerRole.OTHER`).
 
