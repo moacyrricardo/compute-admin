@@ -1,6 +1,6 @@
 # 050 — Lifecycle-script detection & monitor controls
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as
+**Status:** doing · branch `moacyrricardo/spec-050-lifecycle-script-detection-controls` · no Linear (blocked for this repo; tracked as
 `spec-050`). **Stacked on spec-049** (app-folder detection) — this spec assumes the
 port→PID→cmdline→cwd chain that resolves a running native app to its folder is
 already in place and reuses its resolution seam.
