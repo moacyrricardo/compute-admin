@@ -1,7 +1,7 @@
 # 049 — App-folder & footprint detection
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as
-`spec-049`).
+**Status:** doing · branch `moacyrricardo/spec-049-app-folder-detection` · no Linear
+(blocked for this repo; tracked as `spec-049`).
 
 ## Context
 
