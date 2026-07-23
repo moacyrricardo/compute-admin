@@ -46,7 +46,7 @@ class AppMonitorDiscovererTest {
         // The app-level cpu check (spec-032) follows the process probe in every family.
         ProposedRecipe springboot = recipe(recipes, "springboot monitor");
         assertThat(springboot.actions()).extracting(ProposedAction::name)
-                .containsExactly("health", "metrics", "beans", "info", "process", "cpu");
+                .containsExactly("health", "metrics", "beans", "info", "process", "cpu", "footprint");
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("orders", 8080, "process"));
 
@@ -54,13 +54,13 @@ class AppMonitorDiscovererTest {
         // No Prometheus on /metrics → the metrics action is not proposed (process + cpu + health).
         ProposedRecipe fastapi = recipe(recipes, "fastapi monitor");
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
-                .containsExactly("process", "cpu", "health");
+                .containsExactly("process", "cpu", "health", "footprint");
         assertThat(fastapi.appPortList())
                 .containsExactly(new AppPortItem("billing", 8000, "process"));
 
         // an unclassifiable daemon → generic app monitor, process + cpu probes only.
         ProposedRecipe generic = recipe(recipes, "generic app monitor");
-        assertThat(generic.actions()).extracting(ProposedAction::name).containsExactly("process", "cpu");
+        assertThat(generic.actions()).extracting(ProposedAction::name).containsExactly("process", "cpu", "footprint");
         assertThat(generic.appPortList())
                 .containsExactly(new AppPortItem("mydaemon", 5000, "process"));
     }
@@ -86,7 +86,7 @@ class AppMonitorDiscovererTest {
 
         // /metrics responds → the optional Prometheus probe is proposed alongside health.
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
-                .containsExactly("process", "cpu", "health", "metrics");
+                .containsExactly("process", "cpu", "health", "metrics", "footprint");
     }
 
     @Test
@@ -120,7 +120,7 @@ class AppMonitorDiscovererTest {
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("http app monitor");
         ProposedRecipe http = recipe(recipes, "http app monitor");
         assertThat(http.actions()).extracting(ProposedAction::name)
-                .containsExactly("liveness", "process", "cpu");
+                .containsExactly("liveness", "process", "cpu", "footprint");
         assertThat(http.appPortList()).containsExactly(new AppPortItem("app", 8080, "process"));
     }
 
@@ -179,6 +179,50 @@ class AppMonitorDiscovererTest {
         String script = cpu.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
         assertThat(script).contains("ps ").contains("--ppid").contains("pcpu");
         MUTATING_TOKENS.forEach(tok -> assertThat(script).doesNotContain(" " + tok + " "));
+    }
+
+    @Test
+    void discover_EveryAppMonitorFamily_ProposesTheFootprintAction() {
+        // spec-049: the app-folder/footprint probe is appended to EVERY family so the UI
+        // can learn where each native app lives + how big it is — regardless of framework.
+        FakeSshExecutor mixed = new FakeSshExecutor(mixedBox());
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), mixed);
+        assertThat(recipes).allSatisfy(r ->
+                assertThat(r.actions()).extracting(ProposedAction::name).contains("footprint"));
+
+        // …including the actuator-less HTTP family (its own routing branch).
+        ProposedRecipe http = recipe(
+                discoverer.discover(machine(), new FakeSshExecutor(actuatorlessSpringBoot())), "http app monitor");
+        assertThat(http.actions()).extracting(ProposedAction::name).contains("footprint");
+    }
+
+    @Test
+    void discover_FootprintProbe_IsFixedReadOnlyFsWalkWithPortSoleParam() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction footprint = springboot.actions().stream()
+                .filter(a -> a.name().equals("footprint")).findFirst().orElseThrow();
+
+        // Read-only, login-user (no sudo), and fans out over the app-port list like the
+        // other probes: the only bound param is the validated port (spec-049, S4-safe).
+        assertThat(footprint.sudo()).isFalse();
+        assertThat(footprint.paramDefs()).extracting(p -> p.kind())
+                .containsExactly(com.iskeru.computeadmin.recipe.model.ParamKind.APP_PORT_LIST);
+        assertThat(footprint.argTokens()).anySatisfy(t -> assertThat(t.value()).isEqualTo("port"));
+
+        // The script body is a fixed, source-controlled literal (identical across every
+        // family) — a read-only /proc + fs walk (ss, readlink, stat, du) that never mutates.
+        ProposedAction generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor")
+                .actions().stream().filter(a -> a.name().equals("footprint")).findFirst().orElseThrow();
+        String script = footprint.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
+        String genericScript = generic.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
+        assertThat(script).isEqualTo(genericScript); // one fixed template, per S4
+        assertThat(script).contains("ss -ltnpH").contains("readlink -f").contains("stat -c")
+                .contains("du -sb").contains("/proc/");
+        MUTATING_TOKENS.forEach(tok -> assertThat(script).doesNotContain(" " + tok + " "));
+        // The port is passed as $1, never interpolated into the script string at authoring.
+        assertThat(script).contains("port=\"$1\"");
     }
 
     @Test

@@ -51,7 +51,10 @@ public class ArgToken {
     @Column(nullable = false, length = 20)
     private TokenKind kind;
 
-    /** Literal text (LITERAL) or the referenced param name (PARAM). */
-    @Column(name = "token_value", nullable = false, length = 1024)
+    /**
+     * Literal text (LITERAL) or the referenced param name (PARAM). Widened in spec-049
+     * (migration V15) to hold a longer fixed probe script (the app-folder/footprint walk).
+     */
+    @Column(name = "token_value", nullable = false, length = 16384)
     private String value;
 }

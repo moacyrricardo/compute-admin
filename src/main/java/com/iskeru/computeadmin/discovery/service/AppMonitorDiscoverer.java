@@ -63,7 +63,14 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  * bounded, read-only process-tree CPU probe ({@link #CPU_PROBE_SCRIPT}), the first-class
  * CPU metric-kind the redesigned fleet UI reads alongside the process probe's RSS.
  *
- * <p>spec-025; the app-level CPU check added in spec-032.
+ * <p>Every app-monitor family also gains an app-level {@code footprint} check (spec-049):
+ * a fixed, read-only probe ({@link #FOOTPRINT_PROBE_SCRIPT}) that walks {@code /proc} + the
+ * filesystem on the target and emits one NDJSON line — the app's folder, symlink identity,
+ * and three distinct sizes (artifact {@code stat}, data grow-dir, {@code du} footprint on
+ * deployed roots) — which {@code app.js} assembles onto the app card + drawer, feeding the
+ * native disk story spec-039 left {@code —}. No backend model change (spec-040 thin-BE).
+ *
+ * <p>spec-025; the app-level CPU check added in spec-032; the footprint check in spec-049.
  */
 @Component
 public class AppMonitorDiscoverer implements RecipeDiscoverer {
@@ -144,6 +151,114 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             "  ps -o pid=,ppid=,pcpu=,comm= -p \"$pid\" 2>/dev/null",
             "  ps -o pid=,ppid=,pcpu=,comm= --ppid \"$pid\" 2>/dev/null",
             "done");
+
+    /**
+     * The fixed app-folder &amp; footprint probe (spec-049): from the listener port
+     * {@code $1} resolve the owning PID(s) via {@code ss}, pick the master PID (the
+     * parent of the others — gunicorn/uvicorn workers inherit the socket — else the
+     * lowest), then read {@code /proc/<pid>/} + walk the filesystem to learn where the
+     * app lives and how big it is. Emits <strong>one NDJSON line</strong> (the spec-049
+     * schema) with the resolved folder, symlink identity, a per-runtime detector
+     * (java + python fully; node/go stubs) and three distinct sizes — the artifact
+     * {@code stat}, a conventional data grow-dir, and a {@code du} footprint that runs
+     * <em>only</em> for a deployed root ({@code timeout 10 du}; build trees are
+     * suppressed as {@code footprintSkipped="build-tree"}). Absent/undeterminable ⇒ the
+     * field is {@code null}, never fabricated; all string fields are JSON-escaped.
+     *
+     * <p>Purely read-only ({@code ss}/{@code readlink}/{@code stat}/{@code du}/{@code awk});
+     * the port is the sole positional argument, never interpolated at authoring time (S4).
+     * IO-heavy {@code du} is why the UI samples this probe on the slow poll tier only. Paths
+     * ride the UI-only monitor read and never reach the MCP surface (S9).
+     */
+    private static final String FOOTPRINT_PROBE_SCRIPT = String.join("\n",
+            "port=\"$1\"",
+            "esc() { printf '%s' \"$1\" | sed 's/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g'; }",
+            "jstr() { if [ -z \"$1\" ]; then printf 'null'; else printf '\"%s\"' \"$(esc \"$1\")\"; fi; }",
+            "jnum() { case \"$1\" in ''|*[!0-9]*) printf 'null' ;; *) printf '%s' \"$1\" ;; esac; }",
+            "jarr() { if [ -z \"$1\" ]; then printf '[]'; else o=\"\"; for x in $1; do o=\"$o,\\\"$(esc \"$x\")\\\"\"; done; printf '[%s]' \"${o#,}\"; fi; }",
+            "dusize() { timeout 10 du -sb --one-file-system \"$1\" 2>/dev/null | awk '{print $1; exit}'; }",
+            "scandata() { for dd in data storage uploads media instance; do if [ -d \"$1/$dd\" ]; then dataDir=\"$1/$dd\"; dataBytes=$(dusize \"$1/$dd\"); return; fi; done; }",
+            "pids=$(ss -ltnpH 2>/dev/null | grep -E \":$port \" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -un)",
+            "if [ -z \"$pids\" ]; then printf '{\"v\":1,\"port\":%s,\"rootKind\":\"unresolved\",\"footprintSkipped\":\"permission\",\"notes\":[\"no-listener-or-not-owner\"]}\\n' \"$port\"; exit 0; fi",
+            "master=\"\"",
+            "for p in $pids; do",
+            "  for q in $pids; do",
+            "    [ \"$p\" = \"$q\" ] && continue",
+            "    qppid=$(awk '{print $4}' \"/proc/$q/stat\" 2>/dev/null)",
+            "    [ \"$qppid\" = \"$p\" ] && { master=\"$p\"; break; }",
+            "  done",
+            "  [ -n \"$master\" ] && break",
+            "done",
+            "[ -z \"$master\" ] && master=$(printf '%s\\n' $pids | head -n1)",
+            "pid=\"$master\"",
+            "owner=$(stat -c%U \"/proc/$pid\" 2>/dev/null)",
+            "cmdline=$(tr '\\0' ' ' < \"/proc/$pid/cmdline\" 2>/dev/null)",
+            "argv0=$(tr '\\0' '\\n' < \"/proc/$pid/cmdline\" 2>/dev/null | head -n1)",
+            "cwd=$(readlink -f \"/proc/$pid/cwd\" 2>/dev/null)",
+            "exe=$(readlink -f \"/proc/$pid/exe\" 2>/dev/null)",
+            "runtime=unknown",
+            "case \"$argv0 $cmdline $exe\" in",
+            "  *java*) runtime=java ;;",
+            "  *python*|*gunicorn*|*uvicorn*|*celery*) runtime=python ;;",
+            "  *node*) runtime=node ;;",
+            "esac",
+            "artifact=\"\"; artifactBytes=\"\"; appRoot=\"\"; link=\"\"; rootKind=unresolved",
+            "buildTool=\"\"; markers=\"\"; dataDir=\"\"; dataBytes=\"\"; footprintBytes=\"\"; footprintSkipped=\"\"; notes=\"\"",
+            "if [ -n \"$cwd\" ]; then appRoot=\"$cwd\"; rootKind=cwd-only; else footprintSkipped=permission; fi",
+            "if [ \"$runtime\" = java ]; then",
+            "  set -- $cmdline; jar=\"\"; prev=\"\"",
+            "  for tok in \"$@\"; do [ \"$prev\" = \"-jar\" ] && { jar=\"$tok\"; break; }; prev=\"$tok\"; done",
+            "  if [ -n \"$jar\" ]; then",
+            "    rjar=$(readlink -f \"$jar\" 2>/dev/null); [ -z \"$rjar\" ] && rjar=\"$jar\"",
+            "    [ \"$rjar\" != \"$jar\" ] && link=\"$jar\"",
+            "    artifact=\"$rjar\"; artifactBytes=$(stat -c%s \"$rjar\" 2>/dev/null)",
+            "    d=$(dirname \"$rjar\"); base=$(basename \"$d\")",
+            "    if [ \"$base\" = target ] && [ -f \"$d/../pom.xml\" ]; then",
+            "      buildTool=maven; appRoot=$(readlink -f \"$d/..\" 2>/dev/null); rootKind=build; markers=pom.xml; footprintSkipped=build-tree",
+            "    elif [ \"$base\" = libs ] && [ \"$(basename \"$(dirname \"$d\")\")\" = build ] && { [ -f \"$d/../../build.gradle\" ] || [ -f \"$d/../../build.gradle.kts\" ] || [ -f \"$d/../../settings.gradle\" ] || [ -f \"$d/../../settings.gradle.kts\" ]; }; then",
+            "      buildTool=gradle; appRoot=$(readlink -f \"$d/../..\" 2>/dev/null); rootKind=build; markers=build.gradle; footprintSkipped=build-tree",
+            "    elif [ -f \"$d/pom.xml\" ] || [ -f \"$d/build.gradle\" ] || [ -f \"$d/build.gradle.kts\" ] || [ -f \"$d/settings.gradle\" ] || [ -d \"$d/src\" ]; then",
+            "      appRoot=\"$d\"; rootKind=build; footprintSkipped=build-tree",
+            "    else",
+            "      appRoot=\"$d\"; rootKind=deploy",
+            "    fi",
+            "  else",
+            "    appRoot=\"$cwd\"; [ -n \"$cwd\" ] && rootKind=cwd-only; notes=no-jar-cp-or-exploded",
+            "  fi",
+            "fi",
+            "if [ \"$runtime\" = python ]; then",
+            "  set -- $cmdline; entry=\"\"",
+            "  case \"$cmdline\" in *manage.py*)",
+            "    for tok in \"$@\"; do case \"$tok\" in */manage.py) entry=\"$tok\"; break ;; manage.py) entry=\"$cwd/manage.py\"; break ;; esac; done",
+            "    buildTool=django ;; esac",
+            "  if [ -z \"$entry\" ]; then for tok in \"$@\"; do case \"$tok\" in -*) continue ;; *:*) mod=${tok%%:*}; rel=$(printf '%s' \"$mod\" | tr '.' '/'); [ -f \"$cwd/$rel.py\" ] && entry=\"$cwd/$rel.py\"; break ;; esac; done; fi",
+            "  if [ -z \"$entry\" ]; then for tok in \"$@\"; do case \"$tok\" in *.py) case \"$tok\" in /*) entry=\"$tok\" ;; *) entry=\"$cwd/$tok\" ;; esac; break ;; esac; done; fi",
+            "  venv=\"\"",
+            "  case \"$argv0\" in */bin/python*) vroot=$(dirname \"$(dirname \"$argv0\")\"); [ -f \"$vroot/pyvenv.cfg\" ] && venv=\"$vroot\" ;; esac",
+            "  if [ -z \"$venv\" ]; then ve=$(tr '\\0' '\\n' < \"/proc/$pid/environ\" 2>/dev/null | grep '^VIRTUAL_ENV=' | head -n1 | cut -d= -f2-); [ -n \"$ve\" ] && [ -f \"$ve/pyvenv.cfg\" ] && venv=\"$ve\"; fi",
+            "  sd=\"$cwd\"; [ -n \"$entry\" ] && sd=$(dirname \"$entry\")",
+            "  root=\"\"; d=\"$sd\"; i=0",
+            "  while [ \"$i\" -lt 5 ] && [ -n \"$d\" ] && [ \"$d\" != \"/\" ]; do",
+            "    for mk in pyproject.toml setup.py setup.cfg requirements.txt Pipfile poetry.lock manage.py wsgi.py asgi.py; do [ -f \"$d/$mk\" ] && { root=\"$d\"; markers=\"$mk\"; break; }; done",
+            "    [ -n \"$root\" ] && break",
+            "    if [ -d \"$d/.venv\" ] || [ -d \"$d/venv\" ]; then root=\"$d\"; markers=.venv; break; fi",
+            "    d=$(dirname \"$d\"); i=$((i + 1))",
+            "  done",
+            "  if [ -n \"$root\" ]; then appRoot=\"$root\"; rootKind=deploy",
+            "  elif [ -n \"$venv\" ]; then vb=$(basename \"$venv\"); case \"$vb\" in .venv|venv|env) appRoot=$(dirname \"$venv\") ;; *) appRoot=\"$venv\" ;; esac; rootKind=deploy",
+            "  elif [ -n \"$cwd\" ]; then appRoot=\"$cwd\"; rootKind=cwd-only; fi",
+            "  [ -n \"$venv\" ] && notes=\"venv=$venv\"",
+            "fi",
+            "if [ \"$runtime\" = unknown ] && [ -n \"$exe\" ]; then",
+            "  case \"$exe\" in *python*|*java*|*node*|*/sh|*/bash|*/dash) : ;; *) artifact=\"$exe\"; artifactBytes=$(stat -c%s \"$exe\" 2>/dev/null); runtime=go ;; esac",
+            "fi",
+            "if [ \"$rootKind\" = deploy ] && [ -n \"$appRoot\" ]; then",
+            "  scandata \"$appRoot\"",
+            "  fp=$(dusize \"$appRoot\")",
+            "  if [ -n \"$fp\" ]; then footprintBytes=\"$fp\"; else footprintSkipped=timeout; fi",
+            "fi",
+            "printf '{\"v\":1,\"port\":%s,\"pid\":%s,\"user\":%s,\"runtime\":%s,\"cmdline\":%s,\"cwd\":%s,\"exe\":%s,\"artifact\":%s,\"artifactBytes\":%s,\"appRoot\":%s,\"link\":%s,\"rootKind\":%s,\"buildTool\":%s,\"markers\":%s,\"dataDir\":%s,\"dataBytes\":%s,\"footprintBytes\":%s,\"footprintSkipped\":%s,\"notes\":%s}\\n' \\",
+            "  \"$port\" \"$(jnum \"$pid\")\" \"$(jstr \"$owner\")\" \"$(jstr \"$runtime\")\" \"$(jstr \"$cmdline\")\" \"$(jstr \"$cwd\")\" \"$(jstr \"$exe\")\" \"$(jstr \"$artifact\")\" \"$(jnum \"$artifactBytes\")\" \"$(jstr \"$appRoot\")\" \"$(jstr \"$link\")\" \"$(jstr \"$rootKind\")\" \"$(jstr \"$buildTool\")\" \"$(jarr \"$markers\")\" \"$(jstr \"$dataDir\")\" \"$(jnum \"$dataBytes\")\" \"$(jnum \"$footprintBytes\")\" \"$(jstr \"$footprintSkipped\")\" \"$(jarr \"$notes\")\"");
 
     /** ss line's owning process spec: {@code (("java",pid=1234,fd=10))}. */
     private static final Pattern SS_PROC = Pattern.compile("\\(\"([^\"]+)\",pid=(\\d+)");
@@ -506,15 +621,15 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                     endpointProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"),
                     endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"),
                     processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."),
-                    cpuProbe());
+                    cpuProbe(), footprintProbe());
             case FASTAPI -> fastApiActions(prometheus);
             case HTTP -> List.of(
                     endpointProbe("liveness", "HTTP liveness (GET / — no Actuator present).", "/"),
                     processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."),
-                    cpuProbe());
+                    cpuProbe(), footprintProbe());
             case GENERIC -> List.of(
                     processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe only)."),
-                    cpuProbe());
+                    cpuProbe(), footprintProbe());
         };
         return new ProposedRecipe(RecipeType.MONITOR, family.recipeName, family.recipeDescription,
                 actions, apps);
@@ -530,6 +645,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             actions.add(endpointProbe("metrics",
                     "Prometheus metrics (/metrics — proposed only when it responds).", "/metrics"));
         }
+        actions.add(footprintProbe());
         return actions;
     }
 
@@ -565,6 +681,22 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         return new ProposedAction("cpu",
                 "Process-tree CPU% (the app's PID plus children) via ps. Read-only.", false,
                 List.of(literal("sh"), literal("-c"), literal(CPU_PROBE_SCRIPT),
+                        literal("sh"), param(ParamBinder.PORT_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * The app-folder &amp; footprint check (spec-049): a fixed read-only probe driven by
+     * {@link #FOOTPRINT_PROBE_SCRIPT}, port as {@code $1}. Named {@code footprint} so the
+     * fleet UI parses its NDJSON line into the app's folder + artifact/data/footprint
+     * sizes (spec-032 {@code cpu}-check precedent). Read-only, login-user, no {@code sudo}
+     * — gated like every action; the only bound, fan-out-per-item param is the validated
+     * port (S4-safe). Appended to every app-monitor family.
+     */
+    private ProposedAction footprintProbe() {
+        return new ProposedAction("footprint",
+                "App folder, artifact/data/footprint sizes from /proc + fs markers. Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(FOOTPRINT_PROBE_SCRIPT),
                         literal("sh"), param(ParamBinder.PORT_COMPONENT)),
                 List.of(appPortList(APP_LIST_PARAM)));
     }
