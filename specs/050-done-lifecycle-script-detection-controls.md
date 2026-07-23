@@ -1,6 +1,6 @@
 # 050 — Lifecycle-script detection & monitor controls
 
-**Status:** doing · branch `moacyrricardo/spec-050-lifecycle-script-detection-controls` · no Linear (blocked for this repo; tracked as
+**Status:** done · branch `moacyrricardo/spec-050-lifecycle-script-detection-controls` · no Linear (blocked for this repo; tracked as
 `spec-050`). **Stacked on spec-049** (app-folder detection) — this spec assumes the
 port→PID→cmdline→cwd chain that resolves a running native app to its folder is
 already in place and reuses its resolution seam.
@@ -391,6 +391,54 @@ the bounded-drain baseline above regardless of what 051 decides.
 - **ARCH.md** — gate enforcement points; **S4** (typed params, quoted argv, no
   free-form commands); **S5** (login-user coverage bound; no new sudo).
 - specs/021 (reconciliation), 006 (discoverer contract), 035 (family enablement).
+
+## Implementation Notes
+
+Built on branch `moacyrricardo/spec-050-lifecycle-script-detection-controls`, **stacked
+on #72** (spec-049); PR #73 bases on the 049 branch and must merge after it.
+
+- **`LifecycleDiscoverer`** (`discovery/service`, `RecipeDiscoverer`, family
+  `DiscovererFamily.LIFECYCLE` default-on). One fixed `SCAN_SCRIPT` per app whose only
+  positional args are `<pid> <appRoot>` (S4). It emits the spec's NDJSON
+  (`{appRoot, managedBy, scripts:[{path, source, proposed, selfBackgrounds, paramsHint,
+  preview}]}`); Java maps verbs, applies precedence, the scope rule, and builds the
+  proposals. Verb→proposed mapping and precedence live in Java (not the shell), which
+  keeps the scan a dumb, source-controlled detector.
+- **No migration.** `DiscovererFamily.LIFECYCLE` persists via the existing
+  `discovery_enablement.family VARCHAR(20)` free-string column (no CHECK constraint); the
+  049 base already widened `arg_token`/`blueprint_arg_token` to `VARCHAR(16384)` so a
+  large scan-script token fits. Nothing new was added to the schema.
+- **049 seam (OQ6) — deviation.** 049 landed its resolution embedded in a monolithic,
+  du-oriented, port-driven shell probe (`FOOTPRINT_PROBE_SCRIPT`, run-path fan-out), not a
+  cleanly extractable helper. Rather than a risky rewrite of the unmerged parent, 050
+  resolves pid+appRoot **Java-orchestrated over `ss`/`/proc`** (the same port→PID→cwd/jar-dir
+  chain `AppMonitorDiscoverer` uses for naming) — one resolution path within 050, parent
+  untouched. A future "extract one shared resolver" refactor is a reasonable follow-up.
+- **Correlation** keys the reserved `app-name` on the **spec-049 folder identity**
+  (appRoot basename — which 049 calls "what spec-050 keys to"). Where the monitor card's
+  name diverges (a well-named jar, a process-named generic), the ops surface on the machine
+  page but not the card — the same imperfect-correlation posture spec-026's facade ships
+  with (see Known Gaps).
+- **UI** in `app.js` only; **no `MonitorService` change** (`appOps` already enumerates any
+  approved reserved-`app-name` action, any recipe type). Approved `start/stop/restart/deploy`
+  render as a control row; Start is inline (spec-024), the destructive verbs route through
+  the spec-044 confirm drawer, Deploy adds the type-the-app-name gate + long-running
+  warning, Restart composes stop→await-terminal→start when no real restart exists, and a
+  `SYSTEMD` control wins the verb over a script one (dedup). `selfBackgrounds`/`preview` ride
+  the action description; the UI reads the foreground hint from it.
+- **systemd read-only note deferred.** With no server change permitted and no persistence
+  channel for a note-without-action, a systemd/docker-managed app is simply not proposed
+  (scope rule honored); build-file context does ride the recipe description. The bounded
+  25 s shutdown-drain baseline is the deploy policy; the extended-drain opt-in stays in
+  concern spec-051.
+- **Tests:** `LifecycleDiscovererTest` (7) + `lifecycle-controls.render-check.js`. Full
+  suite `mvn -q -B clean verify` green — 292 tests, 0 failures; every `*ArchTest`
+  (`GateArchTest`, `MachineEventArchTest`) unchanged and green.
+- **Change division (`CONTRIBUTING.md`).** Commits: status flip → backend discoverer →
+  UI → tests → this doing→done closeout, one logical concern each. Per the run directive
+  the opening flip combined the rename with the 1-line header edit (CONTRIBUTING §3 prefers
+  isolated renames; spec-049 split them) — minor, not rewritten. No enabling refactor and
+  no migration were required, so no pre-PR stack.
 
 ## Acceptance
 
