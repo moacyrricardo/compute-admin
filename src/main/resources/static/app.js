@@ -2036,7 +2036,7 @@
             if (cards.length) {
               bodyWrap.appendChild(h("h3", { class: "mt-4", text: "Consumers" }));
               bodyWrap.appendChild(h("div", { class: "app-cards" },
-                cards.map(function (c) { return consumerCard(c, toggleApp, openDrawer); })));
+                cards.map(function (c) { return consumerCard(c, toggleApp, openDrawer, { machine: m, onRan: cycle }); })));
             } else if (!noAppsOn() && !bars.length) {
               bodyWrap.appendChild(h("p", { class: "small dim mt-3",
                 text: "No discovered consumers on this host." }));
@@ -2189,6 +2189,198 @@
     return h("a", { class: "run-chip", href: href,
       title: "Run " + op.name + " for " + appName },
       op.name, h("span", { class: "run-chip-go", text: "run…" }));
+  }
+
+  // ---- lifecycle controls (spec-050) ---------------------------------------
+  // Approved app-ops named exactly start/stop/restart/deploy render as a lifecycle control
+  // row on the app card/drawer — the verb→button mapping lives client-side (spec-040
+  // thin-BE; no persisted classification). Start runs INLINE (spec-024); the destructive
+  // verbs route through the spec-044 review/confirm drawer; deploy adds a type-the-app-name
+  // gate; restart COMPOSES stop→start when there is no real restart action. When both a
+  // systemd control and a script control target one verb, the systemd one wins so a card
+  // never shows two Restart buttons (spec-026 dedup).
+
+  var LIFECYCLE_VERBS = ["start", "stop", "restart", "deploy"];
+
+  function isLifecycleOp(op) {
+    return LIFECYCLE_VERBS.indexOf((op.name || "").toLowerCase()) >= 0;
+  }
+
+  /** The op for a verb, preferring a SYSTEMD-typed control over a script one (spec-050 dedup). */
+  function lifecycleOpForVerb(ops, verb) {
+    var matches = (ops || []).filter(function (op) { return (op.name || "").toLowerCase() === verb; });
+    if (!matches.length) return null;
+    return matches.filter(function (op) { return op.recipeType === "SYSTEMD"; })[0] || matches[0];
+  }
+
+  function lifecycleBtn(label, verb, onClick) {
+    return h("button", { type: "button", class: "btn btn--sm lifecycle-btn lifecycle-btn--" + verb,
+      onclick: onClick }, label);
+  }
+
+  /**
+   * The lifecycle control row for a card/drawer, or null when the app has no lifecycle op.
+   * `ctx` carries { machine, onRan } — onRan re-polls the monitor after a run so UP/DOWN
+   * reflects (null when launched from a standalone drawer).
+   */
+  function lifecycleControls(consumer, ctx) {
+    var ops = consumer.ops || [];
+    var start = lifecycleOpForVerb(ops, "start");
+    var stop = lifecycleOpForVerb(ops, "stop");
+    var restart = lifecycleOpForVerb(ops, "restart");
+    var deploy = lifecycleOpForVerb(ops, "deploy");
+    var canCompose = !restart && !!start && !!stop;   // stop→start when no real restart exists
+    if (!start && !stop && !restart && !deploy) return null;
+    var app = consumer.name;
+    var btns = [];
+    if (start) btns.push(lifecycleBtn("Start", "start",
+      function () { openRunOutputDrawer(ctx, start, app, { title: "Start " + app }); }));
+    if (stop) btns.push(lifecycleBtn("Stop", "stop",
+      function () { openLifecycleConfirm(ctx, stop, app, { verb: "Stop" }); }));
+    if (restart) btns.push(lifecycleBtn("Restart", "restart",
+      function () { openLifecycleConfirm(ctx, restart, app, { verb: "Restart" }); }));
+    else if (canCompose) btns.push(lifecycleBtn("Restart", "restart",
+      function () { openRestartCompose(ctx, stop, start, app); }));
+    if (deploy) btns.push(lifecycleBtn("Deploy", "deploy",
+      function () { openLifecycleConfirm(ctx, deploy, app, { verb: "Deploy", typeToConfirm: app, longRunning: true }); }));
+    return h("div", { class: "run-chip-row mt-2 lifecycle-controls" }, btns);
+  }
+
+  /**
+   * spec-024 inline run: POST the run and stream its output into a drawer, then refresh the
+   * monitor so UP/DOWN reflects. A found script that runs in the foreground (selfBackgrounds
+   * false, carried in the action description) holds the run open — the drawer says so, and a
+   * Cancel closes the channel (which stops the app). Used for Start and for a confirmed
+   * destructive verb after the review drawer.
+   */
+  function openRunOutputDrawer(ctx, op, app, opts) {
+    opts = opts || {};
+    var currentRunId = null;
+    var pre = h("pre", { class: "run-output mono" });
+    var status = h("p", { class: "small dim mt-2", text: "Starting…" });
+    var fgNote = /foreground/i.test(op.description || "")
+      ? h("p", { class: "small faint mt-2", text: "This script appears to run in the foreground — the run stays open while the app lives; cancelling it stops the app." })
+      : null;
+    var cancelBtn = h("button", { class: "btn btn--sm btn--danger", disabled: true,
+      onclick: function () { if (currentRunId) api("POST", "/runs/" + encodeURIComponent(currentRunId) + "/cancel").catch(function () {}); } }, "Cancel run");
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": opts.title || op.name },
+      h("div", { class: "row-between" }, h("h2", { text: opts.title || op.name }),
+        h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
+      h("p", { class: "small dim mt-2", text: ctx.machine.loginUser + "@" + ctx.machine.host + ":" + ctx.machine.port }),
+      fgNote, status, pre, h("div", { class: "row mt-2" }, cancelBtn));
+    var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) { if (e.target === backdrop) closeDrawer(); } }, drawer);
+    var root = byId("modal-root"); clear(root); root.appendChild(backdrop);
+
+    var params = {}; params[op.appParamName || "app-name"] = app;
+    api("POST", "/runs", { machineId: op.machineId, actionId: op.id, params: params }).then(function (run) {
+      currentRunId = run.id;
+      status.textContent = "Running…";
+      cancelBtn.disabled = false;
+      streamRunOutput(run.id, {
+        onChunk: function (stream, data) {
+          if (stream === "stdout" || stream === "stderr") pre.appendChild(document.createTextNode(data + "\n"));
+          else if (stream === "exit") status.textContent = "Exited " + data;
+        },
+        onDone: function () {
+          cancelBtn.disabled = true;
+          if (status.textContent === "Running…") status.textContent = "Done.";
+          if (ctx.onRan) ctx.onRan();
+        }
+      });
+    }).catch(function (err) { status.textContent = err.message; });
+  }
+
+  /**
+   * spec-044 review/confirm drawer for a destructive verb (stop/restart/deploy): the exact
+   * pinned command + params + approval state (renderActionReview) plus an explicit Confirm
+   * that runs it. Deploy adds a GitHub-style type-the-app-name gate on top; only the longest,
+   * most destructive verb gets it. One-click destruction is never offered.
+   */
+  function openLifecycleConfirm(ctx, op, app, opts) {
+    opts = opts || {};
+    var ctxReview = { machine: ctx.machine, recipe: { id: op.recipeId, name: op.recipeName }, action: op };
+    var confirmBtn = h("button", { class: "btn btn--danger", onclick: function () {
+      closeDrawer();
+      openRunOutputDrawer(ctx, op, app, { title: (opts.verb || op.name) + " " + app });
+    } }, (opts.verb || "Run") + " " + app);
+
+    var typeGate = null;
+    if (opts.typeToConfirm) {
+      confirmBtn.disabled = true;
+      var field = h("input", { type: "text", class: "mono", placeholder: app });
+      field.addEventListener("input", function () {
+        confirmBtn.disabled = field.value.trim() !== opts.typeToConfirm;
+      });
+      typeGate = h("div", { class: "field mt-3" },
+        h("label", { class: "small dim", text: "Type the app name (" + app + ") to enable " + (opts.verb || "run") + ":" }),
+        field);
+    }
+    var warn = opts.longRunning
+      ? h("div", { class: "banner banner--warn", role: "note" }, h("div", { class: "banner-body" },
+          h("strong", { text: "Long-running. " }),
+          "A deploy can run for minutes; it streams live and is never cut off by a timer. Restarting compute-admin while it runs will interrupt it (bounded 25 s shutdown drain)."))
+      : null;
+
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": (opts.verb || op.name) },
+      h("div", { class: "row-between" }, h("h2", { text: (opts.verb || op.name) + " " + app }),
+        h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
+      h("div", { class: "row mt-2" }, chip(op.approvalState)),
+      h("p", { class: "small dim mt-2", text: ctx.machine.loginUser + "@" + ctx.machine.host + ":" + ctx.machine.port }),
+      warn,
+      renderActionReview(op, ctxReview),
+      typeGate,
+      h("div", { class: "row mt-4" }, confirmBtn));
+    var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) { if (e.target === backdrop) closeDrawer(); } }, drawer);
+    var root = byId("modal-root"); clear(root); root.appendChild(backdrop);
+  }
+
+  /**
+   * Restart composition (spec-050): with no real restart action, run stop → await its
+   * terminal state → run start, sequenced client-side behind the confirm drawer, with an
+   * explicit warning that a half-failure (stop ok, start fails) leaves the app down. If stop
+   * reaches a failed terminal state, start is NOT auto-run.
+   */
+  function openRestartCompose(ctx, stopOp, startOp, app) {
+    var status = h("p", { class: "small dim mt-2" });
+    var pre = h("pre", { class: "run-output mono" });
+    var runBtn = h("button", { class: "btn btn--danger" }, "Restart " + app);
+    var warn = h("div", { class: "banner banner--warn", role: "note" }, h("div", { class: "banner-body" },
+      h("strong", { text: "Composed restart. " }),
+      "No restart script exists, so this runs Stop then Start. If Start fails after Stop succeeds, the app stays down — Start is not auto-run if Stop fails."));
+    runBtn.addEventListener("click", function () {
+      runBtn.disabled = true;
+      status.textContent = "Stopping…";
+      runComposeStep(pre, stopOp, app).then(function (stopRes) {
+        if (stopRes.exit !== 0) {
+          status.textContent = "Stop failed (exit " + stopRes.exit + ") — NOT starting. The app was not restarted.";
+          return null;
+        }
+        status.textContent = "Stopped. Starting…";
+        return runComposeStep(pre, startOp, app).then(function (startRes) {
+          status.textContent = startRes.exit === 0 ? "Restarted." : "Start failed (exit " + startRes.exit + ") — the app is DOWN.";
+          if (ctx.onRan) ctx.onRan();
+        });
+      }).catch(function (err) { status.textContent = err.message; });
+    });
+    var drawer = h("div", { class: "drawer", role: "dialog", "aria-modal": "true", "aria-label": "Restart " + app },
+      h("div", { class: "row-between" }, h("h2", { text: "Restart " + app }),
+        h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
+      h("p", { class: "small dim mt-2", text: ctx.machine.loginUser + "@" + ctx.machine.host + ":" + ctx.machine.port }),
+      warn, status, pre, h("div", { class: "row mt-4" }, runBtn));
+    var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) { if (e.target === backdrop) closeDrawer(); } }, drawer);
+    var root = byId("modal-root"); clear(root); root.appendChild(backdrop);
+  }
+
+  /** One composed step: POST the op, collect its output + exit into the shared <pre>. */
+  function runComposeStep(pre, op, app) {
+    var params = {}; params[op.appParamName || "app-name"] = app;
+    pre.appendChild(document.createTextNode("$ " + op.name + "\n"));
+    return api("POST", "/runs", { machineId: op.machineId, actionId: op.id, params: params }).then(function (run) {
+      return collectRun(run.id).then(function (r) {
+        if (r.stdout) pre.appendChild(document.createTextNode(r.stdout));
+        return r;   // { stdout, exit }
+      });
+    });
   }
 
   // ---- fleet poll helpers (spec-029) ---------------------------------------
@@ -2551,7 +2743,7 @@
    * checks as chips, and the matched app-ops. The name is a fleet filter toggle; the
    * card body opens the drawer. Rebuilt from the consumer's current state on paint().
    */
-  function consumerCard(consumer, onToggle, onOpen) {
+  function consumerCard(consumer, onToggle, onOpen, ctx) {
     var fw = consumer.framework || "generic";
     var badge = h("span", { class: "fw-badge fw-badge--" + fw, text: fw });
     var actuatorless = fw === "http"
@@ -2577,14 +2769,18 @@
           return h("span", { class: cls, title: r.name + " (" + humanize(r.state) + ")", text: r.name });
         }))
       : null;
-    var ops = (consumer.ops || []).length
-      ? h("div", { class: "run-chip-row mt-2" }, consumer.ops.map(function (op) { return opsRunChip(op, consumer.name); }))
+    // Lifecycle-named ops (start/stop/restart/deploy) render as a control row (spec-050);
+    // all other ops keep the existing run-chip behaviour.
+    var lifeControls = lifecycleControls(consumer, ctx || {});
+    var otherOps = (consumer.ops || []).filter(function (op) { return !isLifecycleOp(op); });
+    var ops = otherOps.length
+      ? h("div", { class: "run-chip-row mt-2" }, otherOps.map(function (op) { return opsRunChip(op, consumer.name); }))
       : null;
     var card = h("div", { class: "app-card" },
       h("div", { class: "row-between" },
         h("div", { class: "grow" }, name, h("div", { class: "row mt-2" }, badge, actuatorless, pill)),
         runtimeTag),
-      folder, axes, checks, ops);
+      folder, axes, checks, lifeControls, ops);
     card.addEventListener("click", function (e) {
       if (e.target.closest(".run-chip") || e.target.closest(".app-name-toggle")) return;
       onOpen(consumer.id);
@@ -2991,7 +3187,8 @@
       h("div", { class: "row mt-2" }, badges),
       h("p", { class: "small dim mt-2", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
       h("div", { class: "d-axes mt-4" }, meter("RAM", c.ram), meter("CPU", c.cpu), diskMeter),
-      otherNote, folderBlock, owner, services, probes, compose);
+      otherNote, folderBlock, lifecycleControls(c, { machine: machine, onRan: null }),
+      owner, services, probes, compose);
     var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
       if (e.target === backdrop) closeDrawer();
     } }, drawer);
