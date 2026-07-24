@@ -154,6 +154,34 @@ class RunRowEvictionJobTest {
         assertThat(mine.stream().filter(r -> r.getParentRunId() == null).toList()).hasSize(2);
     }
 
+    /**
+     * spec-049/V16 regression: a run's resolved argv can embed a multi-KB probe script
+     * (the footprint/lifecycle {@code sh -c} literal), which overflowed the old
+     * {@code RESOLVED_ARGV_JSON VARCHAR(4000)} at insert (SQLState 22001). The column is
+     * now CLOB, so a large argv must round-trip. The {@code saveAndFlush} is the assertion:
+     * it is exactly the insert that failed in production.
+     */
+    @Test
+    void largeResolvedArgv_persistsAsClob_pastTheOldVarcharLimit() {
+        AppUser user = saveUser();
+        String bigArgv = "[\"sh\",\"-c\",\"" + "x".repeat(10_000) + "\"]"; // ~10 KB, well past 4000
+        String runId = asUser(user, () -> {
+            Action action = seedAction(user);
+            Run run = new Run();
+            run.setAction(action);
+            run.setMachine(action.getRecipe().getMachine());
+            run.setCallerUserId(action.getRecipe().getMachine().getOwner().getId());
+            run.setVia(Via.UI);
+            run.setResolvedArgvJson(bigArgv);
+            run.setApprovedSnapshotHash("hash");
+            run.setStatus(RunStatus.DONE);
+            run.setCreatedAt(Instant.now());
+            return runs.saveAndFlush(run).getId();
+        });
+        assertThat(runs.findById(runId).orElseThrow().getResolvedArgvJson())
+                .hasSize(bigArgv.length()).isEqualTo(bigArgv);
+    }
+
     // --- fixtures -----------------------------------------------------------
 
     /** Runs belonging to one action (isolates assertions from any leaked committed rows). */

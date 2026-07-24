@@ -76,7 +76,11 @@ public class Run {
     private String paramsJson;
 
     /** JSON array of the exact argv executed (sudo-prefixed when the action requires it). */
-    @Column(name = "resolved_argv_json", nullable = false, length = 4000)
+    // CLOB: the exact argv can embed a large fixed probe script (spec-049 footprint /
+    // spec-050 lifecycle actions run a multi-KB `sh -c` literal), which overflows a
+    // bounded VARCHAR. Stored unbounded like stdout/stderr. (V16.)
+    @Lob
+    @Column(name = "resolved_argv_json", nullable = false)
     private String resolvedArgvJson;
 
     /** The action's content hash in force at run time (equal to the approved hash). */

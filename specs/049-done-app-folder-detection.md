@@ -354,6 +354,14 @@ from or extended the spec:
   "no migration" assumption was simply predicated on the (incorrect) belief that the
   footprint script would fit the token store like the shorter probes. Per
   CONTRIBUTING §5 the migration rides the same commit as the script it backs.
+- **A second migration (V16) — found by live testing, not the eval.** V15 widened the
+  action *template* store, but the same ~6 KB script is also written per-run to
+  `run.resolved_argv_json`, which was `VARCHAR(4000)` — so the first *run* of the
+  footprint action (a monitor poll) overflowed with `22001` at insert. `V16__widen_run_
+  resolved_argv.sql` retypes `run.resolved_argv_json` to **CLOB** (unbounded), matching
+  the already-`@Lob` `stdout`/`stderr` — a fixed VARCHAR is the wrong tool since a maxed
+  16 KB `arg_token` JSON-escapes past any width. Regression: a >4 KB-argv round-trip in
+  `RunRowEvictionJobTest`. Same thin-BE-preserving column-type widen as V15.
 - **The joint spec-041 `computeOther` edit needed no code.** `computeOther` already
   subtracts every named consumer's `c[axis]` generically, so once a deployed native
   app carries a real `c.disk` (fed from `footprintBytes ÷ host data-root`) it is
