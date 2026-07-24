@@ -45,7 +45,17 @@ public enum DiscovererFamily {
     HOST("Host vitals", true, null),
 
     /** Native per-application monitor (spec-025) — reads the login user already has. */
-    APP("Application monitor", true, null);
+    APP("Application monitor", true, null),
+
+    /**
+     * Unmanaged / script-launched app lifecycle discovery (spec-050) — the
+     * script-launched counterpart of {@link #SYSTEMD}. Detects an app's lifecycle
+     * scripts ({@code run.sh}/{@code stop.sh}/…) next to a running native app and
+     * proposes them as gated {@code CUSTOM} start/stop/restart/deploy actions.
+     * Default <strong>on</strong>: its probes are {@code /proc}/filesystem reads the
+     * login user already has, and every proposal is gated like everything else.
+     */
+    LIFECYCLE("App lifecycle scripts", true, null);
 
     private final String displayName;
     private final boolean defaultEnabled;
