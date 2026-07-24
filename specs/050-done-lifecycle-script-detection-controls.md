@@ -408,6 +408,16 @@ on #72** (spec-049); PR #73 bases on the 049 branch and must merge after it.
   `discovery_enablement.family VARCHAR(20)` free-string column (no CHECK constraint); the
   049 base already widened `arg_token`/`blueprint_arg_token` to `VARCHAR(16384)` so a
   large scan-script token fits. Nothing new was added to the schema.
+- **Correlation-param fix (post-merge-eval).** The spec assumed the reserved `app-name`
+  needed no validation change ("same as spec-026"). It did: `ActionService.applyStructure`
+  requires every declared param to be referenced by a token, and spec-026's app-ops pass
+  only because their command *references* `app-name`. A lifecycle action's argv is a lone
+  literal script path, so its correlation `app-name` is unreferenced and discovery failed
+  with `Param declared but never referenced: app-name`. Fixed by exempting the reserved
+  scalar `app-name` (ALLOWED_SET) from the referenced-requirement — it is a dashboard
+  correlation label, not a command input; every other unreferenced param is still
+  rejected. Regression: `LifecycleAppNameCorrelationTest` (drives the exact
+  `addAction`→`applyStructure` path the pure-discoverer test skipped).
 - **049 seam (OQ6) — deviation.** 049 landed its resolution embedded in a monolithic,
   du-oriented, port-driven shell probe (`FOOTPRINT_PROBE_SCRIPT`, run-path fan-out), not a
   cleanly extractable helper. Rather than a risky rewrite of the unmerged parent, 050

@@ -247,6 +247,7 @@ public class ActionService {
 
         Set<String> declaredNames = new HashSet<>();
         String appPortListName = null;
+        String correlationAppName = null;
         // Mutate the existing collections so orphanRemoval deletes the old rows.
         action.getParamDefs().clear();
         for (ParamDefInput in : defs) {
@@ -262,6 +263,14 @@ public class ActionService {
                     throw new BadRequestException("An action may declare at most one APP_PORT_LIST param");
                 }
                 appPortListName = def.getName();
+            }
+            // The reserved scalar `app-name` (ALLOWED_SET) is a correlation label, not a
+            // command input: the dashboard reads its allowed set to map the action to an
+            // app card. It may therefore be declared without any token referencing it —
+            // e.g. a spec-050 lifecycle action whose argv is a single literal script path.
+            if (ParamBinder.APP_NAME_COMPONENT.equals(def.getName())
+                    && def.getKind() == ParamKind.ALLOWED_SET) {
+                correlationAppName = def.getName();
             }
             action.getParamDefs().add(def);
         }
@@ -306,7 +315,9 @@ public class ActionService {
         }
 
         for (String declared : declaredNames) {
-            if (!referencedNames.contains(declared)) {
+            // Every param must be referenced by a token, except the reserved correlation
+            // `app-name` (above): it labels the action for the dashboard, not the command.
+            if (!referencedNames.contains(declared) && !declared.equals(correlationAppName)) {
                 throw new BadRequestException("Param declared but never referenced: " + declared);
             }
         }
