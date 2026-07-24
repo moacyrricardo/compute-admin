@@ -2067,8 +2067,13 @@
                   cores: hostCores[m.machineId],
                   diskBytes: hostDiskTotal[m.machineId]
                 };
+                // Sample the footprint probe only on the slow tiers (spec-049 decision 2):
+                // single (incl. the first paint) + 1m/5m — never the 5s/30s fast tiers,
+                // where du would hammer disk. The cheap axes (RAM/CPU) still poll every tier.
+                var includeFootprint = cadence === "single" || cadence === "1m" || cadence === "5m";
                 return Promise.all([
-                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores),
+                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores,
+                    denom.diskBytes, includeFootprint),
                   pollDockerConsumers(m, selectedNamed(m), denom)
                 ]);
               }).then(paint);
@@ -2262,6 +2267,7 @@
    */
   function checkKind(action) {
     var n = (action.name || "").toLowerCase();
+    if (n.indexOf("footprint") >= 0 || n.indexOf("folder") >= 0) return "footprint";
     if (n.indexOf("process") >= 0 || n.indexOf("proc") >= 0) return "process";
     if (n.indexOf("cpu") >= 0 || n.indexOf("load") >= 0) return "cpu";
     if (n.indexOf("health") >= 0 || n.indexOf("live") >= 0 || n.indexOf("ping") >= 0
@@ -2299,6 +2305,71 @@
       total += parseFloat(cols[2]); seen = true;
     });
     return seen ? total : null;
+  }
+
+  /**
+   * Parse one app-folder/footprint NDJSON line (spec-049) into the app-card model, or
+   * null when the line is absent/malformed (the check still rolls up to its up/down chip;
+   * folder + sizes just stay — , the "absent is null" rule). The BE runs the approved
+   * probe and hands back stdout; ALL classification/assembly is client-side (spec-040
+   * thin-BE). Returns { folder, folderResolved, rootKind, buildTool, sizes, notes } where
+   * `folder` is the SYMLINK identity when the probe reached the app through one (`link`,
+   * stable across redeploys — what spec-050 keys to), else the resolved `appRoot`.
+   */
+  function parseFootprint(text) {
+    if (!text) return null;
+    var line = String(text).split(/\r?\n/).filter(function (l) { return l.trim(); }).pop();
+    if (!line) return null;
+    var o;
+    try { o = JSON.parse(line); } catch (e) { return null; }
+    if (!o || typeof o !== "object" || o.rootKind == null) return null;
+    return {
+      folder: o.link || o.appRoot || o.cwd || null,
+      folderResolved: o.link ? (o.appRoot || null) : null,
+      rootKind: o.rootKind,
+      buildTool: o.buildTool || null,
+      sizes: {
+        artifactBytes: numOrNull(o.artifactBytes),
+        dataBytes: numOrNull(o.dataBytes),
+        footprintBytes: numOrNull(o.footprintBytes),
+        footprintSkipped: o.footprintSkipped || null
+      },
+      notes: o.notes || []
+    };
+  }
+
+  function numOrNull(v) { return (typeof v === "number" && !isNaN(v)) ? v : null; }
+
+  /** Bytes → a short human size ("48.2 MB", "1.6 GB"); null → "" (SI, matching du -b). */
+  function bytesText(n) {
+    if (n == null || isNaN(n)) return "";
+    var u = ["B", "KB", "MB", "GB", "TB"], i = 0, v = n;
+    while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+    return (i === 0 ? v : v.toFixed(1)) + " " + u[i];
+  }
+
+  /** Middle-truncate a path so both the mount root and the leaf dir stay visible. */
+  function midTruncate(s, max) {
+    if (!s || s.length <= max) return s || "";
+    var keep = Math.floor((max - 1) / 2);
+    return s.slice(0, keep) + "…" + s.slice(s.length - keep);
+  }
+
+  /** The one card size chip (spec-049): footprint if present, else data, else artifact. */
+  function footprintChip(sizes) {
+    if (!sizes) return null;
+    if (sizes.footprintBytes != null) return { label: "footprint", bytes: sizes.footprintBytes, approx: true };
+    if (sizes.dataBytes != null) return { label: "data", bytes: sizes.dataBytes, approx: false };
+    if (sizes.artifactBytes != null) return { label: "artifact", bytes: sizes.artifactBytes, approx: false };
+    return null;
+  }
+
+  /** Human reason for an absent footprint (spec-049 footprintSkipped). */
+  function footprintSkipReason(skipped) {
+    if (skipped === "build-tree") return "build tree — footprint suppressed";
+    if (skipped === "timeout") return "timed out";
+    if (skipped === "permission") return "permission denied";
+    return null;
   }
 
   /**
@@ -2496,6 +2567,7 @@
     var runtimeTag = h("span", { class: "tag mono",
       text: (consumer.runtime || (consumer.source === "DOCKER" ? "docker" : "process"))
         + (consumer.port != null ? " :" + consumer.port : "") });
+    var folder = consumerFolderRow(consumer);
     var axes = h("div", { class: "d-axes mt-2" },
       consumerAxis("RAM", consumer), consumerAxis("CPU", consumer), consumerAxis("Disk", consumer));
     var states = consumer._checkStates || [];
@@ -2512,12 +2584,37 @@
       h("div", { class: "row-between" },
         h("div", { class: "grow" }, name, h("div", { class: "row mt-2" }, badge, actuatorless, pill)),
         runtimeTag),
-      axes, checks, ops);
+      folder, axes, checks, ops);
     card.addEventListener("click", function (e) {
       if (e.target.closest(".run-chip") || e.target.closest(".app-name-toggle")) return;
       onOpen(consumer.id);
     });
     return card;
+  }
+
+  /**
+   * The app-folder line on a consumer card (spec-049): a mono, middle-truncated folder
+   * path plus one size chip (footprint if present, else data, else artifact — labeled
+   * which, footprint tagged "approx"). When the app was reached through a symlink the
+   * line shows the SYMLINK path as identity (stable across redeploys) with the resolved
+   * target in its tooltip; an unresolved / cwd-only root is tagged honestly. Null when no
+   * footprint line has been sampled yet, so the card is unchanged until the slow tier runs.
+   */
+  function consumerFolderRow(consumer) {
+    if (!consumer.folder) return null;
+    var resolved = consumer.folderResolved;
+    var title = resolved ? consumer.folder + " → " + resolved : consumer.folder;
+    var pathEl = h("span", { class: "mono folder-path", title: title, text: midTruncate(consumer.folder, 42) });
+    var kindTag = (consumer.rootKind === "unresolved" || consumer.rootKind === "cwd-only")
+      ? h("span", { class: "tag", title: "folder heuristics could not confirm a project root", text: consumer.rootKind })
+      : (consumer.buildTool ? h("span", { class: "tag", text: consumer.buildTool }) : null);
+    var chip = footprintChip(consumer.sizes);
+    var sizeEl = chip
+      ? h("span", { class: "chip chip--neutral mono",
+          title: chip.approx ? chip.label + " (approximate)" : chip.label,
+          text: chip.label + " " + bytesText(chip.bytes) + (chip.approx ? " ~" : "") })
+      : null;
+    return h("div", { class: "folder-row row mt-2" }, pathEl, kindTag, sizeEl);
   }
 
   // ---- databases lens (spec-034 §5) ----------------------------------------
@@ -2631,7 +2728,7 @@
   // fill each consumer's RAM axis (RSS / host total) and CPU axis (process-tree
   // %cpu ÷ host cores, spec-039) + UP/DOWN + probe states.
 
-  function pollConsumers(machineId, consumers, hostTotal, cores) {
+  function pollConsumers(machineId, consumers, hostTotal, cores, diskBytes, includeFootprint) {
     var pollable = consumers.filter(function (c) { return (c.checks || []).length && c.port != null; });
     if (!pollable.length) return Promise.resolve();
     var groups = {};
@@ -2639,13 +2736,17 @@
       (c.checks || []).forEach(function (chk) {
         if (chk.approvalState !== "APPROVED" || chk.changedSinceApproval) return;
         if (!appPortListParamName(chk)) return;
+        // The footprint probe is IO-heavy (du) and SAMPLED — run it only on the slow
+        // tiers (spec-049 decision 2), never at the 5s/30s fast tiers. When skipped its
+        // folder/sizes/disk just retain the last sampled value.
+        if (checkKind(chk) === "footprint" && !includeFootprint) return;
         var g = groups[chk.id] || (groups[chk.id] = { action: chk, apps: [], seen: {} });
         if (!g.seen[c.name]) { g.seen[c.name] = true; g.apps.push({ appName: c.name, port: c.port }); }
       });
     });
     var ids = Object.keys(groups);
     if (!ids.length) {
-      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal, cores); });
+      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal, cores, diskBytes); });
       return Promise.resolve();
     }
     var outputs = {}; // checkId → (appName → { stdout, exit })
@@ -2653,7 +2754,7 @@
       return runProbeForApps(machineId, groups[id].action, groups[id].apps)
         .then(function (byApp) { outputs[id] = byApp; });
     })).then(function () {
-      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal, cores); });
+      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal, cores, diskBytes); });
     });
   }
 
@@ -2663,18 +2764,39 @@
    * %CPU (summed → ÷ the host core count, spec-039) gives the CPU axis, mirroring the
    * docker path's `sumCpu / denom.cores`; liveness/process rolls up to UP/DOWN; each
    * check keeps its responded state (na = did not respond, so it is omitted from the
-   * drawer's probe list — probe honesty, spec-034 §6). Disk stays at its server value
-   * (null against 032 — a native process has no attributable disk). An absent cpu
-   * reading or an unknown `cores` leaves CPU null → — (honesty rule, never a silent 0).
+   * drawer's probe list — probe honesty, spec-034 §6). The DISK axis is fed (spec-049)
+   * from the footprint probe: a `rootKind=deploy` app with a real `footprintBytes` gets
+   * `footprintBytes ÷ host data-root bytes` as an attributed disk segment (build-tree /
+   * cwd-only / absent-footprint apps leave disk — , unchanged). computeOther (spec-041)
+   * subtracts this from OTHER generically, so the deployed app is not double-counted. An
+   * absent cpu reading or an unknown `cores` leaves CPU null → — (honesty rule, never a
+   * silent 0). The footprint probe is sampled (slow tier only), so when it does not run
+   * this cycle the folder/sizes/disk simply retain their last value rather than reset.
    */
-  function applyConsumerReading(c, outputs, hostTotal, cores) {
+  function applyConsumerReading(c, outputs, hostTotal, cores, hostDiskBytes) {
     var livenessUp = null, processUp = null, rssMb = null, cpuRaw = null, rows = [];
     (c.checks || []).forEach(function (chk) {
       var res = outputs && outputs[chk.id] && outputs[chk.id][c.name];
       var kind = checkKind(chk);
       var state = "na";
       if (res) {
-        if (kind === "process") {
+        if (kind === "footprint") {
+          var fp = parseFootprint(res.stdout);
+          if (fp) {
+            c.folder = fp.folder;
+            c.folderResolved = fp.folderResolved;
+            c.rootKind = fp.rootKind;
+            c.buildTool = fp.buildTool;
+            c.sizes = fp.sizes;
+            // Feed the native disk-% axis ONLY for a deployed root with a real footprint
+            // (spec-049 decision 1). Anything else leaves disk untouched (stays — ).
+            if (fp.rootKind === "deploy" && fp.sizes.footprintBytes != null && hostDiskBytes) {
+              c.disk = clampPct(Math.round(fp.sizes.footprintBytes / hostDiskBytes * 100));
+            }
+          }
+          state = (fp && fp.rootKind !== "unresolved") ? "up"
+            : (res.stdout && res.stdout.indexOf("no-listener") < 0 ? "down" : "na");
+        } else if (kind === "process") {
           var rss = parseRssMb(res.stdout);
           if (rss != null) rssMb = (rssMb == null ? 0 : rssMb) + rss;
           var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
@@ -2820,14 +2942,20 @@
       ? h("p", { class: "small dim mt-2",
           text: "unattributed system usage (approximate) — host used minus the sum of attributed consumers, clamped at zero. Not an exact accounting; it absorbs OS overhead and RSS-vs-free slop." })
       : null;
+    // The native disk axis: fed from the footprint probe for a deployed root (spec-049);
+    // otherwise the honest caption — a build-tree / cwd-only / not-yet-sampled app has no
+    // attributable footprint, and the Folder block below says why (footprintSkipped).
+    var diskCaption = c.source === "DOCKER" ? "n/a"
+      : (c.sizes && footprintSkipReason(c.sizes.footprintSkipped))
+        || (c.folder ? "folder known — footprint not attributed" : "native process — no attributable disk footprint");
     var diskMeter = c.disk == null
       ? h("div", { class: "meter" },
           h("div", { class: "meter-head" },
             h("span", { class: "meter-label", text: "Disk" }),
             h("span", { class: "meter-val mono", text: "—" })),
-          h("div", { class: "meter-sub mono",
-            text: c.source === "DOCKER" ? "n/a" : "native process — no attributable disk footprint" }))
+          h("div", { class: "meter-sub mono", text: diskCaption }))
       : meter("Disk", c.disk);
+    var folderBlock = consumerFolderBlock(c);
     var owner = c.role === "DATABASE"
       ? (c.dedication === "SHARED"
           ? h("dl", { class: "kv mt-2" }, h("dt", { text: "used by" }),
@@ -2863,13 +2991,41 @@
       h("div", { class: "row mt-2" }, badges),
       h("p", { class: "small dim mt-2", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
       h("div", { class: "d-axes mt-4" }, meter("RAM", c.ram), meter("CPU", c.cpu), diskMeter),
-      otherNote, owner, services, probes, compose);
+      otherNote, folderBlock, owner, services, probes, compose);
     var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
       if (e.target === backdrop) closeDrawer();
     } }, drawer);
     var root = byId("modal-root");
     clear(root);
     root.appendChild(backdrop);
+  }
+
+  /**
+   * The drawer's Folder block (spec-049), shown when a footprint line has been sampled:
+   * the app folder (symlink identity + resolved target when reached through a link), a
+   * rootKind/buildTool tag, and the three distinct sizes as separate labeled rows —
+   * artifact `stat`, data grow-dir, and the approximate `du` footprint (or its skip
+   * reason). Null when no footprint line exists, so today's caption stays.
+   */
+  function consumerFolderBlock(c) {
+    if (!c.folder) return null;
+    var rows = [h("dt", { text: "path" }),
+      h("dd", { class: "mono" }, h("span", { text: c.folder }),
+        c.folderResolved ? h("span", { class: "small dim", text: " → " + c.folderResolved }) : null)];
+    var tag = (c.rootKind || "") + (c.buildTool ? " · " + c.buildTool : "");
+    rows.push(h("dt", { text: "kind" }), h("dd", { text: tag || "—" }));
+    var s = c.sizes || {};
+    rows.push(h("dt", { text: "artifact" }),
+      h("dd", { class: "mono", text: s.artifactBytes != null ? bytesText(s.artifactBytes) : "—" }));
+    rows.push(h("dt", { text: "data" }),
+      h("dd", { class: "mono", text: s.dataBytes != null ? bytesText(s.dataBytes) : "—" }));
+    var footprintText = s.footprintBytes != null
+      ? bytesText(s.footprintBytes) + " (approximate)"
+      : (footprintSkipReason(s.footprintSkipped) || "—");
+    rows.push(h("dt", { text: "footprint" }), h("dd", { class: "mono", text: footprintText }));
+    return h("div", { class: "folder-block" },
+      h("h3", { class: "mt-4", text: "Folder" }),
+      h("dl", { class: "kv mt-2" }, rows));
   }
 
   /** One service (docker container, spec-033) inside a consumer, with its own axes. */

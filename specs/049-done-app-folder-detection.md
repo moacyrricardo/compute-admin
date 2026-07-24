@@ -1,7 +1,7 @@
 # 049 — App-folder & footprint detection
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as
-`spec-049`).
+**Status:** done · branch `moacyrricardo/spec-049-app-folder-detection` · no Linear
+(blocked for this repo; tracked as `spec-049`).
 
 ## Context
 
@@ -335,3 +335,57 @@ artifact with "build tree — footprint suppressed"; the python app shows its pr
 folder (venv-parent or marker hit) + sizes; a `python -c` straggler shows cwd tagged
 "unresolved". Nothing runs without UI approval; `GateArchTest` and the full suite
 stay green.
+
+## Implementation Notes
+
+Built on branch `moacyrricardo/spec-049-app-folder-detection` (PR #72). The
+implementation follows the Decision closely; the notable points where it differed
+from or extended the spec:
+
+- **One forced deviation — a Flyway migration (V15).** The spec says "No Flyway
+  migration." The fixed `FOOTPRINT_PROBE_SCRIPT` is ~6 KB — an order of magnitude
+  longer than the cpu/process probes — and `arg_token.token_value` was
+  `VARCHAR(1024)`, so persisting the approved action's argv (each token stored
+  verbatim, S4) failed with a real `DataIntegrityViolation`. `V15__widen_arg_token_value.sql`
+  widens `arg_token.token_value` **and** the symmetric `blueprint_arg_token.token_value`
+  to `VARCHAR(16384)` (entity `@Column(length=…)` bumped to match). This is a pure
+  storage-width bump — no new table/column/`RecipeType`/DTO and no persisted
+  classification model — so the spec-040 thin-BE leaning still holds; the spec's
+  "no migration" assumption was simply predicated on the (incorrect) belief that the
+  footprint script would fit the token store like the shorter probes. Per
+  CONTRIBUTING §5 the migration rides the same commit as the script it backs.
+- **A second migration (V16) — found by live testing, not the eval.** V15 widened the
+  action *template* store, but the same ~6 KB script is also written per-run to
+  `run.resolved_argv_json`, which was `VARCHAR(4000)` — so the first *run* of the
+  footprint action (a monitor poll) overflowed with `22001` at insert. `V16__widen_run_
+  resolved_argv.sql` retypes `run.resolved_argv_json` to **CLOB** (unbounded), matching
+  the already-`@Lob` `stdout`/`stderr` — a fixed VARCHAR is the wrong tool since a maxed
+  16 KB `arg_token` JSON-escapes past any width. Regression: a >4 KB-argv round-trip in
+  `RunRowEvictionJobTest`. Same thin-BE-preserving column-type widen as V15.
+- **The joint spec-041 `computeOther` edit needed no code.** `computeOther` already
+  subtracts every named consumer's `c[axis]` generically, so once a deployed native
+  app carries a real `c.disk` (fed from `footprintBytes ÷ host data-root`) it is
+  subtracted from OTHER automatically — no double-count. Only the `applyConsumerReading`
+  disk-feed and its Javadoc were added; `computeOther` itself is unchanged.
+- **`du` sampling** is gated by cadence (`includeFootprint = single | 1m | 5m`),
+  skipping the 5s/30s fast tiers. The default `single` cadence gives the spec's
+  "initial value" through the ordinary approved-action run path (no gate-violating
+  discovery-time run). A cycle without a footprint reading retains the last sampled
+  folder/sizes/disk.
+- **Node/go stay stubs** (spec Known Gaps): the detector table has a go/binary row
+  (static `exe` = artifact) and treats node as cwd-only; only java + python emit
+  full lines.
+- **Verified empirically** against a live python listener in a marked project dir —
+  the probe correctly resolved runtime/cwd/appRoot, hit the `requirements.txt`
+  marker (`rootKind=deploy`), scanned the `data/` grow-dir, and emitted valid NDJSON.
+
+### Change division (CONTRIBUTING)
+
+Conforms. One PR (#72) for the spec. The todo→doing status flip landed first (the
+rename as its own commit, the header-text edit following — at least as strict as
+CONTRIBUTING §3's "renames get their own isolated commit"). Two implementation
+commits: (1) the backend footprint probe **+** its storage migration V15 (§5:
+migration in the same commit as the code it backs) **+** the `AppMonitorDiscovererTest`
+assertions; (2) the `app.js` client-side assembly **+** the `app-footprint`
+render-check. The tree compiles and `mvn -B clean verify` is green at each. Final
+commit flips this spec to `done`.
