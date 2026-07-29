@@ -10,6 +10,18 @@ authoritative for commit/PR conventions and code style.
 Work is built one **spec** at a time under `specs/NNN-status-slug.md`
 (`/new-spec` to author, the spec skills to implement).
 
+## Spec workflow
+
+```
+Tracker:       linear (team BOL, title prefix `CA:`) — BLOCKED, see ## Linear
+Branch prefix: moacyrricardo/spec-NNN-slug   # Linear blocked → fallback pattern
+Specs dir:     specs/
+```
+
+- Commit subjects: `spec-NNN Short description` (no issue IDs while Linear is blocked).
+- `CONTRIBUTING.md` is authoritative for commit/PR division and code style.
+- API modules: **None** (see `## API Modules`) — finish-branch skips the API Diff.
+
 ## Running (dev)
 
 ```bash
@@ -20,6 +32,38 @@ mvn -q spring-boot:run -Dspring-boot.run.profiles=dev
 - Ready when the log shows `Started Application`.
 - Serves `GET /api/health` (JSON `{status, version}`) and the static UI shell at `/`.
 - Uses the H2 **file** DB at `./data/compute-admin`; Flyway owns the schema.
+
+## Dev server
+
+```
+Start: mvn -q spring-boot:run -Dspring-boot.run.profiles=dev
+Port:  8080            # env PORT overrides
+Ready: log line "Started Application"  (then GET /api/health returns {status, version})
+```
+
+Stop: kill the `spring-boot:run` process (Ctrl-C, or kill the PID / port 8080).
+
+## Build & test
+
+```
+mvn -q test            # system mvn (no wrapper); Java 25, surefire + spring-boot-starter-test
+```
+
+## Dev-login (evidence capture)
+
+The dev profile seeds **no** user (only the `demo` profile has `DemoSeeder`). Auth is
+email+password → JWT sent as `Authorization: Bearer <token>`. Self-register a throwaway
+user, then use the token:
+
+```bash
+TOKEN=$(curl -sX POST localhost:8080/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"dev@ca.local","password":"devpass123","name":"Dev"}' | jq -r .token)
+curl -H "Authorization: Bearer $TOKEN" localhost:8080/api/...
+```
+
+For UI flows, register once (above) then sign in through the login screen with the same
+credentials.
 
 ## SSH verify target (spec-003)
 
