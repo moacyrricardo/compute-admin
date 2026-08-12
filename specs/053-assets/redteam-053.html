@@ -1,0 +1,686 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Does concern 053 hold up?</title>
+<style>
+  :root{
+    --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --faint:#94a3b8;
+    --accent:#0891b2; --border:#e2e8f0; --card:#ffffff; --card-2:#f1f5f9;
+    --blocker:#dc2626; --risk:#d97706; --minor:#94a3b8; --ok:#16a34a;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --faint:#64748b;
+      --accent:#22d3ee; --border:#334155; --card:#111827; --card-2:#1e293b;
+      --blocker:#f87171; --risk:#fbbf24; --minor:#64748b; --ok:#4ade80;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --faint:#64748b;
+    --accent:#22d3ee; --border:#334155; --card:#111827; --card-2:#1e293b;
+    --blocker:#f87171; --risk:#fbbf24; --minor:#64748b; --ok:#4ade80;
+  }
+  :root[data-theme="light"]{
+    --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --faint:#94a3b8;
+    --accent:#0891b2; --border:#e2e8f0; --card:#ffffff; --card-2:#f1f5f9;
+    --blocker:#dc2626; --risk:#d97706; --minor:#94a3b8; --ok:#16a34a;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px 96px}
+
+  header{position:sticky;top:0;z-index:10;background:var(--card);
+    border-bottom:1px solid var(--border)}
+  .hbar{max-width:920px;margin:0 auto;padding:12px 20px;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .hbar .brand{font-weight:600;font-size:14px}
+  .hbar .sp{flex:1 1 auto}
+  button{font:inherit;font-size:13px;font-weight:600;padding:6px 12px;
+    border:1px solid var(--border);border-radius:6px;background:var(--card);
+    color:var(--fg);cursor:pointer}
+  button:hover{background:var(--card-2)}
+  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+
+  h1{font-size:30px;line-height:1.25;margin:36px 0 8px;letter-spacing:-.01em}
+  h2{font-size:21px;margin:56px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  h3{font-size:16px;margin:0}
+  .lede{color:var(--muted);font-size:15px;margin:0 0 4px}
+  p{margin:.7em 0}
+  a{color:var(--accent)}
+  code,.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.88em}
+  code{background:var(--card-2);padding:1px 5px;border-radius:4px}
+
+  .summary{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:20px 22px;margin-top:24px}
+  .summary p:first-child{margin-top:0}
+  .summary p:last-child{margin-bottom:0}
+
+  .verdicts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:12px;margin:20px 0 8px}
+  .verdict{background:var(--card);border:1px solid var(--border);
+    border-left:3px solid var(--blocker);border-radius:8px;padding:14px 16px}
+  .verdict .n{font-size:13px;color:var(--muted)}
+  .verdict .t{font-weight:600;margin:2px 0 8px}
+  .tally{display:flex;gap:14px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+  .tally b{color:var(--fg)}
+
+  .legend{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0;
+    font-size:13px;color:var(--muted)}
+
+  .f{background:var(--card);border:1px solid var(--border);border-radius:8px;
+    padding:16px 18px;margin:12px 0}
+  .f--blocker{border-left:3px solid var(--blocker)}
+  .f--risk{border-left:3px solid var(--risk)}
+  .f--minor{border-left:3px solid var(--minor)}
+  .f--ok{border-left:3px solid var(--ok)}
+  .fhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .pill{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+  .pill--blocker{color:var(--blocker)}
+  .pill--risk{color:var(--risk)}
+  .pill--minor{color:var(--minor)}
+  .pill--ok{color:var(--ok)}
+  .meta{font-size:12px;color:var(--faint);margin-left:auto;white-space:nowrap}
+  .lens{font-size:12px;color:var(--muted)}
+  .q{margin-top:10px;padding:10px 12px;background:var(--card-2);
+    border-radius:6px;font-size:14px}
+  .q b{color:var(--accent)}
+  .mine{margin-top:10px;padding:8px 12px;border:1px dashed var(--ok);
+    border-radius:6px;font-size:13px;color:var(--muted)}
+  .mine b{color:var(--ok)}
+
+  details{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+  summary{cursor:pointer;font-size:13px;color:var(--muted);
+    list-style:none;display:flex;align-items:center;gap:6px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸";font-size:11px;color:var(--faint)}
+  details[open] summary::before{content:"▾"}
+  summary:hover{color:var(--accent)}
+  blockquote{margin:10px 0;padding:8px 14px;border-left:2px solid var(--border);
+    color:var(--fg);font-size:14px}
+  blockquote cite{display:block;margin-top:6px;font-size:12px;color:var(--faint);font-style:normal}
+  blockquote.wrong{border-left-color:var(--blocker)}
+  blockquote.right{border-left-color:var(--ok)}
+  pre{background:var(--card-2);border:1px solid var(--border);border-radius:6px;
+    padding:12px;overflow-x:auto;font-size:13px;line-height:1.55;margin:10px 0}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:10px 0}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:13px}
+  .scroll{overflow-x:auto}
+  .tf{font-weight:700;font-size:12px;letter-spacing:.03em}
+  .tf--t{color:var(--ok)}
+  .tf--f{color:var(--blocker)}
+  ul{margin:.6em 0;padding-left:20px}
+  li{margin:.3em 0}
+  .foot{margin-top:56px;padding-top:16px;border-top:1px solid var(--border);
+    font-size:13px;color:var(--muted)}
+  .hide{display:none}
+  img{max-width:100%}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hbar">
+    <span class="brand">Red-team · concern 053</span>
+    <span class="sp"></span>
+    <button id="f-all"  aria-pressed="true">All</button>
+    <button id="f-block" aria-pressed="false">Blockers</button>
+    <button id="f-exp"  aria-pressed="false">Expand evidence</button>
+    <button class="themebtn" onclick="var r=document.documentElement;
+      r.setAttribute('data-theme', r.getAttribute('data-theme')==='dark'?'light':'dark')">◐ theme</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h1>Does concern 053 hold up — and does it help 049 and 050?</h1>
+<p class="lede">Two independent adversarial passes over
+<code>053-concern-app-model-and-verbs.md</code>: does resolving it close anything on the
+specs it claims to help, and does the concern itself survive contact with the specs it cites.</p>
+
+<div class="summary">
+  <p><strong>Two answers, both negative, both actionable.</strong></p>
+  <p><strong>1. Resolving 053 does not de-risk 049/050.</strong> Of the 15 red-team findings on
+  those specs, <strong>0 are dissolved</strong>, 2 are answered, 12 are untouched, and 1 is made
+  <strong>worse</strong>. None of the four blockers is helped; the symlink-vs-resolved-path blocker
+  gains two new consumers while staying undecided. 053's real value is narrower than claimed: it
+  forces the rebase-or-accept-rework question to be answered deliberately instead of discovered
+  mid-build.</p>
+  <p><strong>2. The concern rests on two false premises.</strong> Both are load-bearing, both were
+  re-verified by hand against the cited specs, and both are authoring errors in 053 rather than
+  disagreements of judgement: the claim that spec-026's <code>app-name</code> param never reaches
+  argv (it does — <code>systemctl restart {app-name}</code>, with <code>sudo -n</code>), and the
+  claim that portless workloads are structurally invisible so declared apps are the only route to
+  seeing them (two non-port-driven discoverers already exist).</p>
+  <p>Everything else holds. The 036 hashing citations, the 040 quotes, 049's Known Gaps, 050's
+  verb-by-name inference and 015's <code>CUSTOM</code>-keyed pinning are all verbatim-accurate, and
+  axes B/C/D/F are genuinely distinct. The skeleton is sound; two of its load-bearing bones are not.</p>
+  <p class="legend">
+    <span class="pill pill--blocker">blocker</span> would send the eventual spec the wrong way ·
+    <span class="pill pill--risk">risk</span> misleads, or costs a round trip ·
+    <span class="pill pill--minor">minor</span> small inaccuracy ·
+    <span class="pill pill--ok">verified</span> checked and correct
+  </p>
+</div>
+
+<div class="verdicts">
+  <div class="verdict">
+    <div class="n">Pass 1 · does 053 help 049/050?</div>
+    <div class="t">No — 0 of 4 blockers</div>
+    <div class="tally"><span><b>0</b> dissolved</span><span><b>2</b> answered</span><span><b>12</b> untouched</span><span><b>1</b> worsened</span></div>
+  </div>
+  <div class="verdict">
+    <div class="n">Pass 2 · is 053 itself sound?</div>
+    <div class="t">Sound skeleton, two false premises</div>
+    <div class="tally"><span><b>2</b> blockers</span><span><b>10</b> risks</span><span><b>3</b> minors</span></div>
+  </div>
+</div>
+
+<h2 id="claims">Claim verification</h2>
+<p class="lede">The seven load-bearing cross-spec claims in 053, checked one by one against the
+documents they cite. Five hold; two do not.</p>
+
+<div class="scroll">
+<table>
+  <tr><th>053 claims…</th><th></th><th>What the cited spec says</th></tr>
+  <tr>
+    <td>026's <code>app-name</code> is correlation-only, never reaches argv</td>
+    <td class="tf tf--f">FALSE</td>
+    <td>026's own actions are <code>systemctl status {app-name}</code>,
+      <code>systemctl restart {app-name}</code> (<code>sudo -n</code>),
+      <code>journalctl -u {app-name}</code>. True only of 050's lifecycle shape.</td>
+  </tr>
+  <tr>
+    <td>Portless workloads are structurally invisible</td>
+    <td class="tf tf--f">FALSE</td>
+    <td>026 discovers via <code>systemctl list-units --state=running</code> — no port. 033:
+      <em>“No port is required — portless workers and datastores are monitored because they belong
+      to a project.”</em></td>
+  </tr>
+  <tr>
+    <td>022 deliberately declined a first-class <code>App</code> entity</td>
+    <td class="tf tf--t">TRUE</td>
+    <td>…but 022 kept promotion open: <em>“promoting to an entity is explicitly <strong>later
+      work</strong>”</em> — which 053 forecloses with “never a table”.</td>
+  </tr>
+  <tr>
+    <td>036 says the <code>app-name</code> <code>ALLOWED_SET</code> is hashed</td>
+    <td class="tf tf--t">TRUE</td>
+    <td>Verbatim, including the asymmetry with the gate-free <code>APP_PORT_LIST</code>.</td>
+  </tr>
+  <tr>
+    <td>040: docker labels are the only reliable way to see portless containers</td>
+    <td class="tf tf--t">TRUE</td>
+    <td>Verbatim, including “structurally misses”.</td>
+  </tr>
+  <tr>
+    <td>049's Known Gaps forbid filesystem paths on the MCP surface</td>
+    <td class="tf tf--t">TRUE</td>
+    <td>Quote accurate — but the extension to path-<em>derived names</em> being “violated by
+      construction” is 053's own leap (see risk 5).</td>
+  </tr>
+  <tr>
+    <td>038/041 already say a shared resource is not attributable per app</td>
+    <td class="tf tf--f">FALSE</td>
+    <td>The quoted string lives in <code>docs/fleet-resource-mock.html</code>, not in either spec.
+      The substantive decision is 032's.</td>
+  </tr>
+</table>
+</div>
+
+<h2 id="blockers">Blockers in 053</h2>
+
+<article class="f f--blocker" data-sev="blocker">
+  <div class="fhead">
+    <span class="pill pill--blocker">blocker</span>
+    <h3>Option A1's whole advantage rests on a property the precedent doesn't have</h3>
+    <span class="meta">053 · false cross-spec claim</span>
+  </div>
+  <p>053 describes 026's reserved <code>app-name</code> param as pure correlation that never
+  reaches the command line, and sells option A1 on exactly that: <em>“gate-safe by construction —
+  never reaches argv, so S4 is untouched.”</em> But 026 binds the param straight into argv in three
+  of its own actions, one of them under <code>sudo -n</code>. The sentence was lifted from spec-050,
+  where it is true of <em>050's</em> lifecycle actions and the 026(d) redeploy shape, and
+  generalised to the whole precedent.</p>
+  <p>026's real gate-safety argument is different and weaker for 053's purposes: every bound value
+  is validated against <code>ParamBinder.APP_NAME_PATTERN</code>, plus <code>ALLOWED_SET</code>
+  membership. If declarations become reserved params, nothing in the precedent stops a template
+  referencing them — which is precisely what axis B (hash or not) turns on.</p>
+  <div class="q"><b>Question:</b> if declarations are reserved params, is “never referenced by an
+  argv token” a <em>new invariant to enforce</em> — and where? And what does it mean for 026's
+  existing actions, whose <code>app-name</code> <em>is</em> an argv token?</div>
+  <div class="mine"><b>Re-verified by hand:</b> <code>specs/026-done-app-ops-recipes.md</code> lines
+  88–95 and 43/61–63.</div>
+  <details>
+    <summary>Evidence — the claim and the spec</summary>
+    <blockquote class="wrong">“spec-026 introduced a reserved scalar <code>app-name</code> param
+    (<code>ALLOWED_SET</code> of size one) whose only job is correlation: <strong>no
+    <code>PARAM</code> argv token references it</strong>”
+    <cite>053 · Problem #1 — and reused as A1's pro</cite></blockquote>
+    <blockquote class="right">“<strong>status</strong> (<code>systemctl status {app-name}</code>,
+    read-only), <strong>restart</strong> (<code>systemctl restart {app-name}</code>,
+    <code>sudo -n</code>, S5), <strong>tail-logs</strong> (<code>journalctl -u {app-name}</code>…)”
+    <cite>specs/026-done-app-ops-recipes.md · the discoverer's proposed actions</cite></blockquote>
+    <blockquote class="right">“a bound <code>app-name</code> value is validated against
+    <code>ParamBinder.APP_NAME_PATTERN</code> on <strong>every</strong> action (monitor or ops)”
+    <cite>026 — the actual safety argument</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--blocker" data-sev="blocker">
+  <div class="fhead">
+    <span class="pill pill--blocker">blocker</span>
+    <h3>“Portless is invisible, so declared apps are the only route” — two discoverers say otherwise</h3>
+    <span class="meta">053 · framing error</span>
+  </div>
+  <p>053's second consequence, and the justification for Decision 4, is that nothing detects a
+  workload that doesn't listen on a port. That describes the <em>monitor</em> chain (025 → 049 →
+  050) only. 026's <code>SystemdDiscoverer</code> enumerates running units with no port involvement
+  whatsoever and gives them lifecycle ops today; 033 makes the same point for containers explicitly.
+  A systemd-managed queue worker is visible right now.</p>
+  <p>The decision itself survives — the gap is real — but it is far narrower than stated:
+  <strong>hand-launched and cron-scheduled native, non-systemd work</strong>. And narrowing it
+  exposes a question 053 never asks: how does a declared app reconcile with the same workload
+  already discovered by systemd or a compose label?</p>
+  <div class="q"><b>Question:</b> what is the population no existing discoverer reaches — and what
+  happens when a declared app and a discovered app describe the same workload?</div>
+  <div class="mine"><b>Re-verified by hand:</b> <code>026</code> line 89
+  (<code>systemctl list-units --type=service --state=running</code>) and <code>033</code> line 31.</div>
+  <details>
+    <summary>Evidence — the claim and the two counter-examples</summary>
+    <blockquote class="wrong">“<strong>Portless native workloads are structurally invisible.</strong>
+    A cron script, a queue worker, a batch job, a bash script per se — nothing listens, so nothing
+    detects it.” … “This is <strong>the only route</strong> by which portless workloads ever become
+    visible.”
+    <cite>053 · Problem consequence 2, and Decision 4</cite></blockquote>
+    <blockquote class="right">“<code>systemctl list-units --type=service --state=running
+    --no-legend</code> to discover an <code>ALLOWED_SET</code> of running unit names”
+    <cite>026 · the systemd probe — no port anywhere</cite></blockquote>
+    <blockquote class="right">“<strong>No port is required</strong> — portless workers and datastores
+    are monitored because they belong to a project, not because a host socket sees them.”
+    <cite>033 · Decision 1</cite></blockquote>
+  </details>
+</article>
+
+<h2 id="risks">Risks in 053</h2>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>The biggest question the spec must answer is never asked</h3>
+    <span class="meta">053 · open-question gap</span>
+  </div>
+  <p>Decision 4 introduces an app that exists with no process, and (per Open Question 8) possibly no
+  machine. Nothing in the document asks <strong>where such an app persists</strong>, what its
+  identity key is, or what the monitor reads to render “declared — no process seen”. Meanwhile the
+  model section forecloses the obvious answer — <em>“never a table”</em> — in the same breath, and
+  022 explicitly kept that door open as <em>“later work”</em>. Under “never a table”, a declared app
+  with no commands has nothing to be a row of.</p>
+  <div class="q"><b>Question:</b> what is the persistence substrate of a declared app — and if the
+  answer is any durable record keyed by app name, in what sense is that not the <code>App</code>
+  entity 022 deferred?</div>
+  <details>
+    <summary>Evidence — the foreclosure and what 022 actually said</summary>
+    <blockquote class="wrong">“app — a name. A namespace, <strong>not an entity</strong> — spec-022's
+    declined <code>App</code> entity stays declined.” … “an app stays a name plus declarations,
+    <strong>never a table</strong>.”
+    <cite>053 · model block and Related</cite></blockquote>
+    <blockquote class="right">“deliberately <strong>not</strong> a first-class <code>App</code> JPA
+    entity … promoting to an entity is explicitly <strong>later work</strong> if loose correlation
+    proves insufficient”
+    <cite>specs/022-done-monitoring-foundations.md</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>Is declaring an app a gated act? 052 says it would have to be</h3>
+    <span class="meta">053 · unsupported premise</span>
+  </div>
+  <p>Decision 4 lets “a human <strong>or an agent</strong>” declare an app, and no part of the
+  document says whether that declaration passes the approval gate. That collides with the invariant
+  053's own sibling concern states as non-negotiable. Separately, the claim that an agent
+  <em>“cannot declare an app … currently impossible”</em> overstates: 008's
+  <code>AddRecipeTool</code>/<code>AddActionTool</code> plus 026's declarable <code>app-name</code>
+  already form an embryonic route — and 050 records it being used.</p>
+  <div class="q"><b>Question:</b> is declaring an app proposed-then-approved like every other
+  agent-caused effect, or gate-free metadata — and why is that not an open question?</div>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote class="wrong">“An app may exist because a <strong>human or an agent</strong> declared
+    it, with no detected process behind it”
+    <cite>053 · Decision 4</cite></blockquote>
+    <blockquote class="right">“<strong>MCP gains no approve tool.</strong> The agent proposes; only
+    the UI decides. Any option that lets an agent both request and release a transfer is out.”
+    <cite>specs/052-concern-mcp-file-transfer-gate.md · Notes</cite></blockquote>
+    <blockquote class="right">“exactly what the demo harness did <strong>via MCP</strong> —
+    registering <code>run.sh</code>/<code>kill.sh</code> as custom actions and approving them in the
+    UI”
+    <cite>050 · Context — the route 053 calls impossible</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>Decision 3 settles an option the document elsewhere keeps open</h3>
+    <span class="meta">053 · decision masquerading</span>
+  </div>
+  <p>Decision 3 states the closed verb vocabulary <em>“and are what MCP speaks”</em> — that is
+  option F1, asserted as decided. Option F and Open Question 6 still present F1 versus F2 as a live
+  choice. The eventual spec author cannot tell whether verb-level MCP tools are mandated. Decision
+  3's own rationale (“keeps ‘what can I do with this app’ a closed question a model can rely on”)
+  only pays off under F1, which deepens the ambiguity rather than resolving it.</p>
+  <div class="q"><b>Question:</b> was F decided? If Decision 3 fixes only the vocabulary and not the
+  tool shape, say so; if it fixes both, retire F1/F2.</div>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>Axis A is missing the option the codebase actually uses</h3>
+    <span class="meta">053 · option-space gap</span>
+  </div>
+  <p>Axis A offers reserved params, real columns, or naming convention. The existing home for
+  classification output is a fourth shape: un-audited, non-hashed side-data on the recipe. 033
+  persists docker consumers as JSON on the existing <code>app_port_list</code> column, and 036
+  proposes exactly this shape for the hashed <code>app-name</code> set. It is materially different
+  from A1/A2/A3 on the one axis B turns on — it is gate-free by construction — and it is roughly
+  where <code>role</code>/<code>dedication</code> live today.</p>
+  <div class="q"><b>Question:</b> why is “declarations as un-audited side-data” not option A4 — and
+  if rejected, on what grounds?</div>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote class="right">“persisted as JSON on the recipe's existing un-audited
+    <code>app_port_list</code> column as <code>{"dockerConsumers":[…]}</code>”
+    <cite>033</cite></blockquote>
+    <blockquote class="right">“for the hashed <code>app-name</code> ALLOWED_SET it must be modelled
+    as <strong>separate side-data</strong> (not folded into the hash)”
+    <cite>036</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>“Violated by construction” turns a design question into a foregone conclusion</h3>
+    <span class="meta">053 · unsupported premise</span>
+  </div>
+  <p>049's gap bans the <em>paths</em>. A name <em>derived from</em> a path is a different object,
+  and 028 — the S9 decision of record — already tolerated exactly that shape for machines: the
+  migration seeds <code>name = host</code>, on the reasoning that a name the owner accepted is not
+  raw infra echoed as coordinates. 053 asserts the collision as settled and pushes toward
+  “naming becomes a human/agent act at approval time” as if forced.</p>
+  <div class="q"><b>Question:</b> does the S9 line ban path-<em>derived names</em>, or only paths —
+  and does 028's host-seeded machine-name precedent settle it?</div>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>The absorption of 040 is only half done — its BFF question is orphaned</h3>
+    <span class="meta">053 · absorption error</span>
+  </div>
+  <p>053 claims to restate 040's Open Question 1. But 040's OQ1 asks where <em>read-time
+  shaping</em> runs — whether <code>MonitorService</code>'s host/app partition and rollup is on the
+  allowed side of the BFF line. 053's axis A asks where <em>declarations persist</em>. Different
+  question. Since 040 now “stays the record of the runs-are-invisible problem”, each document
+  believes the other carries OQ1. (OQ6 → axis C <em>is</em> a faithful restatement.)</p>
+  <div class="q"><b>Question:</b> where does 040's read-time-shaping question now live — a tenth
+  question here, or explicitly returned to 040?</div>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>B3 splits four declarations and is silent on the fifth — the one that carries the argument</h3>
+    <span class="meta">053 · option-space gap</span>
+  </div>
+  <p>The command model declares five things: <code>app-name</code>, <code>part</code>,
+  <code>verb</code>, <code>role</code>, <code>dedication</code>. Option B3 assigns identity
+  (<code>app-name</code>, <code>part</code>) to the hash and presentation (<code>role</code>,
+  <code>dedication</code>) out of it — and never places <code>verb</code>, which is exactly the one
+  B2's own objection singles out (“a verb is now a thing that changes what a button <em>does</em>
+  without passing the gate”).</p>
+  <div class="q"><b>Question:</b> in B3, which side does <code>verb</code> fall on — and if
+  identity, does B3 collapse into B1 for the case B2 worries about?</div>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>“Three partial answers that never meet” — they do meet, by design</h3>
+    <span class="meta">053 · framing error</span>
+  </div>
+  <p>033 makes the project name <em>be</em> the <code>appName</code> and keys native-vs-docker dedup
+  on it; 022 deliberately unifies double-detected apps “under one app card by <code>appName</code>
+  string match”, with normalisation rules and a planned alias map. That <em>is</em> an answer to what
+  an app is — a thin one. The real gaps 053 argues (verbs, probe selection, MCP, the narrow portless
+  residue) do not need the stronger claim, and the stronger claim invites a spec that rebuilds a join
+  which already exists.</p>
+  <div class="q"><b>Question:</b> is anything lost by restating this as “the answers meet only on a
+  loose string, with no verb, probe or MCP semantics”?</div>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>If the model hangs on names, the naming rules are the model — and none are asked about</h3>
+    <span class="meta">053 · open-question coverage</span>
+  </div>
+  <p>No open question covers the scope of an app name (machine-scoped? owner-scoped?), collision
+  between a declared <code>shop</code> and a detected <code>shop</code>, or 022's explicitly flagged
+  weakness: correlation is loose string matching that “needs name normalisation and, later, a small
+  alias map (e.g. container <code>orders-api</code> ↔ health-probe <code>orders</code>)”. 053 neither
+  carries that forward work nor retires it.</p>
+  <div class="q"><b>Question:</b> what is the app-name scope and collision rule, and does 022's
+  alias-map forward work survive, dissolve, or move here?</div>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>The attributability contract is attributed to the wrong specs</h3>
+    <span class="meta">053 · false cross-spec claim</span>
+  </div>
+  <p>053 says 038/041 “already say out loud” that a shared global's number cannot be split, and
+  quotes a string that appears in neither: it lives in <code>docs/fleet-resource-mock.html</code>.
+  The substantive decision belongs to 032 (SHARED means “a real footprint but no per-app split”),
+  echoed in 034. 038 says only that shared-volume attribution is best-effort; 041 is about the OTHER
+  remainder. Anyone amending “what already says this” — and axis C names 038 as a conversion target —
+  would look in the wrong documents.</p>
+  <div class="q"><b>Question:</b> should the reading-attributability line cite 032, and does axis C's
+  convert/coexist list then need 032 rather than 038/041?</div>
+</article>
+
+<h2 id="minors">Minor</h2>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3>Axis E has no options</h3>
+    <span class="meta">053 · option-space gap</span>
+  </div>
+  <p>“E — Retiring a declared app” is a problem statement that defers to Open Question 5. Every other
+  axis enumerates options with pros and cons, as the concern template requires, and 036 already
+  supplies candidate shapes (auto-retire / mark-stale / linger).</p>
+</article>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3><code>ALLOWED_SET</code> of size one is the degenerate case, not the definition</h3>
+    <span class="meta">053 · false cross-spec claim</span>
+  </div>
+  <p>026 defines the param as “the set of apps that action can target (a single value is just an
+  <code>ALLOWED_SET</code> of size one)”. Multi-app ops actions are the design intent — and 036's
+  flood problem exists precisely because the set gets large. 053's phrasing implies size-one is the
+  contract, which quietly forecloses a multi-app command.</p>
+  <div class="q"><b>Question:</b> is a command targeting several apps first-class in the new model?</div>
+</article>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3>The red-team record 053 cites isn't in the repo</h3>
+    <span class="meta">053 · unverifiable citation</span>
+  </div>
+  <p>053's Impact section cites “red-teamed on 2026-08-12 (4 blockers, 6 risks, 5 minors)”. No such
+  record exists in the catalog or under any assets folder, so 13 of the 15 findings it leans on
+  cannot be checked by a reader. The one finding 053 actually relies on — the
+  <code>run.sh</code> verb/name collision — <em>is</em> independently reconstructible from 050's own
+  precedence table, so the load-bearing part survives; only the counts are unverifiable.</p>
+  <div class="q"><b>Question:</b> where does the red-team record live — <code>053-assets/</code>?</div>
+</article>
+
+<h2 id="impact">Does resolving 053 close anything on 049/050?</h2>
+<p class="lede">The 15 findings from the earlier red-team, re-classified against 053's model.</p>
+
+<div class="scroll">
+<table>
+  <tr><th>Finding</th><th>Sev</th><th>Bucket</th><th>Why</th></tr>
+  <tr><td>049 #1 — poll tier doesn't exist</td><td>blocker</td><td>untouched</td><td>053 decides which probe to propose, never <em>when</em> one runs</td></tr>
+  <tr><td>049 #2 — “may run at discovery” vs gate</td><td>blocker</td><td>untouched</td><td>053's classify-at-discovery output is <em>commands</em>, not readings</td></tr>
+  <tr><td>050 #8 — symlink vs resolved path</td><td>blocker</td><td><strong>worsened</strong></td><td>053 adds two new consumers of the same undecided token</td></tr>
+  <tr><td>050 #9 — multi-<code>LITERAL</code> vs hard constraint</td><td>blocker</td><td>untouched</td><td>053 says nothing about argv shape</td></tr>
+  <tr><td>#4 — built on 040's open leaning</td><td>risk</td><td>answered</td><td>053 absorbs 040's question and asks the rebase question outright</td></tr>
+  <tr><td>050 #10 — name uniqueness</td><td>risk</td><td>answered</td><td>declared verb demotes it — but 053 overclaims “dissolves”</td></tr>
+  <tr><td>049 #3, #5, #6, #7 · 050 #11–#15</td><td>risk/minor</td><td>untouched</td><td>staleness, acceptance gaps, bookkeeping, drain knob, sudo — all outside 053's reach</td></tr>
+</table>
+</div>
+
+<h3 style="margin-top:28px">Four new conflicts 053 introduces</h3>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">new conflict</span>
+    <h3>Declared apps break the pipeline they are meant to extend</h3>
+  </div>
+  <p>049's probe fans out over <code>APP_PORT_LIST</code> with the validated port as its sole param;
+  050's scan takes PID and <code>appRoot</code> as its only arguments and derives
+  <code>managedBy</code> from the cgroup. A declared app has no port, no PID, no cgroup. And 050's
+  control semantics — “Start runs inline and the card flips UP” — assume port-driven liveness, so a
+  portless worker (the very workload Decision 4 exists for) can never flip UP. “Until one of its
+  commands proves otherwise” names a liveness mechanism no spec defines. Decision 4 creates a class
+  of app the 049/050 pipeline structurally cannot serve — new work, not removed work.</p>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">new conflict</span>
+    <h3>“Output contract changes” contradicts a decision 049 already made</h3>
+  </div>
+  <p>049 states: <em>“No backend model change. No Flyway migration, no new DTO fields,
+  <code>monitor/</code> untouched”</em>, and its NDJSON schema carries no
+  <code>app-name</code>/<code>part</code>/<code>role</code>. 053's Decision 2 stamps declarations
+  onto the proposed action, which must persist somewhere. Under option A2 the contradiction is
+  direct; under A1 the NDJSON schema both specs treat as settled still gets rewritten.</p>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">new conflict</span>
+    <h3>The undecided path token gains two more masters</h3>
+  </div>
+  <p>Before 053, the symlink-vs-resolved choice had one consumer: 015's hash. Under 053 it has three
+  — the pinned argv, path-derived app-name stability (a <code>releases/123</code> path changes every
+  deploy; a symlink doesn't), and S9 sanitisation. Under option B1 a renamed app requires
+  re-approval, compounding the redeploy churn the original blocker identified.</p>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">new conflict</span>
+    <h3>The closed vocabulary is wider than 050's mapping and misaligned with 026's names</h3>
+  </div>
+  <p>050 renders controls for <code>start</code>/<code>stop</code>/<code>restart</code>/<code>deploy</code>
+  only — <code>status</code>, <code>logs</code> and <code>metrics</code> have no rendering rule. And
+  050's systemd dedup-by-verb must match 026's existing actions, which are named
+  <code>status</code>/<code>restart</code>/<strong><code>tail-logs</code></strong>, against a
+  vocabulary that says <code>logs</code>. That is rework to 026 that 053's Impact section never
+  mentions.</p>
+</article>
+
+<h2 id="held">What held up</h2>
+<article class="f f--ok" data-sev="ok">
+  <div class="fhead">
+    <span class="pill pill--ok">verified</span>
+    <h3>Most of the concern is accurate</h3>
+  </div>
+  <ul>
+    <li><strong>036</strong> — the hash asymmetry (<code>APP_PORT_LIST</code> gate-free vs
+      <code>app-name</code> <code>ALLOWED_SET</code> hashed into <code>ActionSnapshot</code>) and the
+      vanished-resource lingering are cited faithfully.</li>
+    <li><strong>040</strong> — “derived twice”, the docker-labels sentence and OQ6 are verbatim.</li>
+    <li><strong>049 / 050 / 015 / 034</strong> — the Known-Gaps quote, verb-by-name inference,
+      <code>RecipeType.CUSTOM</code>-keyed pinning and the categorical palette all check out.</li>
+    <li><strong>Conventions</strong> — filename, heading and the three template sections conform;
+      absorbing a concern by note rather than by WARNING is a reasonable adaptation.</li>
+    <li><strong>Axes B, C, D, F</strong> are genuinely distinct and adequately exhaustive; Decisions
+      1 and 2 contradict nothing in 033/038.</li>
+    <li>The <strong>052</strong> remark is framed as 053's own proposal, not as a claim about 052.</li>
+  </ul>
+</article>
+
+<h2 id="method">Method &amp; provenance</h2>
+<p>Two independent adversarial passes, both document-analysis only — no source, tests or config were
+read, so this judges the documents as written. Both ran on <strong>Fable 5</strong> as separate
+reviewers with no shared context, one asked to classify the earlier findings against 053, the other
+to attack 053 with concern-appropriate lenses and to verify seven named claims one by one.</p>
+<p><strong>The two blockers and three of the supporting facts were then re-verified by hand</strong>
+against <code>specs/026</code>, <code>specs/033</code>, <code>specs/022</code> and a repo-wide search
+for the mis-cited string, because they contradict claims made confidently earlier in the drafting of
+053. Both survived that check.</p>
+<details>
+  <summary>Standing caveat on the review type</summary>
+  <p>The <code>redteam</code> command's own rules say to skip concerns, since “undecided-as-decided”
+  and “buildability gap” do not apply to an exploratory document. That rule was deliberately
+  overridden here at the author's request, with the lenses swapped for ones a concern can actually
+  fail: framing errors, false cross-spec claims, option-space gaps, decisions masquerading as
+  settled, unsupported premises, absorption errors, and open-question coverage.</p>
+</details>
+<p class="lens">Read-only. Nothing was written or changed by either pass; every finding names a
+question rather than a fix.</p>
+
+<div class="foot">
+  Red-team of concern 053 · compute-admin · 2026-08-12 ·
+  2 blockers, 10 risks, 3 minors — plus 4 new conflicts with 049/050.
+</div>
+
+</div>
+
+<script>
+(function () {
+  var all = document.getElementById("f-all");
+  var blk = document.getElementById("f-block");
+  var exp = document.getElementById("f-exp");
+  var cards = Array.prototype.slice.call(document.querySelectorAll(".f[data-sev]"));
+
+  function filter(onlyBlockers) {
+    cards.forEach(function (c) {
+      c.classList.toggle("hide", onlyBlockers && c.getAttribute("data-sev") !== "blocker");
+    });
+    all.setAttribute("aria-pressed", onlyBlockers ? "false" : "true");
+    blk.setAttribute("aria-pressed", onlyBlockers ? "true" : "false");
+  }
+  all.addEventListener("click", function () { filter(false); });
+  blk.addEventListener("click", function () { filter(true); });
+
+  exp.addEventListener("click", function () {
+    var open = exp.getAttribute("aria-pressed") !== "true";
+    Array.prototype.forEach.call(document.querySelectorAll("details"), function (d) { d.open = open; });
+    exp.setAttribute("aria-pressed", open ? "true" : "false");
+    exp.textContent = open ? "Collapse evidence" : "Expand evidence";
+  });
+})();
+</script>
+</body>
+</html>
