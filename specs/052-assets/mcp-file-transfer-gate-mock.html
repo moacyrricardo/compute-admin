@@ -1,0 +1,1647 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>compute-admin — gated file transfer (mock)</title>
+<style>
+/* ===================================================================== *
+ * tokens.css + app.css below are copied VERBATIM from
+ * src/main/resources/static/ — the mock inherits the spec-012 design
+ * system unmodified. Only the block at the very end is new.
+ * ===================================================================== */
+/*
+ * spec-012 — Design tokens for the compute-admin web UI.
+ *
+ * A token-based, theme-aware design system: a cool-slate neutral ground, ONE
+ * accent (teal), and FUNCTIONAL SEMANTIC COLORS kept separate from the accent so
+ * operators can scan state (approval state, run status, connection status) by
+ * colour PLUS label. Light is the :root default; dark is applied via
+ * prefers-color-scheme. Values are fixed by the spec's token tables and are not a
+ * decision left to the build.
+ *
+ * Nothing here is a component rule — that is app.css. This file only declares
+ * custom properties.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* --- neutral ground + accent (light) ------------------------------------ */
+  --ground: #f8fafc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --text-dim: #475569;
+  --text-faint: #94a3b8;
+  --accent: #0891b2;
+
+  /* --- functional semantic colours (distinct from --accent) --------------- */
+  --s-ok: #16a34a;       /* APPROVED, run DONE, ONLINE */
+  --s-warn: #d97706;     /* PENDING_APPROVAL, sudo badge */
+  --s-bad: #dc2626;      /* REVOKED, run FAILED, UNREACHABLE, run INTERRUPTED */
+  --s-info: #2563eb;     /* run RUNNING / QUEUED */
+  --s-neutral: #94a3b8;  /* DRAFT, UNKNOWN, OFFLINE */
+
+  /* --- typography --------------------------------------------------------- */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-md: 16px;
+  --fs-lg: 20px;
+  --fs-xl: 28px;
+
+  --fw-regular: 400;
+  --fw-semibold: 600;
+
+  /* --- spacing (4px base) ------------------------------------------------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* --- responsive breakpoints + touch (spec-043) -------------------------- */
+  /* Named for intent + to drive min-heights; CSS @media queries cannot read a
+     var() in the query itself, so the media blocks use the literal 480px/720px.
+     --bp-sm is the phone breakpoint; 720px stays the tablet/stacked-shell one. */
+  --bp-sm: 480px;
+  --tap-min: 44px;
+
+  /* --- radius + elevation ------------------------------------------------- */
+  --radius: 6px;
+  --radius-sm: 4px;
+  --elevation: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.10);
+
+  /* --- focus ring --------------------------------------------------------- */
+  --focus-ring: 0 0 0 2px var(--ground), 0 0 0 4px var(--accent);
+
+  /* --- categorical consumer palette (spec-034) ---------------------------- */
+  /* The one data-colour group spec-012 deliberately lacked (it is semantic-only).
+     ~5 categorical hues for named consumers plus a NEUTRAL for the docker bucket
+     and a distinct STONE for the "other / system" segment (spec-041). Only the
+     genuinely-free remainder stays transparent (drawn as the hatched tail). One
+     colour per consumer, held constant across all three axes. It is ALWAYS paired
+     with a labelled legend so colour is never the sole signal (WCAG AA — house rule). */
+  --c-1: #6366f1;
+  --c-2: #0d9488;
+  --c-3: #a855f7;
+  --c-4: #e11d48;
+  --c-5: #d97706;
+  --c-docker: #64748b;
+  --c-system: #78716c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #0b1220;
+    --surface: #111827;
+    --surface-2: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-dim: #94a3b8;
+    --text-faint: #64748b;
+    --accent: #22d3ee;
+
+    --s-ok: #4ade80;
+    --s-warn: #fbbf24;
+    --s-bad: #f87171;
+    --s-info: #60a5fa;
+    --s-neutral: #64748b;
+
+    --elevation: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.5);
+
+    /* categorical consumer palette (spec-034), tuned for the dark ground */
+    --c-1: #818cf8;
+    --c-2: #2dd4bf;
+    --c-3: #c084fc;
+    --c-4: #fb7185;
+    --c-5: #fbbf24;
+    --c-docker: #94a3b8;
+    --c-system: #a8a29e;
+  }
+}
+/*
+ * spec-012 — Component styles for the compute-admin web UI.
+ *
+ * Everything is expressed through the tokens in tokens.css; there are no inline
+ * styles anywhere in the app. State is always conveyed by label + shape, never by
+ * colour alone (WCAG AA). Monospace is reserved for commands / params / output.
+ */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+h1, h2, h3 { margin: 0; font-weight: var(--fw-semibold); }
+h1 { font-size: var(--fs-xl); }
+h2 { font-size: var(--fs-lg); }
+h3 { font-size: var(--fs-md); }
+
+p { margin: 0; }
+
+.mono { font-family: var(--font-mono); }
+.dim { color: var(--text-dim); }
+.faint { color: var(--text-faint); }
+.small { font-size: var(--fs-sm); }
+.xs { font-size: var(--fs-xs); }
+
+/* ---------------------------------------------------------------- shell ---- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "brand topbar"
+    "nav   view";
+  min-height: 100vh;
+}
+
+.topbar {
+  grid-area: topbar;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-6);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand {
+  grid-area: brand;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  font-weight: var(--fw-semibold);
+}
+.brand .dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.nav {
+  grid-area: nav;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.nav a {
+  display: block;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.nav a:hover { background: var(--surface-2); text-decoration: none; }
+.nav a.active {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: var(--fw-semibold);
+}
+
+.view {
+  grid-area: view;
+  padding: var(--sp-6);
+  max-width: 960px;
+  /* A grid item defaults to min-width:auto, so a wide `white-space:pre` child (an
+     SSH key, a fingerprint) would set the page's min width and force horizontal
+     scroll. min-width:0 lets the column shrink so inner overflow-x:auto boxes
+     scroll internally instead of widening the whole page. */
+  min-width: 0;
+}
+
+.userbox { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+.userbox .email { color: var(--text-dim); }
+
+/* spec-043: the "Menu" toggle only exists on the stacked (≤720px) shell. */
+.nav-toggle { display: none; }
+
+/* ---- tablet / stacked shell (≤720px) --------------------------------------
+   The two-column shell collapses to one column and the primary nav hides
+   behind the Menu toggle, revealed as a vertical list when .nav--open. */
+@media (max-width: 720px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-areas: "brand" "topbar" "nav" "view";
+  }
+  .brand, .nav { border-right: none; }
+  .brand { flex-wrap: wrap; }
+  .nav-toggle { display: inline-flex; margin-left: auto; }
+
+  /* Collapsed by default; the toggle adds .nav--open to reveal it. */
+  .nav { display: none; }
+  .nav.nav--open { display: flex; flex-direction: column; }
+  /* Comfortable tap targets for the revealed menu links. */
+  .nav a { display: flex; align-items: center; min-height: var(--tap-min); }
+
+  .view { padding: var(--sp-4); }
+}
+
+/* -------------------------------------------------------------- headings --- */
+
+.page-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-6);
+  flex-wrap: wrap;
+}
+.page-head .sub { color: var(--text-dim); font-size: var(--fs-sm); margin-top: var(--sp-1); }
+
+.crumbs { font-size: var(--fs-sm); color: var(--text-dim); margin-bottom: var(--sp-3); }
+.crumbs a { color: var(--text-dim); }
+
+.section { margin-top: var(--sp-6); }
+.section > h2 { margin-bottom: var(--sp-3); }
+
+/* ----------------------------------------------------------------- cards --- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+  padding: var(--sp-4);
+}
+.card + .card { margin-top: var(--sp-3); }
+
+.stack { display: flex; flex-direction: column; gap: var(--sp-3); }
+.row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.grow { flex: 1 1 auto; min-width: 0; }
+
+/* ----------------------------------------------------------------- chips --- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.6;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.chip::before {
+  content: "";
+  width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+/* colour is set by the semantic token; the dot + label carry it non-colour too */
+.chip--ok      { color: var(--s-ok); }
+.chip--warn    { color: var(--s-warn); }
+.chip--bad     { color: var(--s-bad); }
+.chip--info    { color: var(--s-info); }
+.chip--neutral { color: var(--s-neutral); }
+
+.badge-sudo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--s-warn);
+  border: 1px solid var(--s-warn);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+/* Tag filter chips on the Machines list (spec-018): a .tag rendered as a toggle. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.tag--filter {
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.6;
+}
+
+.tag--filter.tag--on {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: transparent;
+}
+
+/* --------------------------------------------------------------- buttons --- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  .btn--primary { color: #06121a; }
+}
+.btn--primary:hover { filter: brightness(1.05); background: var(--accent); }
+.btn--danger { color: var(--s-bad); border-color: var(--s-bad); background: transparent; }
+.btn--danger:hover { background: var(--surface-2); }
+.btn--ok { color: var(--s-ok); border-color: var(--s-ok); background: transparent; }
+.btn--ok:hover { background: var(--surface-2); }
+.btn--sm { padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); }
+
+/* ---------------------------------------------------------------- forms ---- */
+
+label { display: block; font-size: var(--fs-sm); font-weight: var(--fw-semibold); margin-bottom: var(--sp-1); }
+.field { margin-bottom: var(--sp-4); }
+.field .hint { font-size: var(--fs-xs); color: var(--text-dim); margin-top: var(--sp-1); }
+.field .hint.mono { font-family: var(--font-mono); }
+
+input, select, textarea {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+input.mono, select.mono { font-family: var(--font-mono); }
+input[type="number"] { width: auto; min-width: 120px; }
+input[type="checkbox"], input[type="radio"] { width: auto; }
+
+.invalid { border-color: var(--s-bad); }
+.field-error { color: var(--s-bad); font-size: var(--fs-xs); margin-top: var(--sp-1); }
+
+/* ------------------------------------------------------- command / mono ---- */
+
+.command {
+  /* A block, not the default inline <code>: otherwise the background + padding
+     paint per wrapped line-box (ragged fragments) and overflow-x is ignored, so a
+     multi-line command spills past a narrow container (e.g. the review drawer). */
+  display: block;
+  max-width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.7;
+}
+/* For a single long unbreakable value (an SSH key, its fingerprint, an install
+   snippet): scroll horizontally instead of shattering the base64 mid-string. */
+.command--scroll { white-space: pre; word-break: normal; }
+.command .sudo-prefix { color: var(--s-warn); font-weight: var(--fw-semibold); }
+.tok-literal { color: var(--text); }
+.tok-param {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+  font-weight: var(--fw-semibold);
+  padding-bottom: 1px;
+}
+.tok-param.filled { border-bottom-style: solid; }
+
+.kv { display: grid; grid-template-columns: minmax(120px, max-content) 1fr; gap: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); }
+.kv dt { color: var(--text-dim); }
+.kv dd { margin: 0; }
+.kv dd.mono { font-family: var(--font-mono); }
+
+/* --------------------------------------------------------------- banners --- */
+
+.banner {
+  border-radius: var(--radius);
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--fs-sm);
+  border: 1px solid currentColor;
+  margin-bottom: var(--sp-4);
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+.banner strong { font-weight: var(--fw-semibold); }
+.banner--bad { color: var(--s-bad); }
+.banner--warn { color: var(--s-warn); }
+.banner--info { color: var(--s-info); }
+.banner .banner-body { color: var(--text); }
+
+/* -------------------------------------------------- param rule descriptor -- */
+
+.param-rule {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-xs);
+}
+.param-rule .name { font-family: var(--font-mono); color: var(--accent); font-weight: var(--fw-semibold); }
+.param-rule .rule { font-family: var(--font-mono); color: var(--text-dim); }
+
+/* --------------------------------------------------------------- terminal -- */
+
+.terminal {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  background: #06121a;
+  color: #d5e3ea;
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  height: 360px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--border);
+}
+.terminal .stderr { color: var(--s-bad); }
+.terminal .meta { color: var(--text-faint); }
+
+.terminal-toolbar { display: flex; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }
+
+/* ---------------------------------------------------------------- tables --- */
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list > li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-2);
+}
+.list > li:hover { border-color: var(--accent); }
+
+.empty {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  padding: var(--sp-6);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* ----------------------------------------------------------------- login --- */
+
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  background: var(--ground);
+}
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+  padding: var(--sp-8);
+}
+.login-card h1 { font-size: var(--fs-lg); margin-bottom: var(--sp-2); }
+.login-card .lede { color: var(--text-dim); font-size: var(--fs-sm); margin-bottom: var(--sp-6); }
+.login-form { display: flex; flex-direction: column; gap: var(--sp-2); }
+.login-form label { font-size: var(--fs-sm); color: var(--text-dim); }
+.login-form input { width: 100%; }
+.login-form .btn { width: 100%; padding: var(--sp-3); }
+
+/* ---------------------------------------------------------------- modal ---- */
+
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-4);
+  z-index: 100;
+}
+.modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+  padding: var(--sp-6);
+  max-width: 480px;
+  width: 100%;
+}
+.modal h2 { margin-bottom: var(--sp-3); }
+.reveal-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  word-break: break-all;
+  margin: var(--sp-3) 0;
+}
+
+/* ------------------------------------------------------------- utilities --- */
+
+.mt-2 { margin-top: var(--sp-2); }
+.mt-3 { margin-top: var(--sp-3); }
+.mt-4 { margin-top: var(--sp-4); }
+.mt-6 { margin-top: var(--sp-6); }
+.mb-2 { margin-bottom: var(--sp-2); }
+.hidden { display: none !important; }
+
+.toast {
+  position: fixed;
+  bottom: var(--sp-6);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--ground);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
+  box-shadow: var(--elevation);
+  z-index: 200;
+}
+
+/* honour reduced motion: no auto-scroll easing, no pulsing */
+@media (prefers-reduced-motion: no-preference) {
+  .chip, .btn { transition: background-color 0.12s ease, box-shadow 0.12s ease; }
+}
+
+/* ---------------------------------------------------- monitor (spec-024) --- */
+
+.monitor-controls { justify-content: flex-end; }
+.monitor-controls select { padding: var(--sp-1) var(--sp-2); font-size: var(--fs-sm); }
+
+.monitor-machine { margin-top: var(--sp-6); }
+.monitor-machine > .row-between { margin-bottom: var(--sp-3); }
+
+/* host panel: a stack of labelled threshold bars */
+.host-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.meter { min-width: 0; }
+.meter-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); }
+.meter-label { font-size: var(--fs-sm); color: var(--text-dim); }
+.meter-val { font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.meter-track {
+  margin-top: var(--sp-1);
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.meter-fill { height: 100%; border-radius: 999px; background: var(--s-ok); }
+.meter-fill--ok    { background: var(--s-ok); }
+.meter-fill--amber { background: var(--s-warn); }
+.meter-fill--red   { background: var(--s-bad); }
+.meter-fill--none  { background: var(--s-neutral); }
+.meter-sub { margin-top: var(--sp-1); font-size: var(--fs-xs); color: var(--text-faint); }
+@media (prefers-reduced-motion: no-preference) {
+  .meter-fill { transition: width 0.3s ease; }
+}
+
+.host-raw { margin-top: var(--sp-3); }
+.host-raw-item { margin-top: var(--sp-2); font-size: var(--fs-sm); }
+.host-raw-item summary { cursor: pointer; color: var(--text-dim); }
+.host-raw-item pre {
+  margin: var(--sp-2) 0 0;
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: var(--fs-xs);
+  white-space: pre;
+}
+
+/* per-app cards */
+.app-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--sp-3);
+}
+.app-card {
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.app-card:hover { border-color: var(--accent); }
+.app-kpis { min-width: 0; overflow-wrap: anywhere; }
+
+.fw-badge {
+  display: inline-block;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.fw-badge--springboot { color: var(--s-ok); border-color: var(--s-ok); }
+.fw-badge--fastapi    { color: var(--s-info); border-color: var(--s-info); }
+.fw-badge--http       { color: var(--s-warn); border-color: var(--s-warn); }
+.fw-badge--generic    { color: var(--text-dim); }
+
+/* Fleet per-app card (spec-029): the app-name doubles as a filter toggle. */
+.app-name-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.app-name-toggle:hover { color: var(--accent); text-decoration: underline; }
+.app-mem { min-width: 0; }
+.app-checks { min-width: 0; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  border: 1px solid var(--border);
+}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill--up      { color: var(--s-ok); border-color: var(--s-ok); }
+.pill--down    { color: var(--s-bad); border-color: var(--s-bad); }
+.pill--unknown { color: var(--s-neutral); }
+
+/* run chips: gate-safe inline run buttons / links */
+.run-chip-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.run-chip:hover { border-color: var(--accent); text-decoration: none; }
+.run-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+.run-chip-go { color: var(--accent); font-weight: var(--fw-semibold); }
+.run-chip--disabled { opacity: 0.7; cursor: default; background: transparent; }
+.run-chip--disabled:hover { border-color: var(--border); }
+.run-chip-state { color: var(--s-warn); }
+
+/* per-app detail drawer (right-side sheet) */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 150;
+}
+.drawer {
+  width: min(480px, 92vw);
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--sp-6);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--elevation);
+}
+.drawer h3 { color: var(--text-dim); font-size: var(--fs-sm); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* ------------------------------------------- action cards + split (spec-044) -
+   Recipe actions render as a responsive grid (2–3 up on desktop, 1 col ≤--bp-sm)
+   instead of full-width rows; each card carries a split-approve control (a
+   .btn-group of a primary .btn + a caret .btn toggling a .menu of secondary
+   verbs). Theme-aware via tokens only — no hard-coded colours. */
+.action-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--sp-3);
+}
+.action-card {
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.action-card:hover { border-color: var(--accent); }
+.action-card-foot { margin-top: auto; }
+
+.btn-group { position: relative; display: inline-flex; align-items: stretch; }
+.btn-group > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-group > .btn--caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding-left: var(--sp-2);
+  padding-right: var(--sp-2);
+}
+.menu {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  right: 0;
+  min-width: 160px;
+  z-index: 160;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.menu-item:hover { background: var(--surface-2); }
+.menu-item--danger { color: var(--s-bad); }
+
+/* --------------------------------------------- consumer fleet (spec-034) --- */
+/* The redesign renders every consumer on the same three host-relative axes.
+   Reuses the .meter / .host-panel / .app-card / .drawer components verbatim;
+   the additions below are only what those components lacked. */
+
+/* Aggregate "used %" adopts the meterBand thresholds (amber >=75, red >=90). */
+.meter-val--amber { color: var(--s-warn); }
+.meter-val--red   { color: var(--s-bad); }
+
+/* A segmented .meter-track: one coloured slice per consumer instead of one fill,
+   the same colour held across the RAM/CPU/disk bars. */
+.axis-track { display: flex; }
+.axis-seg { height: 100%; cursor: pointer; }
+.axis-seg:hover { filter: brightness(1.12) saturate(1.1); }
+.axis-seg--free {
+  cursor: default;
+  background: repeating-linear-gradient(45deg,
+    var(--surface-2), var(--surface-2) 5px, transparent 5px, transparent 10px);
+}
+
+.fw-badge--datastore { color: var(--accent); border-color: var(--accent); }
+
+/* The mandatory legend — colour is NEVER the sole signal (WCAG AA, house rule). */
+.legend { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-3); }
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+.legend-chip:hover { border-color: var(--accent); }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.legend-chip .lg-pct { font-family: var(--font-mono); color: var(--text-faint); }
+
+/* Per-consumer card: three axis meters side by side (stack when cramped). */
+.d-axes { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.d-axes .meter { flex: 1 1 30%; min-width: 72px; }
+
+/* Databases lens: a dedicated split band and shared-datastore rows. */
+.band-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.split-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  justify-content: space-between;
+  margin-top: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.drow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px dashed var(--border);
+}
+.drow:last-child { border-bottom: none; }
+.drow--click { cursor: pointer; }
+.drow--click:hover { color: var(--accent); }
+.drow .daxes { margin-left: auto; display: flex; gap: var(--sp-4); }
+.drow .dax { text-align: right; }
+.drow .dax .k { font-size: var(--fs-xs); color: var(--text-faint); }
+.drow .dax .v { font-size: var(--fs-sm); font-weight: var(--fw-semibold); font-family: var(--font-mono); }
+.drow .dax .v.na { color: var(--text-faint); font-weight: var(--fw-regular); }
+
+/* ------------------------------------------------- phones (≤480px) spec-043 -
+   Mobile-usable reflow: same screens/IA, stacked to a single column with
+   touch-sized controls. Everything goes through the existing tokens so both
+   themes are preserved (no hard-coded colours below). */
+@media (max-width: 480px) {
+  .view { padding: var(--sp-3); }
+
+  /* Dense grids / side-by-side rows stack to one column. */
+  .app-cards { grid-template-columns: 1fr; }
+  .action-cards { grid-template-columns: 1fr; }  /* spec-044: cards 1-up on phones */
+  .row-between { flex-direction: column; align-items: stretch; }
+
+  /* Monitor filter + control clusters take their own full-width rows. */
+  .filter-chips, .monitor-controls { width: 100%; }
+  .monitor-controls { justify-content: flex-start; }
+
+  /* The per-consumer axis meters stack rather than squeezing to 30% each. */
+  .d-axes .meter { flex: 1 1 100%; }
+
+  /* Forms: inputs go full-width (override the desktop auto-width number field). */
+  .field input, .field select, .field textarea { width: 100%; }
+  input[type="number"] { width: 100%; }
+
+  /* Guard against sideways overflow from the tri-axis segmented bars: the
+     mono command preview already scrolls via .command { overflow-x:auto }. */
+  .host-panel { grid-template-columns: 1fr; overflow-x: auto; }
+  img { max-width: 100%; }
+
+  /* The consumer detail drawer becomes a bottom sheet: full width, anchored to
+     the bottom edge, sliding up instead of in from the right. */
+  .drawer-backdrop { align-items: flex-end; }
+  .drawer {
+    width: 100%;
+    height: auto;
+    max-height: 85vh;
+    padding: var(--sp-4);
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+
+  /* Comfortable touch targets for the interactive primitives. */
+  .btn, .tag--filter, .run-chip, .legend-chip, .app-name-toggle {
+    min-height: var(--tap-min);
+  }
+
+  /* On a phone, wrap a long unbreakable value (SSH key / fingerprint / install
+     snippet) instead of a cramped horizontal-scroll box — the Copy button carries
+     the exact text, so a mid-string wrap is fine and avoids sideways scroll. */
+  .command--scroll { white-space: pre-wrap; word-break: break-all; }
+}
+
+@media (max-width: 480px) and (prefers-reduced-motion: no-preference) {
+  .drawer { animation: sheet-up 0.2s ease; }
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* ===================================================================== *
+ * NEW — invented for this mock. Everything below is built from the
+ * existing tokens only; no new colours, no new type scale.
+ * ===================================================================== */
+
+/* --- the gating notification stack ------------------------------------
+   The app's existing .toast is a centred, 2.6s, non-interactive
+   confirmation. A request that must be DECIDED cannot auto-dismiss, so
+   this is a separate, persistent, actionable stack anchored bottom-right.
+   Deliberately styled as a small .card so it reads as product furniture. */
+.req-stack {
+  position: fixed;
+  right: var(--sp-6);
+  bottom: var(--sp-6);
+  z-index: 190;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--sp-2);
+  width: min(400px, calc(100vw - 2 * var(--sp-6)));
+}
+.req-toast {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--s-warn);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+  padding: var(--sp-3) var(--sp-4);
+}
+.req-toast .req-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
+.req-toast .req-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); }
+.req-toast .req-x {
+  border: none; background: transparent; color: var(--text-faint);
+  font-family: var(--font-sans); font-size: var(--fs-md);
+  line-height: 1; padding: 0 var(--sp-1); cursor: pointer;
+}
+.req-toast .req-x:hover { color: var(--text); }
+/* The agent's words, never app copy — mono marks it as supplied text. */
+.req-reason {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2);
+  margin-top: var(--sp-2);
+  /* Two lines, hard. -webkit-line-clamp is unreliable here (Firefox drops the
+     -webkit-box display), so the text is truncated in JS and this is only a
+     backstop: 2×18px of text + the 8px top padding, bottom padding collapsed
+     so a third line can never occupy it. box-sizing is border-box app-wide. */
+  line-height: 1.5;
+  padding-bottom: 0;
+  overflow: hidden;
+  max-height: calc(2 * 1.5 * var(--fs-xs) + var(--sp-2));
+}
+.req-foot { display: flex; gap: var(--sp-2); margin-top: var(--sp-3); }
+.req-more {
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: var(--sp-1) var(--sp-2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .req-toast { animation: req-in 0.18s ease; }
+}
+@keyframes req-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (max-width: 480px) {
+  .req-stack { right: var(--sp-3); left: var(--sp-3); bottom: var(--sp-3); width: auto; }
+}
+/* While a review drawer is open the notification has been superseded — hide it
+   rather than let it float over the thing it opened. (#req-stack follows
+   #modal-root in the DOM, so a sibling combinator is enough; no JS state.) */
+#modal-root:not(:empty) ~ #req-stack { display: none; }
+
+/* --- pending count on the nav item ------------------------------------
+   Bordered rather than filled: the design system never relies on a solid
+   semantic fill, so this stays legible in both themes. */
+.nav a.has-badge { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.badge-count {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--s-warn);
+  border: 1px solid var(--s-warn);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 1.5;
+}
+
+/* --- package file rows (reuses the .drow idiom from spec-034) --------- */
+.pkg-details > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) 0;
+}
+.pkg-details > summary:hover { color: var(--accent); }
+.fpath { font-family: var(--font-mono); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+
+/* --- presentation shell (NOT part of the product) ---------------------
+   The mock's own scaffolding: annotations toggle + demo triggers. Dashed
+   and muted so it never reads as product UI. */
+.mockbar {
+  position: fixed;
+  left: var(--sp-4);
+  bottom: var(--sp-4);
+  z-index: 300;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border: 1px dashed var(--text-faint);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.anno-panel {
+  position: fixed;
+  left: var(--sp-4);
+  bottom: 76px;
+  z-index: 300;
+  width: min(440px, calc(100vw - 2 * var(--sp-4)));
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--sp-4);
+  background: var(--surface);
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius);
+  box-shadow: var(--elevation);
+  font-size: var(--fs-sm);
+}
+.anno-panel h3 { color: var(--text-dim); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; margin-top: var(--sp-4); }
+.anno-panel h3:first-of-type { margin-top: var(--sp-3); }
+.anno-panel ul { margin: var(--sp-2) 0 0; padding-left: var(--sp-4); color: var(--text-dim); font-size: var(--fs-xs); }
+.anno-panel li { margin-bottom: var(--sp-2); }
+.anno-panel .q { color: var(--s-warn); font-weight: var(--fw-semibold); }
+body.anno-on [data-invented] { outline: 1px dashed var(--accent); outline-offset: 3px; }
+</style>
+</head>
+<body>
+
+<!-- The application shell — cloned from src/main/resources/static/index.html.
+     The only change is the new "Transfers" nav item. -->
+<div id="shell-root" class="shell">
+  <div class="brand">
+    <span class="dot" aria-hidden="true"></span>
+    <span>compute-admin</span>
+    <button id="nav-toggle" class="btn btn--sm nav-toggle" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
+  </div>
+
+  <header class="topbar">
+    <div class="userbox">
+      <span id="user-name">Moacyr</span>
+      <span id="user-email" class="email">moacyr@ca.local</span>
+      <button id="sign-out" class="btn btn--sm" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <nav id="nav" class="nav" aria-label="Primary">
+    <a href="#/machines" data-nav="machines">Machines</a>
+    <a href="#/monitor" data-nav="monitor">Monitor</a>
+    <a href="#/blueprints" data-nav="blueprints">Blueprints</a>
+    <a href="#/runs" data-nav="runs">Runs</a>
+    <a href="#/transfers" data-nav="transfers" data-invented class="has-badge">Transfers <span id="pending-badge" class="badge-count hidden">0</span></a>
+    <a href="#/mcp" data-nav="mcp">MCP surface</a>
+    <a href="#/tokens" data-nav="tokens">Tokens</a>
+    <a href="#/appkey" data-nav="appkey">App key</a>
+  </nav>
+
+  <main id="view" class="view" tabindex="-1"></main>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+<div id="req-stack" class="req-stack" data-invented aria-live="polite"></div>
+
+<!-- ============ presentation shell — not part of the product ============ -->
+<div id="anno-panel" class="anno-panel hidden">
+  <strong>Annotations</strong>
+  <h3>Fidelity basis</h3>
+  <ul>
+    <li><code class="mono">tokens.css</code> + <code class="mono">app.css</code> are inlined <strong>verbatim</strong> from <code class="mono">src/main/resources/static/</code>, and the shell markup is cloned from <code class="mono">index.html</code>. Nothing was re-skinned.</li>
+    <li>The <strong>Machines</strong> screen reproduces the real <code class="mono">screenMachines()</code> — list rows, tag filter chips, status chips.</li>
+    <li>The <strong>“Menu” button visible on desktop</strong> is not a mock artefact — it is what the real CSS does. <code class="mono">.nav-toggle { display:none }</code> (line 128) is overridden by <code class="mono">.btn { display:inline-flex }</code> (line 258): same specificity, later rule wins, so spec-043’s toggle never hides. Reproduced rather than fixed — fidelity over tidiness.</li>
+  </ul>
+  <h3>Invented (does not exist yet)</h3>
+  <ul>
+    <li><strong>The gating notification</strong> (bottom-right). The app's real <code class="mono">.toast</code> is a centred, 2.6-second, non-interactive confirmation — it cannot carry a decision. This is a separate persistent stack; it never auto-dismisses.</li>
+    <li><strong>Transfers nav item + pending count</strong>, and the whole <code class="mono">#/transfers</code> screen.</li>
+    <li><strong>Package vocabulary</strong> — <code class="mono">PENDING_APPROVAL → APPROVED → DELIVERED</code>, plus <code class="mono">DENIED</code> and <code class="mono">EXPIRED</code>. Borrowed from the spec-004 approval states; <code class="mono">DELIVERED</code>/<code class="mono">DENIED</code>/<code class="mono">EXPIRED</code> are new.</li>
+    <li><strong>The <code class="mono">transfer_files</code> MCP tool</strong> and its required <code class="mono">reason</code> argument, shown on the MCP surface screen.</li>
+    <li>Per-file <code class="mono">sha256</code> shown at review time — modelled on spec-015 content-pinning, but transfers aren't wired to it today.</li>
+  </ul>
+  <h3>Stubbed / substituted</h3>
+  <ul>
+    <li>Monitor, Blueprints, Runs, Tokens and App key render a placeholder — real screens, deliberately left out to keep the mock on the transfer flow.</li>
+    <li>Machine detail, register, and the recipe/action screens are not reachable.</li>
+    <li>All data is fabricated and lives in memory; there is no backend. The real <code class="mono">app.js</code> builds DOM through an <code class="mono">h()</code> helper that never touches <code class="mono">innerHTML</code> — this mock does, which is a mock-only shortcut, not a pattern to copy.</li>
+    <li>Fonts are the product's own system-font stack, so nothing is substituted.</li>
+  </ul>
+  <h3>Open questions this mock takes a position on</h3>
+  <ul>
+    <li><span class="q">Dismissing never decides.</span> The × closes the notification and leaves the package pending — the only way to lose a request is to let it expire.</li>
+    <li><span class="q">Nobody watching?</span> Requests expire after 24h undecided (see the expired package) rather than waiting forever. The window is a guess.</li>
+    <li><span class="q">A package is atomic.</span> You approve or deny all files at once; there is no per-file exclusion. Simplest gate, but it means one bad file sinks the batch.</li>
+    <li><span class="q">The reason is unverified.</span> It is rendered in mono, attributed to the agent, and labelled as a claim — the model wrote it, so it can be wrong or self-serving.</li>
+  </ul>
+</div>
+
+<div class="mockbar">
+  <button id="sim-btn" class="btn btn--sm" type="button">▶ Simulate MCP request</button>
+  <button id="anno-btn" class="btn btn--sm" type="button">ⓘ Annotations</button>
+  <button id="reset-btn" class="btn btn--sm" type="button">↺ Reset</button>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------- helpers ---
+  function byId(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function humanize(s) { return String(s || "").toLowerCase().replace(/_/g, " "); }
+
+  var CHIP = {
+    ONLINE: "ok", UNREACHABLE: "bad", UNKNOWN: "neutral", OFFLINE: "neutral",
+    PENDING_APPROVAL: "warn", APPROVED: "ok", DELIVERED: "ok", DENIED: "bad", EXPIRED: "neutral"
+  };
+  function chip(state) {
+    return '<span class="chip chip--' + (CHIP[state] || "neutral") + '" title="' + esc(state) + '">'
+      + esc(humanize(state)) + "</span>";
+  }
+  function kb(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1024 / 1024).toFixed(1) + " MB";
+  }
+  /** The notification shows a taste of the reason; the drawer shows all of it. */
+  function clip(s, n) {
+    s = String(s || "");
+    return s.length <= n ? s : s.slice(0, n).replace(/[\s,.;:]+$/, "") + "…";
+  }
+  function totalBytes(p) {
+    return p.files.reduce(function (n, f) { return n + f.size; }, 0);
+  }
+  /** The app's real transient toast — confirmations only, 2.6s, never a decision. */
+  function toast(message) {
+    var root = byId("toast-root");
+    root.innerHTML = "";
+    var t = document.createElement("div");
+    t.className = "toast";
+    t.setAttribute("role", "status");
+    t.textContent = message;
+    root.appendChild(t);
+    setTimeout(function () { if (t.parentNode === root) root.removeChild(t); }, 2600);
+  }
+
+  // ---------------------------------------------------------------- data ---
+  var MACHINES = [
+    { id: "m1", name: "web-01", loginUser: "admin", host: "10.0.4.11", port: 22, tags: ["prod", "web"], status: "ONLINE" },
+    { id: "m2", name: "db-01", loginUser: "admin", host: "10.0.4.21", port: 22, tags: ["prod", "postgres"], status: "ONLINE" },
+    { id: "m3", name: "build-01", loginUser: "ci", host: "10.0.9.3", port: 2222, tags: ["ci"], status: "UNREACHABLE" }
+  ];
+
+  function seed() {
+    return [
+      {
+        id: "pkg_7f3a91", machine: "web-01", status: "PENDING_APPROVAL",
+        requestedBy: "claude-desktop", client: "MCP",
+        requestedAt: "2026-08-12 14:22", expiresAt: "2026-08-13 14:22",
+        dest: "/opt/compute-admin/config",
+        reason: "Hotfix for the 502s on /api/runs: the connection-pool ceiling in application.properties is too low for the new poll cadence. Sending the patched file plus a copy of the current one so you can revert without a redeploy.",
+        files: [
+          { path: "application.properties", size: 4198, mode: "0644", sha: "9c1f4b2e…a70d" },
+          { path: "application.properties.bak", size: 4096, mode: "0644", sha: "3ea88c10…44b1" },
+          { path: "CHANGELOG-hotfix.md", size: 1228, mode: "0644", sha: "77b0d9fa…1c02" }
+        ]
+      },
+      {
+        id: "pkg_2b8c04", machine: "db-01", status: "PENDING_APPROVAL",
+        requestedBy: "claude-desktop", client: "MCP",
+        requestedAt: "2026-08-12 14:31", expiresAt: "2026-08-13 14:31",
+        dest: "/etc/postgresql/16/main", privileged: true,
+        reason: "Adding a host entry so the new build runner can reach Postgres for the integration tests.",
+        files: [
+          { path: "pg_hba.conf", size: 2871, mode: "0640", sha: "b41c07de…9f38" }
+        ]
+      },
+      {
+        id: "pkg_51de77", machine: "build-01", status: "DELIVERED",
+        requestedBy: "ci-agent", client: "MCP",
+        requestedAt: "2026-08-11 09:12", decidedAt: "2026-08-11 09:14", decidedBy: "you",
+        dest: "/home/ci/.gradle",
+        reason: "Seeding the runner with the shared gradle init script and the three internal CA certs — builds are failing on the registry TLS handshake.",
+        files: [
+          { path: "init.d/registry.gradle", size: 1904, mode: "0644", sha: "18ca5f77…6d21" },
+          { path: "certs/internal-root.pem", size: 2211, mode: "0644", sha: "aa30f1c9…b7e4" },
+          { path: "certs/internal-int.pem", size: 2180, mode: "0644", sha: "5f7290bb…03ac" },
+          { path: "certs/registry.pem", size: 2094, mode: "0644", sha: "c0d4e881…7a55" }
+        ]
+      },
+      {
+        id: "pkg_9a0e12", machine: "web-01", status: "DENIED",
+        requestedBy: "claude-desktop", client: "MCP",
+        requestedAt: "2026-08-10 17:40", decidedAt: "2026-08-10 17:41", decidedBy: "you",
+        dest: "/usr/local/bin", privileged: true,
+        reason: "Uploading a small network diagnostic binary to trace the intermittent DNS failures on this host.",
+        files: [
+          { path: "netcheck", size: 2517845, mode: "0755", sha: "e91b6042…8dd7" }
+        ]
+      },
+      {
+        id: "pkg_44c7b3", machine: "db-01", status: "EXPIRED",
+        requestedBy: "claude-desktop", client: "MCP",
+        requestedAt: "2026-08-05 02:11", decidedAt: "2026-08-06 02:11",
+        dest: "/var/lib/postgresql/scripts",
+        reason: "Nightly vacuum tuning script — wanted to drop it in before the weekend load test.",
+        files: [
+          { path: "vacuum-tune.sh", size: 1442, mode: "0750", sha: "2b7f90aa…5e10" },
+          { path: "README.md", size: 812, mode: "0644", sha: "6d1e42cc…f907" }
+        ]
+      }
+    ];
+  }
+
+  var PACKAGES = seed();
+  var stack = [];      // package ids currently shown as notifications
+  var simCount = 0;
+
+  function pkg(id) {
+    return PACKAGES.filter(function (p) { return p.id === id; })[0];
+  }
+  function pending() {
+    return PACKAGES.filter(function (p) { return p.status === "PENDING_APPROVAL"; });
+  }
+
+  // -------------------------------------------------- the gating notice ----
+  function renderStack() {
+    var root = byId("req-stack");
+    var live = stack.filter(function (id) { return pkg(id) && pkg(id).status === "PENDING_APPROVAL"; });
+    stack = live;
+    var shown = live.slice(-2);
+    var hidden = pending().length - shown.length;
+
+    root.innerHTML = shown.map(function (id) {
+      var p = pkg(id);
+      var n = p.files.length;
+      return '<div class="req-toast" role="alert">'
+        + '<div class="req-head">'
+        +   '<span class="req-title">Transfer requested — ' + esc(p.machine) + "</span>"
+        +   '<button class="req-x" type="button" data-dismiss="' + esc(p.id) + '" aria-label="Dismiss">&times;</button>'
+        + "</div>"
+        + '<div class="small dim mt-2">' + n + " file" + (n === 1 ? "" : "s") + " · " + kb(totalBytes(p))
+        +   " · <span class=\"mono\">" + esc(p.dest) + "</span></div>"
+        + '<div class="xs faint mt-2">via ' + esc(p.client) + " token " + esc(p.requestedBy) + "</div>"
+        + '<div class="req-reason" title="' + esc(p.reason) + '">' + esc(clip(p.reason, 64)) + "</div>"
+        + '<div class="req-foot">'
+        +   '<button class="btn btn--sm btn--primary" type="button" data-review="' + esc(p.id) + '">Review</button>'
+        +   '<button class="btn btn--sm btn--danger" type="button" data-deny="' + esc(p.id) + '">Deny</button>'
+        + "</div></div>";
+    }).join("")
+      + (hidden > 0
+        ? '<div class="req-more">+' + hidden + ' more waiting — <a href="#/transfers">open Transfers</a></div>'
+        : "");
+    renderBadge();
+  }
+
+  function renderBadge() {
+    var b = byId("pending-badge");
+    var n = pending().length;
+    b.textContent = String(n);
+    b.className = "badge-count" + (n ? "" : " hidden");
+  }
+
+  function notify(id) {
+    if (stack.indexOf(id) === -1) stack.push(id);
+    renderStack();
+  }
+
+  // ------------------------------------------------------------- drawer ----
+  function fileRows(p) {
+    return p.files.map(function (f) {
+      return '<div class="drow">'
+        + '<div class="grow"><div class="fpath">' + esc(f.path) + "</div>"
+        +   '<div class="xs faint mono mt-2">sha256 ' + esc(f.sha) + " · mode " + esc(f.mode) + "</div></div>"
+        + '<div class="daxes"><div class="dax"><div class="k">size</div>'
+        +   '<div class="v">' + kb(f.size) + "</div></div></div>"
+        + "</div>";
+    }).join("");
+  }
+
+  function openDrawer(id) {
+    var p = pkg(id);
+    if (!p) return;
+    var isPending = p.status === "PENDING_APPROVAL";
+    var warn = p.privileged
+      ? '<div class="banner banner--warn mt-4" role="note"><div class="banner-body">'
+        + "<strong>Privileged destination. </strong>"
+        + esc(p.dest) + " is outside this machine's writable roots — delivering here needs sudo, and the files land as root."
+        + "</div></div>"
+      : "";
+    var decision = isPending
+      ? '<div class="row mt-6">'
+        + '<button class="btn btn--primary" type="button" data-approve="' + esc(p.id) + '">Approve &amp; send</button>'
+        + '<button class="btn btn--danger" type="button" data-deny="' + esc(p.id) + '">Deny</button>'
+        + "</div>"
+        + '<p class="xs faint mt-3">Approving writes all ' + p.files.length
+        + " file" + (p.files.length === 1 ? "" : "s") + " in one go. Each is re-hashed before the write; a mismatch aborts the package."
+        + "</p>"
+      : '<dl class="kv mt-6"><dt>Decision</dt><dd>' + chip(p.status) + "</dd>"
+        + "<dt>" + (p.status === "EXPIRED" ? "Expired" : "Decided") + "</dt>"
+        + "<dd>" + esc(p.decidedAt || "—") + (p.decidedBy ? " by " + esc(p.decidedBy) : "") + "</dd></dl>";
+
+    byId("modal-root").innerHTML =
+      '<div class="drawer-backdrop" data-backdrop>'
+      + '<div class="drawer" role="dialog" aria-modal="true" aria-label="' + esc(p.id) + '">'
+      +   '<div class="row-between"><h2 class="mono">' + esc(p.id) + "</h2>"
+      +     '<button class="btn btn--sm" type="button" data-close>Close</button></div>'
+      +   '<div class="row mt-2">' + chip(p.status)
+      +     '<span class="tag">' + esc(p.machine) + "</span>"
+      +     '<span class="tag">' + esc(p.client) + " · " + esc(p.requestedBy) + "</span>"
+      +     (p.privileged ? '<span class="badge-sudo">sudo</span>' : "")
+      +   "</div>"
+      +   '<h3 class="mt-6">Reason</h3>'
+      +   '<div class="command mt-2">' + esc(p.reason) + "</div>"
+      +   '<p class="xs faint mt-2">Supplied by the agent in the <span class="mono">transfer_files</span> call and required — but written by a model, so read it as a claim, not a fact.</p>'
+      +   warn
+      +   '<h3 class="mt-6">Destination</h3>'
+      +   '<dl class="kv mt-2">'
+      +     "<dt>Machine</dt><dd>" + esc(p.machine) + "</dd>"
+      +     "<dt>Path</dt><dd class=\"mono\">" + esc(p.dest) + "</dd>"
+      +     "<dt>Requested</dt><dd>" + esc(p.requestedAt) + "</dd>"
+      +     (isPending ? "<dt>Expires</dt><dd>" + esc(p.expiresAt) + " (undecided requests lapse)</dd>" : "")
+      +   "</dl>"
+      +   '<h3 class="mt-6">Files (' + p.files.length + " · " + kb(totalBytes(p)) + ")</h3>"
+      +   '<div class="mt-2">' + fileRows(p) + "</div>"
+      +   decision
+      + "</div></div>";
+  }
+
+  function closeDrawer() { byId("modal-root").innerHTML = ""; }
+
+  // ------------------------------------------------------------ decisions --
+  function approve(id) {
+    var p = pkg(id);
+    if (!p) return;
+    p.status = "APPROVED";
+    p.decidedAt = "just now";
+    p.decidedBy = "you";
+    closeDrawer();
+    renderStack();
+    render();
+    toast("Approved — " + p.files.length + " file" + (p.files.length === 1 ? "" : "s") + " sent to " + p.machine + ".");
+    setTimeout(function () { p.status = "DELIVERED"; renderStack(); render(); }, 1400);
+  }
+
+  function deny(id) {
+    var p = pkg(id);
+    if (!p) return;
+    p.status = "DENIED";
+    p.decidedAt = "just now";
+    p.decidedBy = "you";
+    closeDrawer();
+    renderStack();
+    render();
+    toast("Denied — the agent's transfer_files call fails with a refusal.");
+  }
+
+  function dismiss(id) {
+    stack = stack.filter(function (x) { return x !== id; });
+    renderStack();
+    toast("Still pending — dismissing doesn't decide it. Find it under Transfers.");
+  }
+
+  // ------------------------------------------------------------- screens ---
+  var selectedTags = {};
+
+  function screenMachines() {
+    var allTags = [];
+    MACHINES.forEach(function (m) {
+      m.tags.forEach(function (t) { if (allTags.indexOf(t) === -1) allTags.push(t); });
+    });
+    allTags.sort();
+    var on = allTags.filter(function (t) { return selectedTags[t]; });
+    var visible = MACHINES.filter(function (m) {
+      return !on.length || on.some(function (t) { return m.tags.indexOf(t) !== -1; });
+    });
+
+    return '<div class="page-head"><div><h1>Machines</h1>'
+      + '<p class="sub">SSH-reachable hosts you own.</p></div>'
+      + '<div class="row"><a class="btn btn--primary" href="#/machines">Register machine</a></div></div>'
+      + '<div class="filter-chips">' + allTags.map(function (t) {
+        return '<button type="button" class="tag tag--filter' + (selectedTags[t] ? " tag--on" : "")
+          + '" aria-pressed="' + (selectedTags[t] ? "true" : "false") + '" data-tag="' + esc(t) + '">' + esc(t) + "</button>";
+      }).join("") + "</div>"
+      + '<ul class="list">' + visible.map(function (m) {
+        return "<li><div class=\"row-between\"><div class=\"grow\">"
+          + '<div class="row"><a href="#/machines">' + esc(m.name) + "</a></div>"
+          + '<div class="small dim mono mt-2">' + esc(m.loginUser + "@" + m.host + ":" + m.port) + "</div>"
+          + '<div class="row mt-2">' + m.tags.map(function (t) { return '<span class="tag">' + esc(t) + "</span>"; }).join("") + "</div>"
+          + "</div>" + chip(m.status) + "</div></li>";
+      }).join("") + "</ul>";
+  }
+
+  function pkgRow(p) {
+    var n = p.files.length;
+    var isPending = p.status === "PENDING_APPROVAL";
+    return "<li><div class=\"row-between\"><div class=\"grow\">"
+      + '<div class="row"><a href="#" data-open="' + esc(p.id) + '" class="mono">' + esc(p.id) + "</a>"
+      +   '<span class="tag">' + esc(p.machine) + "</span>"
+      +   (p.privileged ? '<span class="badge-sudo">sudo</span>' : "")
+      + "</div>"
+      + '<div class="small dim mt-2">' + n + " file" + (n === 1 ? "" : "s") + " · " + kb(totalBytes(p))
+      +   ' → <span class="mono">' + esc(p.dest) + "</span></div>"
+      + '<div class="xs faint mt-2">' + esc(p.requestedAt) + " · " + esc(p.client) + " token " + esc(p.requestedBy)
+      +   (p.decidedAt && !isPending ? " · " + esc(humanize(p.status)) + " " + esc(p.decidedAt) : "") + "</div>"
+      + '<details class="pkg-details mt-2"><summary>Explore package</summary>'
+      +   '<div class="command mt-2">' + esc(p.reason) + "</div>"
+      +   '<div class="mt-2">' + fileRows(p) + "</div>"
+      + "</details>"
+      + "</div><div class=\"row\">" + chip(p.status)
+      + (isPending ? '<button class="btn btn--sm btn--primary" type="button" data-review="' + esc(p.id) + '">Review</button>' : "")
+      + "</div></div></li>";
+  }
+
+  function screenTransfers() {
+    var open = pending();
+    var closed = PACKAGES.filter(function (p) { return p.status !== "PENDING_APPROVAL"; });
+    return '<div class="page-head"><div><h1>File transfers</h1>'
+      + '<p class="sub">Packages an agent asked to write to your machines.</p></div></div>'
+      + '<div class="banner banner--info" role="note"><div class="banner-body">'
+      +   "<strong>There is no send tool. </strong>"
+      +   "MCP can only <em>propose</em> a package and say why; every byte that reaches a machine passed through this screen."
+      + "</div></div>"
+      + '<div class="section"><h2>Awaiting your decision</h2>'
+      + (open.length
+          ? '<ul class="list mt-3">' + open.map(pkgRow).join("") + "</ul>"
+          : '<div class="empty">Nothing waiting. Requests appear here the moment an agent asks.</div>')
+      + "</div>"
+      + '<div class="section"><h2>Decided</h2><ul class="list mt-3">' + closed.map(pkgRow).join("") + "</ul></div>";
+  }
+
+  function screenMcp() {
+    return '<div class="page-head"><div><h1>MCP surface</h1>'
+      + '<p class="sub">What an agent connected to /mcp can do — as you, over a personal token.</p></div></div>'
+      + '<div class="banner banner--warn" role="note"><div class="banner-body">'
+      +   "<strong>There is no approve tool. </strong>"
+      +   "Registration and authoring are open to MCP, but approval is UI-only: an agent can propose and ask, "
+      +   "and can only run actions you have approved here."
+      + "</div></div>"
+      + '<div class="section" data-invented><h2>Files</h2><ul class="list mt-3"><li>'
+      +   '<code class="mono">transfer_files(machine, dest, files[], reason) → package</code>'
+      +   '<p class="small dim mt-2">Propose a package of files to write to a machine. '
+      +   "Returns a pending package id; nothing is written until you approve it in the UI. "
+      +   "<strong>reason</strong> is required — a call without one is rejected.</p>"
+      + "</li></ul></div>"
+      + '<div class="section"><h2>Machines</h2><ul class="list mt-3"><li>'
+      +   '<code class="mono">list_machines() → machine[]</code>'
+      +   '<p class="small dim mt-2">Your machines only; not-owned rows read as 404.</p></li></ul></div>'
+      + '<p class="small faint mt-6">Other tool groups are stubbed in this mock.</p>';
+  }
+
+  function screenStub(name) {
+    return '<div class="page-head"><div><h1>' + esc(name) + "</h1></div></div>"
+      + '<div class="empty">Real screen — stubbed in this mock to keep it on the transfer flow.</div>';
+  }
+
+  var NAMES = { monitor: "Monitor", blueprints: "Blueprints", runs: "Runs", tokens: "Tokens", appkey: "App key" };
+
+  function render() {
+    var path = (location.hash || "#/machines").replace(/^#/, "");
+    var key = path.split("/")[1] || "machines";
+    var view = byId("view");
+    if (key === "transfers") view.innerHTML = screenTransfers();
+    else if (key === "mcp") view.innerHTML = screenMcp();
+    else if (NAMES[key]) view.innerHTML = screenStub(NAMES[key]);
+    else { key = "machines"; view.innerHTML = screenMachines(); }
+
+    Array.prototype.forEach.call(document.querySelectorAll(".nav a"), function (a) {
+      a.className = (a.getAttribute("data-nav") === key ? "active" : "")
+        + (a.getAttribute("data-nav") === "transfers" ? " has-badge" : "");
+    });
+    renderBadge();
+  }
+
+  // -------------------------------------------------------------- events ---
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest ? e.target.closest("[data-review],[data-deny],[data-approve],[data-dismiss],[data-open],[data-close],[data-tag]") : null;
+    if (t) {
+      if (t.hasAttribute("data-review") || t.hasAttribute("data-open")) {
+        e.preventDefault();
+        openDrawer(t.getAttribute("data-review") || t.getAttribute("data-open"));
+      } else if (t.hasAttribute("data-approve")) { approve(t.getAttribute("data-approve")); }
+      else if (t.hasAttribute("data-deny")) { deny(t.getAttribute("data-deny")); }
+      else if (t.hasAttribute("data-dismiss")) { dismiss(t.getAttribute("data-dismiss")); }
+      else if (t.hasAttribute("data-close")) { closeDrawer(); }
+      else if (t.hasAttribute("data-tag")) {
+        var tag = t.getAttribute("data-tag");
+        selectedTags[tag] = !selectedTags[tag];
+        render();
+      }
+      return;
+    }
+    if (e.target.hasAttribute && e.target.hasAttribute("data-backdrop")) closeDrawer();
+  });
+
+  byId("nav-toggle").addEventListener("click", function () {
+    var nav = byId("nav");
+    var open = nav.classList.toggle("nav--open");
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  byId("anno-btn").addEventListener("click", function () {
+    document.body.classList.toggle("anno-on");
+    byId("anno-panel").classList.toggle("hidden");
+  });
+
+  byId("sim-btn").addEventListener("click", function () {
+    var next = pending().filter(function (p) { return stack.indexOf(p.id) === -1; })[0];
+    if (!next) {
+      simCount += 1;
+      next = {
+        id: "pkg_" + (simCount === 1 ? "c30f5a" : simCount === 2 ? "0e14d8" : "8b62f" + simCount),
+        machine: simCount % 2 ? "build-01" : "web-01",
+        status: "PENDING_APPROVAL", requestedBy: "claude-desktop", client: "MCP",
+        requestedAt: "just now", expiresAt: "in 24h",
+        dest: simCount % 2 ? "/home/ci/scripts" : "/opt/compute-admin/config",
+        reason: simCount % 2
+          ? "The nightly job is failing on a missing helper — sending the wrapper script it expects plus its config."
+          : "Rotating the log-shipper credentials before the old key expires tonight; the file replaces the current one in place.",
+        files: simCount % 2
+          ? [{ path: "run-nightly.sh", size: 2044, mode: "0750", sha: "40ff1c8b…2e93" },
+             { path: "nightly.env", size: 318, mode: "0600", sha: "9d21ba07…c118" }]
+          : [{ path: "shipper.key", size: 1704, mode: "0600", sha: "7c05ee3d…a481" }]
+      };
+      PACKAGES.unshift(next);
+    }
+    notify(next.id);
+    render();
+  });
+
+  byId("reset-btn").addEventListener("click", function () {
+    PACKAGES = seed();
+    stack = [];
+    simCount = 0;
+    selectedTags = {};
+    closeDrawer();
+    renderStack();
+    location.hash = "#/machines";
+    render();
+    setTimeout(function () { notify("pkg_7f3a91"); }, 700);
+  });
+
+  window.addEventListener("hashchange", render);
+
+  // ---------------------------------------------------------------- boot ---
+  render();
+  renderStack();
+  setTimeout(function () { notify("pkg_7f3a91"); }, 900);
+})();
+</script>
+</body>
+</html>
