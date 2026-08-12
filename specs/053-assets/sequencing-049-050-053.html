@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sequencing 049, 050 and 053</title>
+<style>
+  :root{
+    --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --faint:#94a3b8;
+    --accent:#0891b2; --border:#e2e8f0; --card:#ffffff; --card-2:#f1f5f9;
+    --blocker:#dc2626; --risk:#d97706; --minor:#94a3b8; --ok:#16a34a;
+    --c1:#6366f1; --c2:#0d9488; --c3:#a855f7;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --faint:#64748b;
+      --accent:#22d3ee; --border:#334155; --card:#111827; --card-2:#1e293b;
+      --blocker:#f87171; --risk:#fbbf24; --minor:#64748b; --ok:#4ade80;
+      --c1:#818cf8; --c2:#2dd4bf; --c3:#c084fc;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --faint:#64748b;
+    --accent:#22d3ee; --border:#334155; --card:#111827; --card-2:#1e293b;
+    --blocker:#f87171; --risk:#fbbf24; --minor:#64748b; --ok:#4ade80;
+    --c1:#818cf8; --c2:#2dd4bf; --c3:#c084fc;
+  }
+  :root[data-theme="light"]{
+    --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --faint:#94a3b8;
+    --accent:#0891b2; --border:#e2e8f0; --card:#ffffff; --card-2:#f1f5f9;
+    --blocker:#dc2626; --risk:#d97706; --minor:#94a3b8; --ok:#16a34a;
+    --c1:#6366f1; --c2:#0d9488; --c3:#a855f7;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:940px;margin:0 auto;padding:0 20px 96px}
+
+  header{position:sticky;top:0;z-index:10;background:var(--card);
+    border-bottom:1px solid var(--border)}
+  .hbar{max-width:940px;margin:0 auto;padding:12px 20px;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .hbar .brand{font-weight:600;font-size:14px}
+  .hbar .sp{flex:1 1 auto}
+  button{font:inherit;font-size:13px;font-weight:600;padding:6px 12px;
+    border:1px solid var(--border);border-radius:6px;background:var(--card);
+    color:var(--fg);cursor:pointer}
+  button:hover{background:var(--card-2)}
+  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+
+  h1{font-size:30px;line-height:1.25;margin:36px 0 8px;letter-spacing:-.01em}
+  h2{font-size:21px;margin:56px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  h3{font-size:16px;margin:26px 0 4px}
+  .lede{color:var(--muted);font-size:15px;margin:0 0 4px}
+  p{margin:.75em 0}
+  a{color:var(--accent)}
+  code,.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.88em}
+  code{background:var(--card-2);padding:1px 5px;border-radius:4px}
+
+  .summary{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:20px 22px;margin-top:24px}
+  .summary p:first-child{margin-top:0}
+  .summary p:last-child{margin-bottom:0}
+
+  ol.steps{counter-reset:s;list-style:none;padding:0;margin:20px 0}
+  ol.steps > li{counter-increment:s;position:relative;padding:14px 16px 14px 56px;
+    background:var(--card);border:1px solid var(--border);border-radius:8px;margin-bottom:10px}
+  ol.steps > li::before{content:counter(s);position:absolute;left:16px;top:14px;
+    width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--bg);
+    display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+  ol.steps > li b{display:block;margin-bottom:2px}
+  ol.steps .why{color:var(--muted);font-size:14px}
+
+  figure{margin:24px 0 8px}
+  .figbox{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:16px;overflow-x:auto}
+  .figbox svg{display:block;min-width:880px;width:100%;height:auto}
+  figcaption{color:var(--muted);font-size:13px;margin-top:10px}
+
+  .note{background:var(--card);border:1px solid var(--border);
+    border-left:3px solid var(--accent);border-radius:8px;padding:14px 16px;margin:16px 0}
+  .note--warn{border-left-color:var(--risk)}
+  .note--bad{border-left-color:var(--blocker)}
+  .note--ok{border-left-color:var(--ok)}
+  .note b{color:var(--fg)}
+
+  details{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+  summary{cursor:pointer;font-size:13px;color:var(--muted);
+    list-style:none;display:flex;align-items:center;gap:6px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸";font-size:11px;color:var(--faint)}
+  details[open] summary::before{content:"▾"}
+  summary:hover{color:var(--accent)}
+  blockquote{margin:10px 0;padding:8px 14px;border-left:2px solid var(--border);
+    color:var(--fg);font-size:14px}
+  blockquote cite{display:block;margin-top:6px;font-size:12px;color:var(--faint);font-style:normal}
+  pre{background:var(--card-2);border:1px solid var(--border);border-radius:6px;
+    padding:12px;overflow-x:auto;font-size:13px;line-height:1.55;margin:10px 0}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:10px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:13px}
+  .scroll{overflow-x:auto}
+  ul{margin:.6em 0;padding-left:20px}
+  li{margin:.35em 0}
+  .pill{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+  .pill--ok{color:var(--ok)} .pill--risk{color:var(--risk)}
+  .pill--blocker{color:var(--blocker)} .pill--open{color:var(--accent)}
+  .foot{margin-top:56px;padding-top:16px;border-top:1px solid var(--border);
+    font-size:13px;color:var(--muted)}
+  img{max-width:100%}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hbar">
+    <span class="brand">Sequencing · 049 · 050 · 053</span>
+    <span class="sp"></span>
+    <button id="f-exp" aria-pressed="false">Expand evidence</button>
+    <button class="themebtn" onclick="var r=document.documentElement;
+      r.setAttribute('data-theme', r.getAttribute('data-theme')==='dark'?'light':'dark')">◐ theme</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h1>What to build first, and the data flow it assumes</h1>
+<p class="lede">049 and 050 are stacked and both red-teamed; 053 proposes an app model that
+reshapes what 050 emits. This is the order I'd take them in, and the picture of the pipeline
+that order is protecting.</p>
+
+<div class="summary">
+  <p><strong>049 is independent — build it now.</strong> Its two blockers are entirely internal and
+  have nothing to do with the app model. Waiting on 053 buys it nothing.</p>
+  <p><strong>050 is coupled, but by exactly one question.</strong> Its core deliverable <em>is</em>
+  the verb mapping, which is the thing 053 redefines. The cost of the wrong order is concrete:
+  editing an approved action resets it to <code>DRAFT</code>, so retrofitting declared verbs means
+  re-approving every lifecycle action already in the field.</p>
+  <p><strong>Only axis A of 053 gates 050</strong> — where a declaration lives. The other eight open
+  questions (declared-app persistence, MCP tool shape, retiring, 032/033/038 conversion, the hash
+  line) don't block anything.</p>
+  <p><strong>Fix 053's two false premises before drafting from it</strong>, not to unblock work, but
+  because a spec author would otherwise build on option A1's "gate-safe by construction" advantage,
+  which the precedent doesn't actually have.</p>
+</div>
+
+<h2 id="picture">The pipeline this order protects</h2>
+<p>The thesis underneath 053 is a single sentence: <strong>classification happens once, at
+discovery, and its output is commands — not a taxonomy the read path re-derives.</strong> Everything
+about the sequencing follows from wanting that shape to survive contact with 049 and 050.</p>
+
+<figure>
+<div class="figbox">
+<svg viewBox="0 0 900 600" role="img" aria-labelledby="dtitle ddesc">
+  <title id="dtitle">Discovery-to-app-view pipeline</title>
+  <desc id="ddesc">Evidence on the machine feeds discovery, which classifies once and emits proposed
+  actions carrying declarations. A human gate approves them. Approved actions run and return
+  readings. The browser groups by app-name and formats the app view. MCP proposes and reads, but
+  never approves.</desc>
+
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--faint)"/>
+    </marker>
+    <marker id="ahA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/>
+    </marker>
+  </defs>
+
+  <!-- phase labels -->
+  <text x="20"  y="26" font-size="11" font-weight="700" letter-spacing="1" fill="var(--faint)">ON THE MACHINE</text>
+  <text x="245" y="26" font-size="11" font-weight="700" letter-spacing="1" fill="var(--faint)">SERVER · ONCE</text>
+  <text x="470" y="26" font-size="11" font-weight="700" letter-spacing="1" fill="var(--faint)">HUMAN · UI ONLY</text>
+  <text x="695" y="26" font-size="11" font-weight="700" letter-spacing="1" fill="var(--faint)">BROWSER · EVERY POLL</text>
+
+  <!-- 1 EVIDENCE -->
+  <rect x="20" y="40" width="195" height="196" rx="8" fill="var(--card-2)" stroke="var(--border)"/>
+  <text x="34" y="62" font-size="13" font-weight="700" fill="var(--fg)">1 · Evidence</text>
+  <text x="34" y="84"  font-size="11" fill="var(--muted)">ss -ltnp → /proc</text>
+  <text x="34" y="98"  font-size="10" fill="var(--faint)">025 / 049 — port-driven</text>
+  <text x="34" y="118" font-size="11" fill="var(--muted)">systemctl list-units</text>
+  <text x="34" y="132" font-size="10" fill="var(--faint)">026 — no port needed</text>
+  <text x="34" y="152" font-size="11" fill="var(--muted)">docker ps + compose labels</text>
+  <text x="34" y="166" font-size="10" fill="var(--faint)">033 — no port needed</text>
+  <text x="34" y="186" font-size="11" fill="var(--muted)">folder scan: *.sh</text>
+  <text x="34" y="200" font-size="10" fill="var(--faint)">050 — needs PID + appRoot</text>
+  <line x1="34" y1="210" x2="200" y2="210" stroke="var(--border)" stroke-dasharray="3 3"/>
+  <text x="34" y="226" font-size="10" fill="var(--blocker)">cron / hand-launched → nothing</text>
+
+  <!-- 2 DISCOVERY -->
+  <rect x="245" y="40" width="195" height="196" rx="8" fill="var(--card)" stroke="var(--accent)" stroke-width="1.5"/>
+  <text x="259" y="62" font-size="13" font-weight="700" fill="var(--fg)">2 · Discovery</text>
+  <text x="259" y="80" font-size="11" font-style="italic" fill="var(--accent)">classifies ONCE</text>
+  <text x="259" y="102" font-size="11" fill="var(--muted)">picks the probe that fits</text>
+  <text x="259" y="116" font-size="10" fill="var(--faint)">postgres ≠ jar ≠ compose</text>
+  <text x="259" y="138" font-size="11" fill="var(--muted)">emits proposed actions:</text>
+  <rect x="259" y="146" width="167" height="60" rx="5" fill="var(--card-2)" stroke="var(--border)"/>
+  <text x="268" y="162" font-size="10" font-family="ui-monospace,monospace" fill="var(--fg)">app-name · part · verb</text>
+  <text x="268" y="176" font-size="10" font-family="ui-monospace,monospace" fill="var(--fg)">role · dedication</text>
+  <text x="268" y="192" font-size="10" font-family="ui-monospace,monospace" fill="var(--accent)">+ the command (argv)</text>
+  <text x="259" y="224" font-size="10" fill="var(--risk)">all land PENDING_APPROVAL</text>
+
+  <!-- 3 GATE -->
+  <rect x="470" y="40" width="195" height="196" rx="8" fill="var(--card)" stroke="var(--border)"/>
+  <text x="484" y="62" font-size="13" font-weight="700" fill="var(--fg)">3 · The gate</text>
+  <text x="484" y="80" font-size="11" font-style="italic" fill="var(--muted)">nothing runs before this</text>
+  <text x="484" y="104" font-size="11" fill="var(--muted)">human approves in the UI</text>
+  <text x="484" y="126" font-size="11" fill="var(--muted)">CUSTOM → sha256 pin</text>
+  <text x="484" y="140" font-size="10" fill="var(--faint)">015 — re-probed every run</text>
+  <text x="484" y="162" font-size="11" fill="var(--muted)">app-name ALLOWED_SET</text>
+  <text x="484" y="176" font-size="10" fill="var(--faint)">enters the snapshot hash (036)</text>
+  <text x="484" y="204" font-size="10" fill="var(--risk)">edit ⇒ resets to DRAFT</text>
+  <text x="484" y="220" font-size="10" fill="var(--risk)">⇒ re-approval</text>
+
+  <!-- 4 UI ASSEMBLY -->
+  <rect x="695" y="40" width="195" height="196" rx="8" fill="var(--card)" stroke="var(--border)"/>
+  <text x="709" y="62" font-size="13" font-weight="700" fill="var(--fg)">4 · UI assembly</text>
+  <text x="709" y="80" font-size="11" font-style="italic" fill="var(--ok)">no re-classification</text>
+  <text x="709" y="104" font-size="11" fill="var(--muted)">group by app-name</text>
+  <text x="709" y="124" font-size="11" fill="var(--muted)">split by part</text>
+  <text x="709" y="144" font-size="11" fill="var(--muted)">verb → controls</text>
+  <text x="709" y="164" font-size="11" fill="var(--muted)">role → how to render</text>
+  <text x="709" y="184" font-size="11" fill="var(--muted)">attributable? → the axes</text>
+  <line x1="709" y1="196" x2="876" y2="196" stroke="var(--border)"/>
+  <text x="709" y="214" font-size="12" font-weight="700" fill="var(--accent)">= the app view</text>
+  <text x="709" y="228" font-size="10" fill="var(--faint)">card · parts · drawer</text>
+
+  <!-- main arrows -->
+  <line x1="215" y1="138" x2="243" y2="138" stroke="var(--faint)" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="440" y1="138" x2="468" y2="138" stroke="var(--faint)" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="665" y1="138" x2="693" y2="138" stroke="var(--faint)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+  <!-- RUNTIME strip -->
+  <rect x="470" y="300" width="420" height="86" rx="8" fill="var(--card-2)" stroke="var(--border)"/>
+  <text x="484" y="320" font-size="12" font-weight="700" fill="var(--fg)">Runtime — approved actions only</text>
+  <text x="484" y="340" font-size="11" font-family="ui-monospace,monospace" fill="var(--muted)">POST /runs → SSH → stdout</text>
+  <text x="484" y="360" font-size="11" fill="var(--muted)">reading declares its own</text>
+  <text x="484" y="376" font-size="11" font-family="ui-monospace,monospace" fill="var(--accent)">unit · attributable?</text>
+  <path d="M567,238 L567,298" fill="none" stroke="var(--faint)" stroke-width="1.5" marker-end="url(#ah)"/>
+  <path d="M800,300 L800,240" fill="none" stroke="var(--faint)" stroke-width="1.5" marker-end="url(#ah)"/>
+  <text x="808" y="274" font-size="10" fill="var(--faint)">readings</text>
+
+  <!-- declared app branch -->
+  <rect x="20" y="300" width="195" height="86" rx="8" fill="var(--card)" stroke="var(--blocker)" stroke-dasharray="5 4"/>
+  <text x="34" y="320" font-size="12" font-weight="700" fill="var(--fg)">Declared app</text>
+  <text x="34" y="338" font-size="10" fill="var(--muted)">no port · no PID · no cgroup</text>
+  <text x="34" y="354" font-size="10" fill="var(--muted)">a human or agent asserts it</text>
+  <text x="34" y="372" font-size="10" fill="var(--blocker)">053 Decision 4 — unresolved</text>
+  <path d="M215,326 L300,326 L300,238" fill="none" stroke="var(--blocker)" stroke-width="1.5"
+        stroke-dasharray="5 4" marker-end="url(#ah)"/>
+  <text x="20" y="406" font-size="10" fill="var(--blocker)">enters as a proposal — but nothing on the</text>
+  <text x="20" y="420" font-size="10" fill="var(--blocker)">049/050 path can measure it in v1</text>
+
+  <!-- MCP lane -->
+  <rect x="245" y="450" width="195" height="100" rx="8" fill="var(--card)" stroke="var(--c3)"/>
+  <text x="259" y="472" font-size="12" font-weight="700" fill="var(--fg)">MCP / agent</text>
+  <text x="259" y="492" font-size="10" fill="var(--muted)">proposes commands</text>
+  <text x="259" y="508" font-size="10" fill="var(--muted)">declares an app it found</text>
+  <text x="259" y="524" font-size="10" fill="var(--muted)">reads the contract (verbs)</text>
+  <text x="259" y="542" font-size="10" font-weight="700" fill="var(--blocker)">never approves</text>
+
+  <path d="M400,450 L400,238" fill="none" stroke="var(--c3)" stroke-width="1.5" marker-end="url(#ahA)"/>
+  <text x="408" y="352" font-size="10" fill="var(--c3)">propose →</text>
+
+  <path d="M890,388 L890,500 L444,500" fill="none" stroke="var(--c3)" stroke-width="1.5"
+        stroke-dasharray="4 3" marker-end="url(#ahA)"/>
+  <text x="470" y="492" font-size="10" fill="var(--c3)">← read the contract: which verbs does this app answer to?</text>
+
+  <!-- the edge that must not exist: agent → the gate -->
+  <path d="M444,458 L458,458 L458,252 L552,252" fill="none" stroke="var(--blocker)"
+        stroke-width="1.5" stroke-dasharray="4 4"/>
+  <line x1="493" y1="242" x2="517" y2="262" stroke="var(--blocker)" stroke-width="2.5"/>
+  <line x1="517" y1="242" x2="493" y2="262" stroke="var(--blocker)" stroke-width="2.5"/>
+  <text x="580" y="252" font-size="11" font-weight="700" fill="var(--blocker)">no agent path to the gate</text>
+  <text x="580" y="268" font-size="10" fill="var(--muted)">the invariant every option must keep</text>
+</svg>
+</div>
+<figcaption>
+  The pipeline as 053 envisions it. Stage 2 is the only place anything is classified; stages 3 and 4
+  consume declarations rather than re-deriving them. Two things in red are unresolved: the
+  declared-app branch (nothing on the 049/050 path can measure it) and the agent's inability to
+  reach the gate, which is the invariant every option must preserve.
+</figcaption>
+</figure>
+
+<h3>Reading it stage by stage</h3>
+
+<p><strong>Stage 1 — evidence.</strong> Four detection routes exist today and they are not equal.
+The port-driven chain (<code>ss -ltnp</code> → PID → <code>/proc</code>) is what 025 built, what 049
+extends to folders, and what 050 hangs lifecycle scripts off. But 026 discovers systemd units with
+no port involvement at all, and 033 states plainly that <em>"No port is required — portless workers
+and datastores are monitored because they belong to a project."</em> The genuine blind spot is
+narrower than "portless": it is <strong>hand-launched and cron-scheduled native, non-systemd
+work</strong>.</p>
+
+<p><strong>Stage 2 — discovery, and the one thing that matters.</strong> Discovery must classify: it
+is looking at image names, cgroups, cmdlines, marker files. The proposal in 053 is that the
+<em>output</em> of that classification is a proposed action — a command plus a few declarations —
+rather than a taxonomy that gets persisted and re-joined later. This is what kills the
+double-derivation 040 complained about: <em>"what is an app is derived twice."</em></p>
+
+<p><strong>Stage 3 — the gate, and why order matters.</strong> Everything crosses one human
+approval. Two properties make sequencing consequential rather than cosmetic. First, a
+<code>CUSTOM</code> action's leading literal path is <code>sha256</code>-pinned at approval and
+re-probed before every run (015). Second — and this is the reason 050 shouldn't ship on the wrong
+model — <strong>editing an approved action resets it to <code>DRAFT</code></strong>, so retrofitting
+a declaration onto approved actions means re-approving each one.</p>
+
+<p><strong>Stage 4 — assembly.</strong> The browser groups by <code>app-name</code>, splits by
+<code>part</code>, maps <code>verb</code> to controls, renders by <code>role</code>, and feeds the
+axes only with readings that declare themselves attributable. Nothing here decides <em>what an app
+is</em> — that was decided at stage 2 and carried forward.</p>
+
+<div class="note note--bad">
+  <b>The red branch is the unresolved one.</b> A declared app arrives at stage 2's output with no
+  evidence behind it — and the 049/050 machinery physically cannot measure it: 049's probe fans out
+  over <code>APP_PORT_LIST</code> with a port as its only param, 050's scan takes PID and
+  <code>appRoot</code> as its only arguments and reads <code>managedBy</code> from the cgroup, and
+  050's Start "flips the card UP" on port-driven liveness. In v1 a declared app is a thing you can
+  run commands against, not a thing the monitor can measure. That should be stated, not discovered.
+</div>
+
+<h2 id="order">The order, and why</h2>
+
+<ol class="steps">
+  <li>
+    <b>Fix 053's two false premises <span class="pill pill--blocker">before drafting</span></b>
+    <span class="why">Not to unblock anything — nothing waits on this. But option A1 is currently
+    sold on "gate-safe by construction — never reaches argv", and 026 binds
+    <code>{app-name}</code> straight into <code>systemctl restart</code> under <code>sudo -n</code>.
+    And Decision 4 is justified by "declared apps are the only route to portless visibility", which
+    two existing discoverers contradict. A spec author would build on both.</span>
+    <details>
+      <summary>Evidence</summary>
+      <blockquote>“<strong>status</strong> (<code>systemctl status {app-name}</code>, read-only),
+      <strong>restart</strong> (<code>systemctl restart {app-name}</code>, <code>sudo -n</code>, S5),
+      <strong>tail-logs</strong> (<code>journalctl -u {app-name}</code>…)”
+      <cite>specs/026-done-app-ops-recipes.md</cite></blockquote>
+      <blockquote>“<code>systemctl list-units --type=service --state=running --no-legend</code> to
+      discover an <code>ALLOWED_SET</code> of running unit names”
+      <cite>026 — discovery with no port anywhere</cite></blockquote>
+    </details>
+  </li>
+  <li>
+    <b>Decide axis A only <span class="pill pill--open">one question</span></b>
+    <span class="why">Where does a declaration live? That is the single question gating 050.
+    Decision 3 already settled that the verb is <em>declared</em> rather than inferred from the
+    action name; what remains is the substrate.</span>
+  </li>
+  <li>
+    <b>050 drafts against that answer <span class="pill pill--risk">coupled</span></b>
+    <span class="why">Its own four findings still have to be fixed regardless — the
+    <code>make -C</code> contradiction, the symlink-vs-resolved path, the name-uniqueness rule, the
+    acceptance gaps. 053 fixes none of those.</span>
+  </li>
+  <li>
+    <b>049 proceeds in parallel <span class="pill pill--ok">independent</span></b>
+    <span class="why">Nothing about it waits. Its blockers are the poll tier that 024 doesn't have
+    and the discovery-time run that contradicts its own gate paragraph — both internal.</span>
+  </li>
+</ol>
+
+<h2 id="why049">Why 049 is genuinely independent</h2>
+<p>049 detects an app's folder and three sizes and feeds the native disk axis. None of that depends
+on what an app <em>is</em>. Under 053 the only thing that changes is that its proposed
+<code>footprint</code> action would carry a <code>role</code> declaration alongside the
+<code>app-name</code> it already carries — and under axis A1 that is a param definition on machinery
+026 already uses, so 049's <em>"no new DTO fields, no Flyway migration"</em> constraint survives
+untouched.</p>
+
+<div class="note note--ok">
+  <b>A correction worth recording.</b> An earlier reading of this claimed 049's NDJSON schema "gets
+  rewritten either way" under 053. That does not hold. The NDJSON is the <em>probe's output</em> — a
+  reading. Declarations ride on the <em>proposed action</em>. They are different objects, and under
+  A1 the schema is not touched at all.
+</div>
+
+<h2 id="why050">Why 050 is the coupled one</h2>
+<p>050's deliverable <em>is</em> the verb mapping: it renders card controls for actions "named
+exactly <code>start</code> / <code>stop</code> / <code>restart</code> / <code>deploy</code>", matched
+client-side. 053 replaces that name-matching with a declaration. Build 050 first and you ship the
+name-matching, approve actions against it, then have to edit each one — which resets it to
+<code>DRAFT</code> and demands re-approval.</p>
+
+<p>Two smaller misalignments come with it, both worth deciding at the same time:</p>
+<ul>
+  <li>053's vocabulary has <strong>seven</strong> verbs; 050 renders controls for <strong>four</strong>.
+    <code>status</code>, <code>logs</code> and <code>metrics</code> have no rendering rule.</li>
+  <li>053 says <code>logs</code>; 026's existing action is named <code>tail-logs</code>. 050's
+    systemd dedup-by-verb has to match them, so a <code>done</code> spec gets touched.</li>
+</ul>
+
+<div class="note note--warn">
+  <b>The honest fourth option.</b> Ship 050 on verb-by-name now and accept the migration later. On a
+  single-operator tool that migration is "re-approve a handful of actions" — quite possibly cheaper
+  than blocking on a model decision. This is a real choice, not the wrong one; it just needs to be
+  chosen rather than defaulted into.
+</div>
+
+<h2 id="axisa">The one question that gates 050</h2>
+<p>Where a declaration lives, with the fourth option the concern currently omits:</p>
+
+<div class="scroll">
+<table>
+  <tr><th>Option</th><th>Shape</th><th>For</th><th>Against</th></tr>
+  <tr>
+    <td><b>A1</b> reserved params</td>
+    <td>the 026 <code>app-name</code> precedent, extended</td>
+    <td>no migration; existing machinery; 049's "no new DTO fields" survives</td>
+    <td>the "never reaches argv" advantage is <strong>false</strong> as stated — 026's own actions
+      bind it into argv; four reserved names is a lot of convention</td>
+  </tr>
+  <tr>
+    <td><b>A2</b> columns on <code>Action</code></td>
+    <td>a declaration is not a param</td>
+    <td>honest modelling; queryable</td>
+    <td>migration + DTO surface; head-on with 049's <em>"No backend model change"</em>; edges toward
+      the persisted model 040 objects to</td>
+  </tr>
+  <tr>
+    <td><b>A3</b> naming convention</td>
+    <td>today's approach, extended</td>
+    <td>zero mechanism</td>
+    <td>this is what produced 050's name-collision crack in the first place</td>
+  </tr>
+  <tr>
+    <td><b>A4</b> un-audited side-data <span class="pill pill--open">missing from 053</span></td>
+    <td>the 033 <code>app_port_list</code> JSON precedent; 036 proposes exactly this shape</td>
+    <td><strong>gate-free by construction</strong> — which is the axis B turns on; it is roughly
+      where <code>role</code>/<code>dedication</code> live today</td>
+    <td>un-audited means a declaration can change under an approved action</td>
+  </tr>
+</table>
+</div>
+
+<div class="note">
+  <b>Axis A and axis B are the same question asked twice.</b> Whether declarations enter the
+  approval hash is largely decided <em>by</em> where they live: reserved params sit inside the
+  snapshot (036 confirms <code>app-name</code>'s <code>ALLOWED_SET</code> is hashed), side-data sits
+  outside it by construction. Picking A picks most of B.
+</div>
+
+<h2 id="context">Background — what each document is</h2>
+<details open>
+  <summary>The four specs and concerns in play</summary>
+  <table>
+    <tr><th>#</th><th>Status</th><th>What it is</th></tr>
+    <tr><td><b>049</b></td><td>todo</td><td>App-folder &amp; footprint detection. Extends the
+      port→PID→cmdline chain to resolve an app's folder and three sizes (artifact, footprint, data),
+      feeding the native disk axis that 039 left at <code>—</code>. 2 blockers, 3 risks, 2 minors.</td></tr>
+    <tr><td><b>050</b></td><td>todo</td><td>Lifecycle-script detection &amp; monitor controls. Stacked
+      on 049. Detects <code>run.sh</code>/<code>kill.sh</code>-style scripts and proposes them as
+      gated <code>CUSTOM</code> actions rendered as Start/Stop/Restart/Deploy. 2 blockers, 3 risks,
+      3 minors.</td></tr>
+    <tr><td><b>053</b></td><td>concern</td><td>App model &amp; verb contract. Four axes decided
+      (compose = one app with parts; classification as a declared label; closed verb vocabulary;
+      declared apps first-class), nine questions open. 2 blockers, 10 risks, 3 minors.</td></tr>
+    <tr><td><b>040</b></td><td>concern</td><td>The open concern 053 absorbs half of — "monitor as a
+      runtime view over runs", and where "what is an app" should live.</td></tr>
+  </table>
+</details>
+
+<details>
+  <summary>The invariants none of this may break</summary>
+  <ul>
+    <li><strong>Approval is UI-only.</strong> Discovery proposes; a human approves; MCP has no
+      approve tool and <code>GateArchTest</code> enforces it.</li>
+    <li><strong>Content-pinning</strong> (015) keys on <code>RecipeType.CUSTOM</code>: the leading
+      literal path is hashed at approval and re-probed before every run.</li>
+    <li><strong>S4</strong> — fixed script bodies, typed params, no free-form commands, no operators
+      in an argv.</li>
+    <li><strong>S5</strong> — coverage is bounded by the machine's login user; no new sudo.</li>
+    <li><strong>S9</strong> — host and filesystem topology stays off the MCP surface.</li>
+  </ul>
+</details>
+
+<h2 id="method">Method</h2>
+<p>Document analysis only — no source, tests or config were read. The findings this sequencing rests
+on come from two independent adversarial passes (one classifying the 049/050 red-team against 053,
+one attacking 053 directly), with the load-bearing facts re-verified by hand against
+<code>specs/026</code>, <code>specs/033</code>, <code>specs/022</code> and a repo-wide search for a
+mis-cited string.</p>
+<p class="lens" style="color:var(--muted);font-size:14px">Read-only. Nothing here has been applied
+to any spec; 053 still carries the two false premises described in step 1.</p>
+
+<div class="foot">
+  Sequencing 049 · 050 · 053 · compute-admin · 2026-08-12
+</div>
+
+</div>
+
+<script>
+(function () {
+  var exp = document.getElementById("f-exp");
+  exp.addEventListener("click", function () {
+    var open = exp.getAttribute("aria-pressed") !== "true";
+    Array.prototype.forEach.call(document.querySelectorAll("details"), function (d) { d.open = open; });
+    exp.setAttribute("aria-pressed", open ? "true" : "false");
+    exp.textContent = open ? "Collapse evidence" : "Expand evidence";
+  });
+})();
+</script>
+</body>
+</html>

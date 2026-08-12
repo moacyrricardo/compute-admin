@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redteam — specs 049 &amp; 050</title>
+<style>
+  :root{
+    --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --faint:#94a3b8;
+    --accent:#0891b2; --border:#e2e8f0; --card:#ffffff; --card-2:#f1f5f9;
+    --blocker:#dc2626; --risk:#d97706; --minor:#94a3b8; --ok:#16a34a;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --faint:#64748b;
+      --accent:#22d3ee; --border:#334155; --card:#111827; --card-2:#1e293b;
+      --blocker:#f87171; --risk:#fbbf24; --minor:#64748b; --ok:#4ade80;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b1220; --fg:#e2e8f0; --muted:#94a3b8; --faint:#64748b;
+    --accent:#22d3ee; --border:#334155; --card:#111827; --card-2:#1e293b;
+    --blocker:#f87171; --risk:#fbbf24; --minor:#64748b; --ok:#4ade80;
+  }
+  :root[data-theme="light"]{
+    --bg:#f8fafc; --fg:#0f172a; --muted:#475569; --faint:#94a3b8;
+    --accent:#0891b2; --border:#e2e8f0; --card:#ffffff; --card-2:#f1f5f9;
+    --blocker:#dc2626; --risk:#d97706; --minor:#94a3b8; --ok:#16a34a;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px 96px}
+
+  header{position:sticky;top:0;z-index:10;background:var(--card);
+    border-bottom:1px solid var(--border)}
+  .hbar{max-width:920px;margin:0 auto;padding:12px 20px;
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .hbar .brand{font-weight:600;font-size:14px}
+  .hbar .sp{flex:1 1 auto}
+  button{font:inherit;font-size:13px;font-weight:600;padding:6px 12px;
+    border:1px solid var(--border);border-radius:6px;background:var(--card);
+    color:var(--fg);cursor:pointer}
+  button:hover{background:var(--card-2)}
+  button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+
+  h1{font-size:30px;line-height:1.25;margin:36px 0 8px;letter-spacing:-.01em}
+  h2{font-size:21px;margin:56px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  h3{font-size:16px;margin:0}
+  .lede{color:var(--muted);font-size:15px;margin:0 0 4px}
+  p{margin:.7em 0}
+  a{color:var(--accent)}
+  code,.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.88em}
+  code{background:var(--card-2);padding:1px 5px;border-radius:4px}
+
+  .summary{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:20px 22px;margin-top:24px}
+  .summary p:first-child{margin-top:0}
+  .summary p:last-child{margin-bottom:0}
+
+  .verdicts{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:12px;margin:20px 0 8px}
+  .verdict{background:var(--card);border:1px solid var(--border);
+    border-left:3px solid var(--blocker);border-radius:8px;padding:14px 16px}
+  .verdict .n{font-size:13px;color:var(--muted)}
+  .verdict .t{font-weight:600;margin:2px 0 8px}
+  .tally{display:flex;gap:14px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+  .tally b{color:var(--fg)}
+
+  .legend{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 0;
+    font-size:13px;color:var(--muted)}
+
+  .f{background:var(--card);border:1px solid var(--border);border-radius:8px;
+    padding:16px 18px;margin:12px 0}
+  .f--blocker{border-left:3px solid var(--blocker)}
+  .f--risk{border-left:3px solid var(--risk)}
+  .f--minor{border-left:3px solid var(--minor)}
+  .fhead{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+  .pill{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+  .pill--blocker{color:var(--blocker)}
+  .pill--risk{color:var(--risk)}
+  .pill--minor{color:var(--minor)}
+  .pill--ok{color:var(--ok)}
+  .meta{font-size:12px;color:var(--faint);margin-left:auto;white-space:nowrap}
+  .lens{font-size:12px;color:var(--muted)}
+  .q{margin-top:10px;padding:10px 12px;background:var(--card-2);
+    border-radius:6px;font-size:14px}
+  .q b{color:var(--accent)}
+
+  details{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+  summary{cursor:pointer;font-size:13px;color:var(--muted);
+    list-style:none;display:flex;align-items:center;gap:6px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸";font-size:11px;color:var(--faint)}
+  details[open] summary::before{content:"▾"}
+  summary:hover{color:var(--accent)}
+  blockquote{margin:10px 0;padding:8px 14px;border-left:2px solid var(--border);
+    color:var(--fg);font-size:14px}
+  blockquote cite{display:block;margin-top:6px;font-size:12px;color:var(--faint);font-style:normal}
+  pre{background:var(--card-2);border:1px solid var(--border);border-radius:6px;
+    padding:12px;overflow-x:auto;font-size:13px;line-height:1.55;margin:10px 0}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;font-size:14px;margin:10px 0}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:13px}
+  .scroll{overflow-x:auto}
+  ul{margin:.6em 0;padding-left:20px}
+  li{margin:.3em 0}
+  .foot{margin-top:56px;padding-top:16px;border-top:1px solid var(--border);
+    font-size:13px;color:var(--muted)}
+  .hide{display:none}
+  img{max-width:100%}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hbar">
+    <span class="brand">Redteam · specs 049 &amp; 050</span>
+    <span class="sp"></span>
+    <button id="f-all"  aria-pressed="true">All 15</button>
+    <button id="f-block" aria-pressed="false">Blockers</button>
+    <button id="f-exp"  aria-pressed="false">Expand evidence</button>
+    <button class="themebtn" onclick="var r=document.documentElement;
+      r.setAttribute('data-theme', r.getAttribute('data-theme')==='dark'?'light':'dark')">◐ theme</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<h1>What has to be answered before 049 and 050 can be built</h1>
+<p class="lede">Adversarial read of the two specs as written — document analysis only, no code read.
+15 findings, every one anchored to quoted spec text.</p>
+
+<div class="summary">
+  <p><strong>Neither spec is ready to hand to an implementer.</strong> Both are unusually thorough
+  documents — long Decision sections, explicit resolved-question logs, honest Known Gaps — and the
+  problems are not sloppiness. They are the four or five places where two carefully-made decisions
+  meet and disagree, plus one shared foundation that was never actually decided.</p>
+
+  <p>The two that would send a build the wrong way: <strong>049 and 050 disagree about which path a
+  lifecycle action registers</strong> (the symlink or the resolved release dir) — and spec-015 hashes
+  that path at approval, so the choice decides whether every redeploy breaks the action or silently
+  runs an old release. And <strong>049's sampling rule refers to a poll tier that spec-024 does not
+  have</strong>: 024 offers a single-choice cadence defaulting to <code>single</code>, so under the
+  default the footprint probe may never run at all — and folder + sizes are the whole deliverable.</p>
+
+  <p>Underneath both: they are built on <strong>spec-040's "thin-BE leaning", and 040 is an open
+  concern that says of itself "this stays a concern, options open."</strong> That is not fatal —
+  both specs are compatible with the leaning — but it is an architectural bet neither spec declares
+  as a bet.</p>
+
+  <p class="legend">
+    <span class="pill pill--blocker">blocker</span> would stall the build or send it the wrong way ·
+    <span class="pill pill--risk">risk</span> likely rework, but buildable ·
+    <span class="pill pill--minor">minor</span> small ambiguity worth a sentence
+  </p>
+</div>
+
+<div class="verdicts">
+  <div class="verdict">
+    <div class="n">spec 049 · app-folder &amp; footprint detection</div>
+    <div class="t">Not ready to build</div>
+    <div class="tally"><span><b>2</b> blockers</span><span><b>3</b> risks</span><span><b>2</b> minors</span></div>
+  </div>
+  <div class="verdict">
+    <div class="n">spec 050 · lifecycle-script detection &amp; controls</div>
+    <div class="t">Not ready to build</div>
+    <div class="tally"><span><b>2</b> blockers</span><span><b>3</b> risks</span><span><b>3</b> minors</span></div>
+  </div>
+</div>
+
+<h2 id="blockers">Blockers</h2>
+<p class="lede">Four findings that would stall the build or send it in the wrong direction.</p>
+
+<article class="f f--blocker" data-sev="blocker">
+  <div class="fhead">
+    <span class="pill pill--blocker">blocker</span>
+    <h3>The footprint probe's poll tier does not exist</h3>
+    <span class="meta">049 · #1</span>
+  </div>
+  <div class="lens">Lens: buildability gap · undecided-as-decided</div>
+  <p>049 says the probe runs on “the slowest active tier (1 m / 5 m)”. That phrasing assumes several
+  tiers run at once. Spec-024 defines a <em>single-choice</em> cadence selector —
+  <code>single | 5s | 30s | 1m | 5m</code> — and its default is <code>single</code>. There is no
+  slowest active tier; there is one selection. For three of the five settings, including the
+  default, the spec never says whether <code>footprint</code> runs, runs once, or never runs. Folder
+  and sizes are the entire deliverable of the spec.</p>
+  <div class="q"><b>Question:</b> with a single-choice cadence, when does the <code>footprint</code>
+  action run under <code>single</code>, <code>5s</code> and <code>30s</code>?</div>
+  <details>
+    <summary>Evidence — the two specs side by side</summary>
+    <blockquote>“<strong>Sampled, not per-poll (decision).</strong> <code>du</code> is IO-heavy, so
+    the <code>footprint</code> probe is <strong>not</strong> run at the 5 s poll tier. The UI polls
+    it only on the <strong>slowest active tier</strong> (1 m / 5 m) — and it may run once at
+    discovery for an initial value…”
+    <cite>specs/049-todo-app-folder-detection.md · “du gating”</cite></blockquote>
+    <blockquote>“A cadence selector (<code>single | 5s | 30s | 1m | 5m</code>) stored in the view
+    state; <strong>default <code>single</code></strong>. On a non-single cadence, a
+    <code>setInterval</code> re-invokes the same actions…”
+    <cite>specs/024-done-monitor-ui-dashboard.md · “Polling”</cite></blockquote>
+    <p>024 also states it as a product decision: “Client-side poll control
+    (<code>single</code>/5s/30s/1m/5m) with a <strong>Run now</strong> button”. One control, one
+    value at a time.</p>
+  </details>
+</article>
+
+<article class="f f--blocker" data-sev="blocker">
+  <div class="fhead">
+    <span class="pill pill--blocker">blocker</span>
+    <h3>“May run once at discovery” contradicts the gate the same spec defends</h3>
+    <span class="meta">049 · #2</span>
+  </div>
+  <div class="lens">Lens: internal contradiction</div>
+  <p>The sampling decision offers a discovery-time initial run. But this spec's own “Gate untouched”
+  paragraph has the <code>footprint</code> action landing <code>PENDING_APPROVAL</code> and approved
+  by a human in the UI — so at discovery time the action <em>cannot</em> run, and if it could, that
+  is precisely the auto-run of an unapproved action that spec-006's discoverer contract and the
+  spec-004 gate forbid. The word “may” also leaves it as an open choice inside a section labelled a
+  decision.</p>
+  <div class="q"><b>Question:</b> is the discovery-time initial run dropped outright, or did it mean
+  something else (the first poll after approval)?</div>
+  <details>
+    <summary>Evidence — the contradiction inside one document</summary>
+    <blockquote>“…and it <strong>may run once at discovery</strong> for an initial value — so folder
+    + sizes lag the fast metrics rather than hammering disk every 5 s.”
+    <cite>049 · “du gating” → Sampled, not per-poll (decision)</cite></blockquote>
+    <blockquote>“<strong>Gate untouched.</strong> The <code>footprint</code> action is proposed
+    <code>PENDING_APPROVAL</code> through the unchanged spec-004 gate and approved once, in the UI,
+    like every action — discovery only proposes (spec-006 contract); <strong>nothing
+    auto-approves</strong>…”
+    <cite>049 · Decision</cite></blockquote>
+    <p>The same rule is restated in Acceptance: “Run discovery, <strong>approve the new
+    <code>footprint</code> action</strong> on each app-monitor recipe in the UI… Nothing runs without
+    UI approval.”</p>
+  </details>
+</article>
+
+<article class="f f--blocker" data-sev="blocker">
+  <div class="fhead">
+    <span class="pill pill--blocker">blocker</span>
+    <h3>049 and 050 disagree about which path the action registers — and spec-015 hashes it</h3>
+    <span class="meta">050 · #8</span>
+  </div>
+  <div class="lens">Lens: cross-spec conflict</div>
+  <p>049 decides that a symlinked release keeps the <em>symlink</em> as identity because it is stable
+  across redeploys, and explicitly says that is “what spec-050 keys its lifecycle scripts to”. But
+  050 receives <code>appRoot</code> — which 049 defines as the <code>readlink -f</code>-resolved real
+  directory — as its scan argument, and proposes <code>&lt;root&gt;/start.sh</code>. The two specs
+  cannot both be right about the same argv token.</p>
+  <p>This is not cosmetic, because spec-015 pins the leading literal: the path is
+  <code>sha256sum</code>'d at approval and re-probed before every run. Register the resolved path and
+  the next redeploy leaves the action pointing at an old release directory (or a path that no longer
+  exists). Register the symlink and the pinned bytes change under it on every deploy, so the next run
+  refuses with a 409 until re-approved — arguably correct, but a very different operator experience.</p>
+  <div class="q"><b>Question:</b> is the proposed action's leading <code>LITERAL</code> the
+  <code>link</code> path or the resolved <code>appRoot</code> — and if it is the symlink, is
+  re-approval after every deploy the intended workflow?</div>
+  <details>
+    <summary>Evidence — 049's decision, 050's mechanics, 015's consequence</summary>
+    <blockquote>“<code>appRoot</code> is always the <code>readlink -f</code>-resolved real dir;
+    <code>link</code> is what the UI shows as identity (decision: symlink identity is stable across
+    redeploys, the resolved target is secondary).”
+    <cite>049 · NDJSON schema</cite></blockquote>
+    <blockquote>“…the folder line shows the <strong>symlink</strong> path as identity
+    (<code>/opt/app/current</code>)… stable across redeploys, <strong>which is what spec-050 keys its
+    lifecycle scripts to</strong>.”
+    <cite>049 · Implementation sketch → Card</cite></blockquote>
+    <blockquote>“the app's PID and folder are its <strong>only</strong> positional arguments
+    (<code>sh -c &lt;SCRIPT&gt; sh &lt;pid&gt; &lt;appRoot&gt;</code>)”
+    <cite>050 · Detection</cite></blockquote>
+    <pre><code>for f in start.sh run.sh stop.sh kill.sh restart.sh deploy.sh; do
+  [ -f "$root/$f" ] &amp;&amp; echo "script $root/$f"
+done</code></pre>
+    <p class="lens">050 · “By app folder” — <code>$root</code> is <code>$2</code>, the resolved
+    <code>appRoot</code>. The verb table then proposes argv <code>&lt;root&gt;/start.sh</code>.</p>
+    <blockquote>“<code>ApprovalService.approve</code> <code>sha256sum</code>s the leading literal path
+    (<code>ScriptPinService.probe</code>…) and <code>RunService.run</code> re-probes before every run
+    (<code>ScriptModifiedException</code>, 409) — the bytes that run are the bytes a human approved.”
+    <cite>050 · Context, describing spec-015</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--blocker" data-sev="blocker">
+  <div class="fhead">
+    <span class="pill pill--blocker">blocker</span>
+    <h3>The action Shape bullet describes the exact vector the hard constraint bans</h3>
+    <span class="meta">050 · #9</span>
+  </div>
+  <div class="lens">Lens: internal contradiction</div>
+  <p>050's central safety constraint is “register found scripts, never inferred run-commands”, and
+  its not-proposed table rejects Makefiles <em>because</em> running one means synthesizing
+  <code>make -C &lt;root&gt; &lt;target&gt;</code>. Yet the Actions section describes the proposed
+  action shape as a leading literal path plus “optional further <code>LITERAL</code>s” and names the
+  <code>make -C &lt;root&gt; start</code> vector as the example. An implementer who reads the Actions
+  section first will build multi-token argvs the rest of the spec forbids three times.</p>
+  <div class="q"><b>Question:</b> is the multi-<code>LITERAL</code> form dead — or is there a
+  surviving case it was written for?</div>
+  <details>
+    <summary>Evidence — the same example, banned and permitted</summary>
+    <blockquote>“<strong>Shape.</strong> Each proposed action is a spec-007 CUSTOM-style action:
+    leading <code>LITERAL</code> absolute path, <strong>optional further <code>LITERAL</code>s (the
+    <code>make -C &lt;root&gt; start</code> vector)</strong>, <code>sudo = false</code>…”
+    <cite>050 · Actions, the gate &amp; content-pinning</cite></blockquote>
+    <blockquote>“its argv is that one absolute <code>LITERAL</code> path, run verbatim — <strong>no
+    arguments prepended or appended, no shell operators, no loops, no free-form param, ever</strong>”
+    <cite>050 · Detection → Verb mapping</cite></blockquote>
+    <blockquote>“<strong>No inferred run-commands.</strong> The discoverer must <strong>never
+    synthesize</strong> a way to run an app from build metadata — no <code>mvnw spring-boot:run</code>,
+    no <code>gradlew bootRun</code>, no <code>npm run start</code>, <strong>no <code>make
+    start</code></strong>.”
+    <cite>050 · Hard constraint</cite></blockquote>
+    <blockquote>“<code>Makefile</code> <code>start/stop/deploy</code> targets — <em>why not
+    proposed:</em> running it means synthesizing <code>make -C &lt;root&gt; &lt;target&gt;</code> — an
+    <strong>inferred</strong> command…”
+    <cite>050 · Detected but NOT proposed table</cite></blockquote>
+  </details>
+</article>
+
+<h2 id="risks">Risks</h2>
+<p class="lede">Buildable, but each is a likely-rework or wrong-assumption bet.</p>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>Both specs stand on spec-040's leaning — and 040 is an open concern</h3>
+    <span class="meta">049 + 050 · #4</span>
+  </div>
+  <div class="lens">Lens: unstated assumption / dependency</div>
+  <p>Each spec justifies keeping assembly in <code>app.js</code> and adding no backend model by
+  citing “the spec-040 thin-BE leaning”. Spec-040 is <code>todo</code>, it is a <em>concern</em>, and
+  its own heading says the leaning is recorded but the options stay open — with Open Question 1 asking
+  exactly where the BFF line sits, which is the question 049's NDJSON-parsed-in-the-browser design
+  answers by assumption. Both specs are compatible with the leaning, so this is not fatal; the gap is
+  that neither declares it as a bet, and if 040 resolves toward option D (a backend read-model) the
+  client-side assembly in both specs is rework.</p>
+  <div class="q"><b>Question:</b> is 040's leaning being promoted to a decision before these build —
+  or do 049/050 state the rework risk explicitly and proceed?</div>
+  <details>
+    <summary>Evidence — what 040 says about itself</summary>
+    <blockquote>“<strong>Leaning (recorded — this stays a concern, options open)</strong> … The
+    stated preference is a really thin backend”
+    <cite>specs/040-todo-monitor-runtime-view-and-model-weight.md</cite></blockquote>
+    <blockquote>“<strong>Where exactly is the BFF line?</strong> Transient per-request server shaping
+    is allowed; a <em>persisted</em> classification model is not. Is <code>MonitorService</code>'s
+    read-time host/app partition + rollup on the allowed side of that line, or should even that move
+    to the client?”
+    <cite>040 · Open Questions #1</cite></blockquote>
+    <blockquote>“the backend stays ‘run approved script → hand back stdout’ (<strong>the spec-040
+    thin-BE leaning</strong> — <strong>no</strong> persisted classification model, no new table…)”
+    <cite>049 · Decision</cite></blockquote>
+    <blockquote>“<strong>no persisted classification model</strong> (spec-040 thin-BE: discovery
+    surfaces commands + params; the UI assembles the controls)”
+    <cite>050 · Decision #4</cite></blockquote>
+    <p>The catalog agrees it is unresolved: row 040 reads “<em>concern (options open; leaning =
+    thin BE)</em>”.</p>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>A slowly-sampled footprint feeds a per-poll disk axis, with no stated behaviour in between</h3>
+    <span class="meta">049 · #3</span>
+  </div>
+  <div class="lens">Lens: buildability gap — unspecified behaviour on an obvious path</div>
+  <p>049 decides two things that meet awkwardly: <code>footprintBytes</code> is deliberately sampled
+  slowly, and <code>footprintBytes</code> feeds the machine's attributed disk axis, which forces a
+  joint edit to spec-041's OTHER computation so the app is not double-counted. But 041 computes
+  <code>other = clamp(host_used − Σ attributed, ≥ 0)</code> on <em>every</em> poll. The spec never
+  says what the axis does between footprint samples — whether the last value is retained, treated as
+  absent, or zero. That choice is the difference between a stable bar, a segment that flickers in and
+  out every poll, and exactly the double-count the spec set out to avoid.</p>
+  <div class="q"><b>Question:</b> does a stale <code>footprintBytes</code> keep feeding the axis, for
+  how long, and what does the axis show on the first fast poll after a page load?</div>
+  <details>
+    <summary>Evidence — the two decisions and 041's formula</summary>
+    <blockquote>“the <code>footprint</code> probe is <strong>not</strong> run at the 5 s poll tier…
+    so folder + sizes <strong>lag the fast metrics</strong>”
+    <cite>049 · du gating</cite></blockquote>
+    <blockquote>“The native <strong>disk % axis is fed</strong> from <code>footprintBytes</code>…
+    This is a <strong>joint 049 + 041 change</strong>: 041's <code>OTHER = host_used − Σ
+    attributed</code> disk computation (<code>computeOther</code> in <code>app.js</code>) must now
+    subtract the newly-attributed native disk bytes as well, or the deployed app double-counts”
+    <cite>049 · Implementation sketch</cite></blockquote>
+    <blockquote>“Compute <code>other = clamp(host_used − Σ attributed_consumers, ≥ 0)</code> per axis
+    and render”
+    <cite>specs/041-done-host-system-usage-segment.md · Decision</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>049's Acceptance never tests its headline disk-axis decision</h3>
+    <span class="meta">049 · #5</span>
+  </div>
+  <div class="lens">Lens: untestable acceptance</div>
+  <p>Resolved design question 1 makes feeding the disk axis — and amending 041's OTHER math — a
+  headline decision of this spec, and finding #3 above shows it is the subtlest thing in it. The
+  Acceptance section checks the card folder, the three sizes, the build-tree suppression and the
+  unresolved tag. It never mentions the disk axis, the OTHER segment, or double-counting, so the
+  riskiest decision in the spec has no checkable done condition.</p>
+  <div class="q"><b>Question:</b> what observable check proves a deployed app's bytes are attributed
+  exactly once?</div>
+  <details>
+    <summary>Evidence — what Acceptance covers</summary>
+    <blockquote>“The monitor card for each app shows its <strong>folder</strong> and <strong>a
+    size</strong>: the deployed java app shows artifact + data + approximate footprint; the
+    build-tree java app shows folder + artifact with ‘build tree — footprint suppressed’; the python
+    app shows its project folder… a <code>python -c</code> straggler shows cwd tagged ‘unresolved’.
+    Nothing runs without UI approval; <code>GateArchTest</code> and the full suite stay green.”
+    <cite>049 · Acceptance (complete)</cite></blockquote>
+    <blockquote>“<strong>Disk % axis — FED, and the card size line stays too</strong>… <strong>Joint
+    049 + 041 change</strong>: 041's <code>computeOther</code> must subtract the newly-attributed
+    native disk bytes”
+    <cite>049 · Resolved design questions #1</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>Action-name uniqueness is asserted, not established</h3>
+    <span class="meta">050 · #10</span>
+  </div>
+  <div class="lens">Lens: buildability gap</div>
+  <p>050 says losers of a verb contest are proposed under their basename and that “action names are
+  unique within the recipe by construction” — but gives no rule that produces that uniqueness. Take a
+  folder with <code>start.sh</code> and <code>run.sh</code>, launched by an ancestry
+  <code>bash /opt/app/run.sh</code>. <code>start.sh</code> wins <code>start</code>; the folder
+  <code>run.sh</code> loses and becomes <code>run</code>; the ancestry launcher is only mapped to
+  <code>start</code> “if no folder start candidate won”, so it loses too — and the spec never names
+  it. Its natural basename is <code>run</code>, which is taken.</p>
+  <div class="q"><b>Question:</b> what names a losing ancestry launcher, and what breaks a basename
+  tie?</div>
+  <details>
+    <summary>Evidence — the precedence rule and the ancestry row</summary>
+    <blockquote>“Precedence when several script files map to one verb: the first row wins the verb
+    name; the losers are still proposed under their <strong>basename</strong> as the action name
+    (<code>run</code> for a losing <code>run.sh</code>) — runnable from the drawer, but not mapped to
+    a card button (name ≠ verb). <strong>Action names are unique within the recipe by
+    construction.</strong>”
+    <cite>050 · Verb mapping</cite></blockquote>
+    <div class="scroll"><table>
+      <tr><th>Script file found</th><th>Verb</th><th>Proposed argv</th></tr>
+      <tr><td><code>start.sh</code> (else <code>run.sh</code>)</td><td>start</td><td><code>&lt;root&gt;/start.sh</code></td></tr>
+      <tr><td>ancestry launcher <code>…/run.sh</code></td><td>start</td><td><code>&lt;launcher path&gt;</code> (only if no folder start candidate won)</td></tr>
+    </table></div>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3><code>managedBy</code> declares four values; detection produces three</h3>
+    <span class="meta">050 · #11</span>
+  </div>
+  <div class="lens">Lens: undefined data shape</div>
+  <p>The NDJSON schema declares <code>"managedBy": "script|systemd|docker|bare"</code> and the scope
+  rule keys on “<code>script</code> or <code>bare</code>”. The detection snippet classifies systemd,
+  classifies docker, and lumps the remainder as “else script/bare” — nothing in the spec distinguishes
+  the two. It is inert for the scope rule (both propose), but it is a schema field with no producer,
+  and undefined the moment the UI renders it.</p>
+  <div class="q"><b>Question:</b> what evidence makes an app <code>script</code> rather than
+  <code>bare</code> — the presence of an ancestry launcher?</div>
+  <details>
+    <summary>Evidence — schema vs. classifier</summary>
+    <blockquote>“<code>{"appRoot": …, "managedBy": "script|systemd|docker|bare", "scripts": […]}</code>”
+    <cite>050 · Decision #2</cite></blockquote>
+    <pre><code># managedBy from the cgroup (same signal AppMonitorDiscoverer already reads):
+#   *.service → systemd ; docker|containerd|kubepods → docker ; else script/bare</code></pre>
+    <p class="lens">050 · “By PID / process ancestry”</p>
+    <blockquote>“the discoverer proposes runnable actions <strong>only for apps whose
+    <code>managedBy</code> is <code>script</code> or <code>bare</code></strong>”
+    <cite>050 · Scope rule</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--risk" data-sev="risk">
+  <div class="fhead">
+    <span class="pill pill--risk">risk</span>
+    <h3>050's Acceptance skips the three most dangerous behaviours</h3>
+    <span class="meta">050 · #12</span>
+  </div>
+  <div class="lens">Lens: untestable acceptance</div>
+  <p>Acceptance walks a clean path: discovery proposes <code>start</code>/<code>stop</code>, UI
+  approval pins both, an unreadable path 409s, Start runs inline, Stop opens the drawer, editing the
+  script 409s the next run. What it never exercises is everything the spec added <em>for safety</em>:
+  the deploy type-the-app-name gate, the composed restart with its half-failure rule, the
+  <code>proposed:false</code> read-only reporting, and the systemd dedup-by-verb. The composed restart
+  in particular has a stated failure mode — “if start fails after stop succeeds, the app stays down” —
+  with no acceptance check that the guard works.</p>
+  <div class="q"><b>Question:</b> what is the checkable done condition for composed restart, for the
+  deploy name-typing gate, and for “systemd app ⇒ reported, never proposed”?</div>
+  <details>
+    <summary>Evidence — decisions with no matching acceptance</summary>
+    <blockquote>“Otherwise the UI <strong>composes</strong> it: run <code>stop</code>, await its
+    <strong>terminal</strong> run state, then run <code>start</code>… If <code>stop</code> reaches a
+    failed terminal state, <code>start</code> is <strong>not</strong> auto-run”
+    <cite>050 · Restart composition (decision)</cite></blockquote>
+    <blockquote>“<code>deploy</code> requires the operator to <strong>type the app name to
+    confirm</strong>… the Deploy button stays disabled until the typed value equals the card's app
+    name.”
+    <cite>050 · Deploy carries extra friction (decision)</cite></blockquote>
+    <blockquote>“the scan still <strong>reports</strong> them in the NDJSON
+    (<code>proposed: false</code>)… but proposes <strong>no</strong> runnable actions… the UI
+    <strong>dedups by verb, preferring the systemd control</strong>”
+    <cite>050 · When a systemd-managed app also has folder scripts</cite></blockquote>
+    <blockquote>“The monitor app card then shows <strong>Start</strong> and <strong>Stop</strong>
+    controls: Start runs inline and the card flips UP; Stop opens the confirm/review drawer showing
+    the exact pinned command before running.”
+    <cite>050 · Acceptance — the whole UI assertion</cite></blockquote>
+  </details>
+</article>
+
+<h2 id="minors">Minor</h2>
+<p class="lede">Small ambiguities and bookkeeping slips — each is a sentence to fix.</p>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3>049 points at a Known Gap that isn't there</h3>
+    <span class="meta">049 · #6</span>
+  </div>
+  <div class="lens">Lens: internal contradiction (bookkeeping)</div>
+  <p>The Resolved-questions section signs off by saying the 041 disk-math edit is tracked below in
+  Related <em>and</em> Known Gaps. Known Gaps has five bullets — one-shot sizes, footprint ≠
+  accounting, node/go stubs, other-user apps, folder paths UI-only — and none is about 041. Related
+  does carry it. Worth closing because 041 is <code>done</code>, and the spec never says whether it
+  gets amended, superseded, or just quietly changed.</p>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote>“No residual open questions for 049. (The graceful-shutdown-vs-long-run question lives
+    in spec-050; <strong>the 041 disk-math edit is tracked in Related / Known Gaps below</strong>.)”
+    <cite>049 · Resolved design questions</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3><code>cwd-only</code> or <code>unresolved</code>, offered as an either/or</h3>
+    <span class="meta">049 · #7</span>
+  </div>
+  <div class="lens">Lens: undecided-as-decided</div>
+  <p>The two are distinct values in the schema with different meanings — <code>cwd-only</code> is the
+  honesty label for “heuristics failed, this is just the process cwd”, <code>unresolved</code> is “not
+  even a cwd”. The python section then offers them interchangeably for the same case, and Acceptance
+  expects the <code>python -c</code> straggler to show “unresolved”.</p>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote>“<code>python -c …</code>, bare REPL, script outside any marked tree —
+    <strong>unresolved</strong> — emit <code>rootKind=cwd-only</code> <strong>(or
+    <code>unresolved</code>)</strong>, show cwd, claim nothing more”
+    <cite>049 · Python cmdline shapes table</cite></blockquote>
+    <blockquote>“<code>cwd-only</code> (heuristics failed; <code>appRoot</code> is just the process
+    cwd, honesty label) | <code>unresolved</code> (not even a cwd — e.g. <code>python -c</code>,
+    permissions denied)”
+    <cite>049 · NDJSON schema</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3>050 cites “Open Question 4” in a spec with no open questions</h3>
+    <span class="meta">050 · #13</span>
+  </div>
+  <div class="lens">Lens: internal contradiction (stale reference)</div>
+  <p>A Known Gap is annotated “(Open Question 4)”, but the Open Questions section says “None open for
+  050.” The same bullet also duplicates an earlier Known Gap about foreground scripts — except it adds
+  a claim the other doesn't: that the run-view Stop kills the app rather than just the stream. That
+  extra claim is the part worth keeping or resolving.</p>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote>“<strong>Foreground starters hold the run open</strong> (Open Question 4) — proposed,
+    but the run-view Stop kills the app, not just the stream.”
+    <cite>050 · Known Gaps</cite></blockquote>
+    <blockquote>“<strong>None open for 050.</strong> The long-running-drain <em>policy</em> is
+    deferred to <strong>concern spec-051</strong>”
+    <cite>050 · Open Questions (residual)</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3>The 25 s drain is the wrong knob</h3>
+    <span class="meta">050 · #14</span>
+  </div>
+  <div class="lens">Lens: cross-spec inconsistency</div>
+  <p>050's deploy-safety baseline is stated in terms of a “bounded 25 s window” for draining in-flight
+  runs. In spec-016, 25 s is <code>spring.lifecycle.timeout-per-shutdown-phase</code>; the run drain is
+  <code>ca.run.shutdown-await-seconds</code>, default <strong>20</strong>, deliberately kept under the
+  phase timeout. Concern 051 states both numbers correctly, which makes 050 the odd one out.</p>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote>“graceful shutdown (spec-016) drains in-flight runs within a <strong>bounded 25 s
+    window</strong> on SIGTERM”
+    <cite>050 · Long-running runs</cite></blockquote>
+    <blockquote>“<code>setAwaitTerminationSeconds(...)</code> — new key
+    <code>ca.run.shutdown-await-seconds</code> (default <code>20</code>, <strong>kept below the 25s
+    phase timeout</strong> so the await completes within the …)”
+    <cite>specs/016-done-graceful-shutdown-and-run-reconciliation.md</cite></blockquote>
+    <blockquote>“spec-016's bounded drain (<code>server.shutdown: graceful</code> +
+    <code>timeout-per-shutdown-phase 25s</code>; <code>ca.run.shutdown-await-seconds</code> 20 in
+    <code>AsyncConfig</code>)”
+    <cite>specs/051-todo-run-execution-policy.md — states it correctly</cite></blockquote>
+  </details>
+</article>
+
+<article class="f f--minor" data-sev="minor">
+  <div class="fhead">
+    <span class="pill pill--minor">minor</span>
+    <h3>Every lifecycle script is assumed not to need privilege</h3>
+    <span class="meta">050 · #15</span>
+  </div>
+  <div class="lens">Lens: unstated assumption</div>
+  <p><code>sudo = false</code> is set for all proposed actions on the grounds that the folder came from
+  the login user's own process. That follows for reading, but a <code>deploy.sh</code> or
+  <code>restart.sh</code> that touches a system service, a privileged port or a shared data directory
+  routinely needs escalation. The Permissions section bounds <em>discovery</em> coverage honestly;
+  nothing records that a lifecycle script requiring sudo is simply unsupported.</p>
+  <details>
+    <summary>Evidence</summary>
+    <blockquote>“<code>sudo = false</code> (the folder came from the login user's own process; there
+    is nothing to escalate)”
+    <cite>050 · Actions → Shape</cite></blockquote>
+    <blockquote>“The probe runs as the machine's <code>loginUser</code>, no <code>sudo</code> — so
+    coverage is bounded to apps that user owns”
+    <cite>050 · Permissions &amp; coverage — about the probe, not the proposed action</cite></blockquote>
+  </details>
+</article>
+
+<h2 id="held">What held up</h2>
+<article class="f" data-sev="ok" style="border-left:3px solid var(--ok)">
+  <div class="fhead">
+    <span class="pill pill--ok">verified</span>
+    <h3>050's content-pinning claim is exactly right</h3>
+    <span class="meta">050 → 015</span>
+  </div>
+  <p>050 argues that filing lifecycle actions under <code>RecipeType.CUSTOM</code> buys spec-015
+  content-pinning “with zero new pinning code”, and that this deliberately flips 015's note that
+  discovered actions are not pinned. Both halves check out against 015 as written — this is the
+  strongest load-bearing argument in the spec, and it is correct.</p>
+  <details>
+    <summary>Evidence — 015's own words</summary>
+    <blockquote>“<strong>Discovery</strong> (<code>discovery/…</code>). Discoverers propose built-in
+    service recipes (<code>NGINX/DOCKER/DATABASE/CRON</code>), persisted
+    <code>PENDING_APPROVAL</code>… Keying pinning on <code>RecipeType.CUSTOM</code> means
+    <strong>discovered actions are not pinned</strong> even when a proposed argv leads with an
+    absolute-path <code>LITERAL</code> to a system binary… No discovery change.”
+    <cite>specs/015-done-custom-script-content-pinning.md · Impact / blast radius</cite></blockquote>
+    <blockquote>“This intentionally flips spec-015's ‘discovered actions are not pinned’ note — these
+    discovered actions land under <code>CUSTOM</code> precisely so they <strong>are</strong> pinned,
+    with zero new pinning code.”
+    <cite>050 · Actions, the gate &amp; content-pinning</cite></blockquote>
+  </details>
+</article>
+
+<h2 id="method">Scope &amp; method</h2>
+<p>Document analysis only — no source file, test or config was opened, which is the point: this
+judges the specs as written, not an implementation that does not exist yet. Both targets are
+<code>todo</code> specs, so both are valid; concerns and <code>done</code> specs are out of scope by
+rule.</p>
+<p><strong>Per the brief, implementation detail was left alone</strong> — 049's
+<code>## Implementation sketch</code> contents and 050's absent <code>## Implementation</code> section
+were not judged. Findings #3 and #8 touch mechanics only where a mechanism <em>is</em> the decision
+(which path gets hashed; what feeds the axis).</p>
+<details>
+  <summary>Documents read</summary>
+  <ul>
+    <li><strong>Targets:</strong> <code>049-todo-app-folder-detection.md</code>,
+      <code>050-todo-lifecycle-script-detection-controls.md</code> — in full.</li>
+    <li><strong>Cross-checked:</strong> 040 (thin-BE concern, in full), 024 (cadence selector),
+      015 (content-pinning scope + blast radius), 016 (drain timings), 041 (OTHER formula),
+      051 (drain numbers), 026 / 007 (referenced shapes), <code>specs/catalog.md</code>.</li>
+  </ul>
+</details>
+<p class="lens">Nothing was written or changed by the review. Every finding names a question rather
+than a fix — deciding between the options is a separate exercise, and
+<code>/rich-html:decide</code> is the surface built for it.</p>
+
+<div class="foot">
+  Redteam of specs 049 &amp; 050 · compute-admin · 2026-08-12 ·
+  4 blockers, 6 risks, 5 minors across two specs.
+</div>
+
+</div>
+
+<script>
+(function () {
+  var all = document.getElementById("f-all");
+  var blk = document.getElementById("f-block");
+  var exp = document.getElementById("f-exp");
+  var cards = Array.prototype.slice.call(document.querySelectorAll(".f[data-sev]"));
+
+  function filter(onlyBlockers) {
+    cards.forEach(function (c) {
+      var hide = onlyBlockers && c.getAttribute("data-sev") !== "blocker";
+      c.classList.toggle("hide", hide);
+    });
+    all.setAttribute("aria-pressed", onlyBlockers ? "false" : "true");
+    blk.setAttribute("aria-pressed", onlyBlockers ? "true" : "false");
+  }
+  all.addEventListener("click", function () { filter(false); });
+  blk.addEventListener("click", function () { filter(true); });
+
+  exp.addEventListener("click", function () {
+    var open = exp.getAttribute("aria-pressed") !== "true";
+    Array.prototype.forEach.call(document.querySelectorAll("details"), function (d) {
+      d.open = open;
+    });
+    exp.setAttribute("aria-pressed", open ? "true" : "false");
+    exp.textContent = open ? "Collapse evidence" : "Expand evidence";
+  });
+})();
+</script>
+</body>
+</html>
