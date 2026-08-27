@@ -1,21 +1,18 @@
-# 053 — App model & verb contract
+# 053 — Verb & command contract  *(was: App model & verb contract)*
 
-> **NOTE — partially superseded by concern 054 (provisional).** A model comparison found that
-> ~10 of this concern's 17 decisions are *identity / measurement* calls that concern **054**
-> (lightweight app-metadata model) re-answers from a clean slate — the declared-app substrate and
-> its lifecycle (dec. 4, 8–10, axes C/E, OQ2/OQ3), classification-as-declaration (dec. 2, dec. 5's
-> A4 side-data half), path-derivation + normalisation/alias map (dec. 12–13), the probe-constant
-> table (dec. 16, axis D), and the **symlink-vs-resolved** token this concern flagged as *worsened*
-> (→ 054 OQ1). What **stays here** is the **verb & command contract**, whose complexity is forced by
-> the approval gate (spec-004/015), not the identity model: the closed verb vocabulary (dec. 3),
+> **WARNING — identity/measurement half resolved by spec 055 (app-model epic 055–060).** A model
+> comparison found ~10 of this concern's 17 decisions were *identity / measurement* calls; they are
+> now graduated into the **app-model epic**: declared-app substrate + lifecycle (dec. 4, 8–10, axes
+> C/E, OQ2/OQ3 — dissolved because **056**'s non-listening sweep makes that population discoverable),
+> classification-as-declaration (dec. 2, dec. 5 A4), path-derivation + normalisation/alias map
+> (dec. 12–13 → **055**'s `ContextMapper`), the probe-constant table (dec. 16, axis D → **057**), and
+> the **symlink-vs-resolved** token this concern flagged as *worsened* (→ 055's symlink key + the
+> spec-015/S9 adoption rider). **What remains open here** is the **verb & command contract**, whose
+> complexity is gate-forced (spec-004/015), not identity-driven: the closed verb vocabulary (dec. 3),
 > identity+verb inside the hash + re-approve (dec. 5 A1, dec. 7), never-in-argv (dec. 6), multi-app
-> commands (dec. 11), MCP verbs + `part` (dec. 14–15), and OQ4/OQ5. **The two gating forks are now
-> decided (2026-08-27):** 054's OQ1 took the split symlink key and **OQ4 landed IN SCOPE**, so the
-> identity-half supersede **holds** (this concern's declared-app population is now discoverable, so
-> that machinery dissolves). This concern is retired — retitled to a verb-and-command contract, this
-> note replaced by a WARNING — when **054 graduates into its build spec** (a concern is resolved by a
-> spec, not by another concern). See 054's *Relationship to other documents* for the
-> decision-by-decision split.
+> commands (dec. 11), MCP verbs + `part` (dec. 14–15), and OQ4/OQ5 — these await their own graduating
+> spec (and are audited end-to-end by **060**). See 055's *Decision*/*Implementation* for how the
+> identity half was built, and 054 for the decision-by-decision split.
 
 **Status:** concern (most axes decided in the 2026-08-12 reviews; a short residue stays
 open) · no branch · no Linear (blocked for this repo).
