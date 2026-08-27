@@ -520,6 +520,11 @@ esac</pre>
   model has to commit to. They are decisions, not facts, so they're carried into a companion
   <a class="src" href="./lightweight-app-model-decide.html"><b>decision surface&nbsp;↗</b></a> where you can weigh the
   evidence, pick, and emit an execution prompt; here they're only surfaced.</p>
+  <p style="border-left:4px solid var(--accent2);background:var(--card);padding:.7rem 1rem;border-radius:8px">
+  <b>Decided 2026-08-27 — all five took their recommended option.</b> D1 the split symlink key · D2 one hop +
+  marker-gated second · D3 degrade-and-label (+ an on-demand re-probe-with-sudo) · D4 non-listening apps
+  <b>in scope</b> · D5 docker-only DB sizing (standalone deferred to its own spec). Recorded in the 054 concern's
+  <em>Decisions taken</em>; D4 in-scope confirms the partial supersede of 053.</p>
 
   <div class="decision"><details><summary>Symlink identity — key on the resolved path, or the logical one? <span class="rec">rec: logical for deploy-symlinks, physical otherwise</span></summary>
   <div class="body"><p>Keying on the <em>resolved</em> path collapses aliases correctly but makes a
