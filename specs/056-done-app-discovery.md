@@ -1,6 +1,6 @@
 # 056 — App discovery
 
-**Status:** doing · Linear [BOL-885](https://linear.app/iskeru/issue/BOL-885) · build branch `moacyrricardo/bol-885-cpt-056-app-discovery`. **Blocked by 055 (BOL-884).**
+**Status:** done · Linear [BOL-885](https://linear.app/iskeru/issue/BOL-885) · build branch `moacyrricardo/bol-885-cpt-056-app-discovery`. Stacked on 055 (BOL-884, PR #80).
 
 ## Context
 
@@ -251,3 +251,41 @@ it).
   nginx/postgres/mysql/mariadb Debian/Ubuntu-family rows only.
 - **The MCP end-to-end audit is 060** — 056 keeps its own surface consistent (no new tool, paths as
   side-data) but the cross-cutting gate/S9 verification of the whole 055–060 delta is 060's job.
+
+## Implementation Notes
+
+Built stacked on the 055 build branch (BOL-884, PR #80), base of PR #81. What shipped vs. how it
+differed from the spec:
+
+**Shipped in full (Decisions 1–3).**
+- `sourceNote` provenance added to `AppPortItem` (Decision 1) and populated by every sweep branch;
+  it names the port/branch and never carries a path (S9). The record also gained a `confidence`
+  field (Decision 5). `app_port_list` is now un-audited CLOB side-data on the recipe.
+- The listening branch skips `docker-proxy` listeners (Decision 4, native half) and the cgroup-first
+  routing from 055 was extended to the new sweeps (Decision 2).
+- The **non-listening sweep** (Decision 3) landed inside the `APP` discoverer as three unioned
+  read-only enumerations — `systemctl list-units --state=running` → per-unit `MainPID`, an
+  interpreter `ps -eo pid=,args=` scan, and a fixed `sh -c` cron read — each emitting the same record
+  shape with sentinel `port = 0`, PID-deduped against the listening set and each other, mapped through
+  the 055 `ContextMapper` seam. The old "no listeners → nothing" early return was removed so a
+  workers-only host is discovered. Non-listening apps route to the `generic app monitor` family (no
+  port ⇒ no framework probe is meaningful); the run-time `[1,65535]` validator skip for their port-0
+  items is a 057 concern, as the spec notes.
+- **Migration (the MAJOR item):** `V15__widen_app_port_list.sql` widens `app_port_list` VARCHAR(4000)
+  → CLOB, with the `@Lob` entity mapping in the same commit and a >4000-char round-trip regression
+  test.
+
+**Shipped native-only, docker half deferred (Decisions 4 & 5).**
+- Decision 5's **native** fingerprinting shipped: a source-controlled `ServiceCatalog`
+  (nginx/postgres/mysql/mariadb Debian/Ubuntu rows) + fingerprint → catalog → verify, where a
+  `PGDATA`/`MYSQL_DATADIR` value on `/proc/<pid>/environ` overrides the catalog default and two
+  agreeing signals (process **and** catalog port) stamp `confidence = high`, else `low`.
+- **Deferred to follow-on specs** (bounded, self-contained, and touching a different
+  discoverer/model — recommended in the PR #81 eval rather than sprawling this branch):
+  1. the **Docker branch** enrichment — `docker inspect` for `Mounts[]`/`NetworkSettings.Ports`/
+     `Config.Env`, image-tag fingerprinting, DNAT published-port truth, and dockerized-DB context
+     membership (Decisions 4 & 5, docker half; `DockerComposeDiscoverer` was left untouched);
+  2. the **`/proc/net/tcp{,6}` fallback + fd-inode PID join** and the `exe`-as-app-script signal —
+     the unprivileged robustness path for a denied `ss users:()` join;
+  3. minor: nginx real-root via `nginx -T`, and relative interpreter-script resolution (the v1 scan
+     requires an absolute path or a known script extension).
