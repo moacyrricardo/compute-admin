@@ -9,6 +9,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.ForeignKey;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -81,8 +82,15 @@ public class Recipe {
      * it, and adding/removing apps needs no re-approval (spec-022). {@code null} for
      * host-vitals (spec-023) and every non-app-monitor recipe. {@link NotAudited}: it
      * is mutable runtime state, not part of the approval/audit trail. spec-025.
+     *
+     * <p>Stored as a {@code CLOB} (spec-056): the unioned discovery sweeps (listening +
+     * non-listening + fingerprinted services) multiply the item count and enlarge each
+     * item (055's three path fields + a {@code sourceNote}), so a busy host overflows the
+     * old {@code VARCHAR(4000)} and {@code persist(...)} would throw. {@link Lob} widens
+     * the capacity only — no format change.
      */
-    @Column(name = "app_port_list", length = 4000)
+    @Lob
+    @Column(name = "app_port_list")
     @NotAudited
     private String appPortList;
 
