@@ -6,6 +6,7 @@ import com.iskeru.computeadmin.recipe.model.ApprovalState;
 import com.iskeru.computeadmin.recipe.model.ArgToken;
 import com.iskeru.computeadmin.recipe.model.ParamAllowedValue;
 import com.iskeru.computeadmin.recipe.model.ParamDef;
+import com.iskeru.computeadmin.recipe.model.TokenKind;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -94,7 +95,25 @@ public class ListActionsTool implements McpTool {
     }
 
     private static Map<String, Object> tokenView(ArgToken token) {
-        return Map.of("kind", token.getKind().name(), "value", token.getValue());
+        return Map.of("kind", token.getKind().name(), "value", renderTokenValue(token));
+    }
+
+    /**
+     * S9 (spec-055): a path-shaped {@code LITERAL} argToken value — e.g. a CUSTOM action's
+     * pinned absolute {@code scriptPath} bound at run time — must never reach the MCP surface
+     * as a raw path. Mirror {@code McpMachineView}'s host-hiding split and surface only the
+     * accepted basename; {@code PARAM} tokens (param names) and non-path literals pass
+     * through verbatim. This is the runtime half of the structural guarantee the source-scan
+     * arch test guards (060 verifies both end-to-end).
+     */
+    static String renderTokenValue(ArgToken token) {
+        String value = token.getValue();
+        if (token.getKind() == TokenKind.LITERAL && value != null && value.startsWith("/")) {
+            String trimmed = value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+            int slash = trimmed.lastIndexOf('/');
+            return slash >= 0 ? trimmed.substring(slash + 1) : trimmed;
+        }
+        return value;
     }
 
     private static Map<String, Object> paramView(ParamDef def) {
