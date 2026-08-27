@@ -119,6 +119,23 @@ class AppMonitorDiscovererTest {
     }
 
     @Test
+    void discover_DockerProxyListener_IsSkippedNotMappedAsANativeApp() {
+        // A published container port shows on the host as a docker-proxy listener (iptables
+        // DNAT). Decision 4: it must NOT become a native app via docker-proxy's /proc path —
+        // the Docker branch owns that port's truth. Only the real native app is emitted.
+        FakeSshExecutor ssh = new FakeSshExecutor(dockerProxyAndNativeApp());
+
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+
+        assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("springboot monitor");
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port)
+                .containsExactly(tuple("orders", 8080));
+        // The proxy PID's /proc is never read (the skip short-circuits before any probe).
+        assertThat(ssh.commands).doesNotContain(List.of("cat", "/proc/4000/cmdline"));
+    }
+
+    @Test
     void discover_NoListeners_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
         assertThat(discoverer.discover(machine(), ssh)).isEmpty();
@@ -301,6 +318,21 @@ class AppMonitorDiscovererTest {
                     ok("0::/user.slice/user-1000.slice/session-3.scope");
             case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
             default -> notFound(); // curl -sf .../metrics → no Prometheus
+        };
+    }
+
+    private Function<List<String>, ExecResult> dockerProxyAndNativeApp() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:5432       0.0.0.0:*     users:((\"docker-proxy\",pid=4000,fd=4))",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))");
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/orders");
+            default -> notFound();
         };
     }
 

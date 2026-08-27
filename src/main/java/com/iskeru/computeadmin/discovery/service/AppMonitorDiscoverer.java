@@ -174,6 +174,13 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         List<Resolved> resolved = new ArrayList<>();
         boolean prometheus = false;
         for (Listener listener : listeners) {
+            // Decision 4: a published container port may be owned on the host by
+            // `docker-proxy` (iptables DNAT). Its /proc path is never a native app-folder —
+            // published-port truth belongs to the Docker branch (docker inspect), so the
+            // listening sweep positively recognises and skips it rather than mapping it.
+            if (isDockerProxy(listener.process())) {
+                continue;
+            }
             String cmdline = cmdline(ssh, target, listener.pid());
             Runtime runtime = runtimeOf(ssh, target, listener.pid());
             String container = runtime == Runtime.DOCKER ? containerName(ssh, target, listener.pid()) : null;
@@ -653,6 +660,15 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private String listeningSourceNote(Runtime runtime, int port) {
         String branch = runtime == Runtime.DOCKER ? "container" : "app folder";
         return branch + " · discovered via port :" + port;
+    }
+
+    /**
+     * Whether a listener's owning process is docker's userland port forwarder (Decision 4).
+     * {@code ss} reports the DNAT host process as {@code docker-proxy}; that port is a
+     * container's published port and its truth comes from the Docker branch, never here.
+     */
+    private boolean isDockerProxy(String process) {
+        return "docker-proxy".equals(process);
     }
 
     /** One listening socket: its port, owning PID, and process name (login user only). */
