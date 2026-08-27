@@ -40,11 +40,17 @@ import java.util.List;
  * non-listening items (a 057 concern). {@code port = 0} together with a {@code sourceNote}
  * marks the record as declared-only.
  *
- * <p>spec-025; context fields added in spec-055; {@code sourceNote} added in spec-056.
+ * <p><strong>Fingerprint confidence (spec-056 Decision 5).</strong> {@code confidence} is
+ * {@code "high"} when two signals agree that the record is a fingerprinted common service
+ * (process/exe <em>and</em> port, or image <em>and</em> port), {@code "low"} on a single
+ * signal, and {@code null} for a record that was not fingerprint-matched. Un-audited
+ * side-data — a labelling hint, never argv or hashed.
+ *
+ * <p>spec-025; context fields added in spec-055; {@code sourceNote}/{@code confidence} in spec-056.
  */
 public record AppPortItem(String appName, int port, String runtime,
                           String scriptFolder, String contextKey, String contextDisplay,
-                          List<String> contextScripts, String sourceNote) {
+                          List<String> contextScripts, String sourceNote, String confidence) {
 
     public AppPortItem {
         contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
@@ -52,14 +58,9 @@ public record AppPortItem(String appName, int port, String runtime,
 
     /**
      * An item with no resolved context (existing call sites and un-mappable records). The
-     * context fields default to {@code null}/empty and no provenance is recorded.
+     * context fields default to {@code null}/empty and no provenance/confidence is recorded.
      */
     public AppPortItem(String appName, int port, String runtime) {
-        this(appName, port, runtime, null, null, null, List.of(), null);
-    }
-
-    /** An un-mapped item that still records which sweep branch found it (spec-056). */
-    public AppPortItem(String appName, int port, String runtime, String sourceNote) {
-        this(appName, port, runtime, null, null, null, List.of(), sourceNote);
+        this(appName, port, runtime, null, null, null, List.of(), null, null);
     }
 }
