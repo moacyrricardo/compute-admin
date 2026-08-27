@@ -15,8 +15,10 @@
 > **Supersedes the framing of 049 and 050.** This concern re-opens, from a clean slate, the
 > question those two `todo` specs had already answered in code-shaped detail. Both are being closed
 > out as superseded (a SUPERSEDED header points here); their mechanisms are not lost — they are
-> re-examined as options below. 053's **verb / action contract** is a *separate* axis and stays its
-> own concern; this one is only about *what an app is* and *how we measure it*.
+> re-examined as options below. It also **partially supersedes 053**: 054 absorbs 053's
+> *identity / measurement* half, leaving 053 narrowed to the **verb & command contract** (the cut is
+> in [Relationship to other documents](#relationship-to-other-documents), provisional on OQ1/OQ4).
+> This concern is only about *what an app is* and *how we measure it*.
 
 ## Problem
 
@@ -111,10 +113,27 @@ graduate into a spec.
 
 - **049 / 050** — superseded by this framing (SUPERSEDED headers point here); their code-shaped
   mechanisms are the options above.
-- **053 (app model & verbs)** — the **verb / action / "destructive"** contract stays there; 054 is
-  only *identity + measurement*. The two meet at one seam: 054's chosen app-identity (OQ1) is what
-  053's declared-app / verb params attach to. 053's own open item "where a declared app persists"
-  depends on 054 settling what an app *is*.
+- **053 (app model & verbs)** — **054 partially supersedes 053.** A review comparing the two models
+  found that ~10 of 053's 17 decisions are *identity / measurement* calls that sit on 054's side of
+  the seam and dissolve or move here; 053 survives **narrowed to the verb & command contract**, whose
+  complexity is forced by the **approval gate** (spec-004/015) — which 054 deliberately does not touch —
+  not by the identity model.
+  - *Move to 054 (identity/measurement half):* declared-app substrate + lifecycle (053 dec. 4, 8, 9,
+    10, axis E, OQ2, OQ3 — its OQ4 non-listening-apps sweep makes 053's "structurally undetectable"
+    population *discoverable*, removing the declared-app rationale); classification-as-declaration
+    (dec. 2, the A4 side-data half of dec. 5); path-derivation mechanics (dec. 12, mapping); the
+    normalisation + alias map (dec. 13, now dedup-by-construction); the probe-constant/detector table
+    (dec. 16, axis D); the 032/033/038 transition end-state (axis C); the compose-project = one app
+    *identity* call (dec. 1, identity half); and the **symlink-vs-resolved** token (053's "worsened"
+    finding) → **054 OQ1**.
+  - *Stays in 053 (verb & command contract):* the closed **verb vocabulary** (dec. 3), identity+verb
+    **inside the approval hash** and re-approve-on-change (dec. 5 A1 half, dec. 7, its destructive
+    flag), the **never-in-argv** invariant (dec. 6), multi-app commands (dec. 11), MCP-speaks-verbs
+    and `part` addressing (dec. 14, 15), "agent proposes / UI decides" (from dec. 8), the
+    accept-at-approval rider (dec. 12), and OQ4/OQ5.
+  - **The cut is load-bearing on 054's OQ1 + OQ4** and is therefore *provisional* until those forks
+    are locked: if OQ4 lands "ports + docker only," 053's declared-app machinery walks back in. The
+    full 053 retitle + WARNING is deferred to when the forks are decided; recorded here as intent.
 - **032–041** — the consumer/footprint axes 054's Probing stage feeds; 041's single-denominator
   `computeOther` is the disk-axis integration point.
 - **040 (monitor runtime view & model weight)** — 054's "mechanism, not server-side classification"
