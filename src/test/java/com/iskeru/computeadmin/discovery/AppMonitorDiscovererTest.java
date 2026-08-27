@@ -29,9 +29,14 @@ class AppMonitorDiscovererTest {
 
     private final AppMonitorDiscoverer discoverer = new AppMonitorDiscoverer();
 
-    /** Verbs that would mean a mutating command — not a read-only probe — was sent. */
+    /**
+     * Verbs that would mean a mutating command — not a read-only probe — was sent. These are
+     * mutating <em>sub-commands</em>, not binary names: {@code systemctl}/{@code ps} are now
+     * issued for their read-only lenses ({@code list-units}, {@code show}, {@code -eo}), so the
+     * guard bans the action verbs a mutating call would carry, never the binary itself.
+     */
     private static final List<String> MUTATING_TOKENS = List.of(
-            "restart", "reload", "stop", "start", "kill", "rm", "systemctl", "docker", "sudo");
+            "restart", "reload", "stop", "start", "kill", "rm", "enable", "disable", "sudo");
 
     @Test
     void discover_ClassifiesEachListener_AndRoutesToItsFamilyRecipe() {
@@ -139,6 +144,62 @@ class AppMonitorDiscovererTest {
     void discover_NoListeners_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
         assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
+    }
+
+    @Test
+    void discover_NonListeningApps_AreUnionedWithSentinelPortAndProvenance() {
+        // Decision 3: the systemd worker, the interpreter ETL process and the cron script own
+        // no listening socket, so they are invisible to the port sweep. They are unioned into
+        // the app map with the sentinel port 0 and a per-branch sourceNote; each is mapped to
+        // its owning context. The already-listening java PID (1000) is NOT re-emitted by the
+        // interpreter scan (dedup by PID).
+        FakeSshExecutor ssh = new FakeSshExecutor(nonListeningBox());
+
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+
+        assertThat(recipes).extracting(ProposedRecipe::name)
+                .contains("springboot monitor", "generic app monitor");
+        ProposedRecipe generic = recipe(recipes, "generic app monitor");
+        assertThat(generic.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime,
+                        AppPortItem::sourceNote)
+                .containsExactlyInAnyOrder(
+                        tuple("worker", 0, "systemd", "declared app · systemd unit · no port"),
+                        tuple("run.py", 0, "process", "declared app · interpreter process · no port"),
+                        tuple("nightly.sh", 0, "process", "declared app · cron-launched · no port"));
+        // The non-listening apps carry their mapped context identity (spec-055 seam).
+        assertThat(generic.appPortList()).filteredOn(i -> i.appName().equals("worker"))
+                .singleElement().extracting(AppPortItem::contextKey).isEqualTo("/opt/lab/worker");
+        // The listening java app stays in springboot monitor, never duplicated into generic.
+        assertThat(generic.appPortList()).extracting(AppPortItem::appName).doesNotContain("orders");
+    }
+
+    @Test
+    void discover_OnlyNonListeningApps_StillProposesAGenericMonitor() {
+        // A box with no listening sockets at all (workers/cron only) must not fall through the
+        // old "no listeners → nothing" early return: the non-listening sweep still discovers it.
+        FakeSshExecutor ssh = new FakeSshExecutor(onlyNonListeningBox());
+
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+
+        assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("generic app monitor");
+        assertThat(recipe(recipes, "generic app monitor").appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port)
+                .containsExactly(tuple("worker", 0));
+    }
+
+    @Test
+    void discover_NonListeningContainerUnit_IsSkippedByCgroupGuard() {
+        // Decision 2: a systemd unit whose MainPID cgroup routes to Docker is a containerised
+        // app — its host /proc path is overlayfs, never a host context — so the non-listening
+        // sweep drops it (the Docker branch owns it), rather than mapping it natively.
+        FakeSshExecutor ssh = new FakeSshExecutor(containerisedUnitBox());
+
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+
+        assertThat(recipes).isEmpty();
+        // The guard fires on the cgroup read, before any cwd is mapped for the container PID.
+        assertThat(ssh.commands).doesNotContain(List.of("readlink", "/proc/2500/cwd"));
     }
 
     @Test
@@ -293,8 +354,11 @@ class AppMonitorDiscovererTest {
 
         assertThat(ssh.commands).isNotEmpty();
         assertThat(ssh.commands).allSatisfy(argv -> {
-            // Only ss / netstat / cat / readlink / unzip / curl GETs — never a mutating verb.
-            assertThat(argv.get(0)).isIn("ss", "netstat", "cat", "readlink", "unzip", "curl");
+            // Only read-only lenses — the listening sweep (ss/netstat/cat/readlink/unzip/curl)
+            // plus the non-listening sweep (systemctl list-units/show, ps -eo, sh -c cron read,
+            // ls -a marker check) — never a mutating verb.
+            assertThat(argv.get(0)).isIn(
+                    "ss", "netstat", "cat", "readlink", "unzip", "curl", "systemctl", "ps", "sh", "ls");
             assertThat(argv).doesNotContainAnyElementsOf(MUTATING_TOKENS);
         });
         // The classifier really read /proc for the discovered PID.
@@ -466,6 +530,81 @@ class AppMonitorDiscovererTest {
             case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/lab/shop/scripts");
             case "readlink /proc/1001/cwd", "readlink -f /proc/1001/cwd" -> ok("/opt/lab/shop");
             default -> notFound();
+        };
+    }
+
+    /** True when argv is the fixed {@code sh -c <cron read>} probe (matched structurally). */
+    private static boolean isCronProbe(List<String> argv) {
+        return argv.size() == 3 && argv.get(0).equals("sh") && argv.get(1).equals("-c")
+                && argv.get(2).contains("crontab -l");
+    }
+
+    private Function<List<String>, ExecResult> nonListeningBox() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return ok(String.join("\n",
+                        "# m h dom mon dow command",
+                        "0 2 * * * /opt/lab/backup/nightly.sh --dest /var/backups"));
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+                case "cat /proc/1000/cgroup", "cat /proc/2500/cgroup", "cat /proc/3500/cgroup" ->
+                        ok("0::/user.slice/user-1000.slice/session-3.scope");
+                case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+                case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/orders");
+                // systemd: worker.service has a MainPID; nginx.service is a oneshot (MainPID 0).
+                case "systemctl list-units --type=service --state=running --no-legend --plain" -> ok(String.join("\n",
+                        "worker.service loaded active running Batch worker",
+                        "nginx.service  loaded active running Nginx"));
+                case "systemctl show -p MainPID --value worker.service" -> ok("2500");
+                case "systemctl show -p MainPID --value nginx.service" -> ok("0");
+                case "readlink /proc/2500/cwd", "readlink -f /proc/2500/cwd" -> ok("/opt/lab/worker");
+                // interpreter scan: the ETL python worker (no socket) + the already-listening java.
+                case "ps -eo pid=,args=" -> ok(String.join("\n",
+                        "1000 java -jar /opt/orders.jar",
+                        "3500 python3 /opt/lab/etl/run.py --daemon",
+                        " 900 sshd: /usr/sbin/sshd -D"));
+                case "readlink /proc/3500/cwd", "readlink -f /proc/3500/cwd" -> ok("/opt/lab/etl");
+                // cron dir resolution.
+                case "readlink -f /opt/lab/backup" -> ok("/opt/lab/backup");
+                default -> notFound();
+            };
+        };
+    }
+
+    private Function<List<String>, ExecResult> onlyNonListeningBox() {
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "systemctl list-units --type=service --state=running --no-legend --plain" ->
+                        ok("worker.service loaded active running Batch worker");
+                case "systemctl show -p MainPID --value worker.service" -> ok("2500");
+                case "cat /proc/2500/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+                case "readlink /proc/2500/cwd", "readlink -f /proc/2500/cwd" -> ok("/opt/lab/worker");
+                default -> notFound(); // no ss, no ps, no cron
+            };
+        };
+    }
+
+    private Function<List<String>, ExecResult> containerisedUnitBox() {
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "systemctl list-units --type=service --state=running --no-legend --plain" ->
+                        ok("worker.service loaded active running Containerised worker");
+                case "systemctl show -p MainPID --value worker.service" -> ok("2500");
+                // The unit's MainPID lives in a docker cgroup → Decision 2 drops it.
+                case "cat /proc/2500/cgroup" -> ok("0::/docker/worker-ctr");
+                default -> notFound();
+            };
         };
     }
 
