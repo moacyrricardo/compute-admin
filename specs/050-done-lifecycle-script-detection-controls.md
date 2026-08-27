@@ -1,9 +1,16 @@
+> **SUPERSEDED — not implemented.** Stacked on 049, which is itself superseded by concern **054**.
+> 054 owns only the *identity + measurement* half this spec depends on (grouping scripts under a
+> context); the **verb / run-semantics** half — register script *files* and run them verbatim,
+> never infer a run-command, the confirm-drawer gating — is a **verb** question that lives in
+> concern **053**, not 054. When 054 settles app identity and 053 settles the verb contract, a
+> fresh lifecycle-controls spec can be drafted against both. Closed as `done` (shipped nothing).
+
 # 050 — Lifecycle-script detection & monitor controls
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as
-`spec-050`). **Stacked on spec-049** (app-folder detection) — this spec assumes the
-port→PID→cmdline→cwd chain that resolves a running native app to its folder is
-already in place and reuses its resolution seam.
+**Status:** done — superseded by 054 (verb half → 053) · no branch (never built) · no Linear
+(blocked for this repo; tracked as `spec-050`). Was **stacked on spec-049** (app-folder
+detection) — assumed the port→PID→cmdline→cwd chain that resolves a running native app to its
+folder, now reframed by 054.
 
 ## Context
 
