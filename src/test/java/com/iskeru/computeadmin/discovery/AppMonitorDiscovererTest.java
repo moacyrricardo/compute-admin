@@ -347,6 +347,50 @@ class AppMonitorDiscovererTest {
     }
 
     @Test
+    void discover_PostgresListener_IsFingerprintedHighConfidenceWithCatalogDataDir() {
+        // Decision 5: a postgres listener on the catalog default port 5432 fingerprints against
+        // the ServiceCatalog. Two agreeing signals (process AND port) ⇒ confidence high; its
+        // context becomes the catalog data dir (no PGDATA override on the environment).
+        FakeSshExecutor ssh = new FakeSshExecutor(postgresBox(null));
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem pg = generic.appPortList().stream()
+                .filter(i -> i.appName().equals("postgres")).findFirst().orElseThrow();
+
+        assertThat(pg.port()).isEqualTo(5432);
+        assertThat(pg.confidence()).isEqualTo("high");
+        assertThat(pg.contextKey()).isEqualTo("/var/lib/postgresql");
+    }
+
+    @Test
+    void discover_PostgresWithPgdataEnv_VerifiesDataDirFromTheEnvOverride() {
+        // Decision 5 "verify": a PGDATA override on /proc/<pid>/environ beats the catalog default
+        // before it is trusted, so the mapped context is the real data dir, not the packaged one.
+        FakeSshExecutor ssh = new FakeSshExecutor(postgresBox("/data/pg"));
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem pg = generic.appPortList().stream()
+                .filter(i -> i.appName().equals("postgres")).findFirst().orElseThrow();
+
+        assertThat(pg.contextKey()).isEqualTo("/data/pg");
+        assertThat(pg.confidence()).isEqualTo("high");
+    }
+
+    @Test
+    void discover_MariadbOnNonDefaultPort_IsFingerprintedLowConfidence() {
+        // A single agreeing signal (process only; the port is not the catalog 3306) ⇒ low.
+        FakeSshExecutor ssh = new FakeSshExecutor(mariadbBox());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem db = generic.appPortList().stream()
+                .filter(i -> i.appName().equals("mariadbd")).findFirst().orElseThrow();
+
+        assertThat(db.port()).isEqualTo(3307);
+        assertThat(db.confidence()).isEqualTo("low");
+        assertThat(db.contextKey()).isEqualTo("/var/lib/mysql");
+    }
+
+    @Test
     void discover_OnlyEverIssuesReadOnlyProbes() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
@@ -530,6 +574,48 @@ class AppMonitorDiscovererTest {
             case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/lab/shop/scripts");
             case "readlink /proc/1001/cwd", "readlink -f /proc/1001/cwd" -> ok("/opt/lab/shop");
             default -> notFound();
+        };
+    }
+
+    private Function<List<String>, ExecResult> postgresBox(String pgdataOverride) {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:5432       0.0.0.0:*     users:((\"postgres\",pid=1500,fd=5))");
+        String environ = pgdataOverride == null ? null
+                : "PATH=/usr/bin\0PGDATA=" + pgdataOverride + "\0LANG=C";
+        String dataDir = pgdataOverride == null ? "/var/lib/postgresql" : pgdataOverride;
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1500/cmdline" ->
+                        ok("/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main");
+                case "cat /proc/1500/cgroup" -> ok("0::/system.slice/postgresql.service");
+                case "cat /proc/1500/environ" -> environ == null ? notFound() : ok(environ);
+                case "readlink -f /var/lib/postgresql" -> ok("/var/lib/postgresql");
+                case "readlink -f /data/pg" -> ok("/data/pg");
+                default -> notFound();
+            };
+        };
+    }
+
+    private Function<List<String>, ExecResult> mariadbBox() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:3307       0.0.0.0:*     users:((\"mariadbd\",pid=1600,fd=5))");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1600/cmdline" -> ok("/usr/sbin/mariadbd");
+                case "cat /proc/1600/cgroup" -> ok("0::/system.slice/mariadb.service");
+                case "readlink -f /var/lib/mysql" -> ok("/var/lib/mysql");
+                default -> notFound();
+            };
         };
     }
 

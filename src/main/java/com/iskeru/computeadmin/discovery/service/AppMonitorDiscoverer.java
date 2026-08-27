@@ -223,8 +223,21 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             // `docker inspect` (056). Only PROCESS/SYSTEMD runtimes feed ContextMapper.
             ContextMapper.Context context = runtime == Runtime.DOCKER
                     ? null : resolveContext(ssh, target, listener.pid());
+            // Common-service fingerprinting (Decision 5): a native nginx/postgres/mysql/mariadb
+            // listener is identified against the fixed ServiceCatalog. Its context becomes the
+            // env-verified service data dir (PGDATA/MYSQL_DATADIR beats the catalog default), and
+            // its confidence reflects signal agreement — process AND the catalog port ⇒ high.
+            String confidence = null;
+            ServiceCatalog.Service service = runtime == Runtime.DOCKER ? null
+                    : ServiceCatalog.fingerprintByProcess(listener.process(), cmdline);
+            if (service != null) {
+                context = resolveContextForDir(ssh, target,
+                        verifiedDataDir(ssh, target, listener.pid(), service));
+                confidence = service.defaultPort() == listener.port() ? "high" : "low";
+            }
             String sourceNote = listeningSourceNote(runtime, listener.port());
-            resolved.add(new Resolved(family, appName, listener.port(), runtime.label, context, sourceNote));
+            resolved.add(new Resolved(family, appName, listener.port(), runtime.label, context,
+                    sourceNote, confidence));
             if (family == Family.FASTAPI && respondsToMetrics(ssh, target, listener.port())) {
                 prometheus = true;
             }
@@ -258,11 +271,13 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         // the springboot/fastapi/generic recipes propose in a stable order.
         Map<Family, List<AppPortItem>> byFamily = new LinkedHashMap<>();
         for (Resolved r : resolved) {
-            AppPortItem item = r.context() == null
-                    ? new AppPortItem(r.appName(), r.port(), r.runtime(), r.sourceNote())
-                    : new AppPortItem(r.appName(), r.port(), r.runtime(),
-                    r.context().scriptFolder(), r.context().key(), r.context().display(),
-                    siblingsByContext.getOrDefault(r.context().key(), List.of()), r.sourceNote());
+            ContextMapper.Context ctx = r.context();
+            AppPortItem item = new AppPortItem(r.appName(), r.port(), r.runtime(),
+                    ctx == null ? null : ctx.scriptFolder(),
+                    ctx == null ? null : ctx.key(),
+                    ctx == null ? null : ctx.display(),
+                    ctx == null ? List.of() : siblingsByContext.getOrDefault(ctx.key(), List.of()),
+                    r.sourceNote(), r.confidence());
             byFamily.computeIfAbsent(r.family(), f -> new ArrayList<>()).add(item);
         }
 
@@ -580,7 +595,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
             String appName = sanitize(unit.substring(0, unit.length() - ".service".length()), 0);
             out.add(new Resolved(Family.GENERIC, appName, 0, Runtime.SYSTEMD.label,
-                    resolveContext(ssh, target, pid), "declared app · systemd unit · no port"));
+                    resolveContext(ssh, target, pid), "declared app · systemd unit · no port", null));
         }
         return out;
     }
@@ -623,7 +638,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
             String appName = sanitize(baseName(script), 0);
             out.add(new Resolved(Family.GENERIC, appName, 0, Runtime.PROCESS.label,
-                    resolveContext(ssh, target, pid), "declared app · interpreter process · no port"));
+                    resolveContext(ssh, target, pid), "declared app · interpreter process · no port", null));
         }
         return out;
     }
@@ -664,7 +679,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
             ContextMapper.Context context = resolveContextForDir(ssh, target, parentDir(path));
             out.add(new Resolved(Family.GENERIC, sanitize(baseName(path), 0), 0, Runtime.PROCESS.label,
-                    context, "declared app · cron-launched · no port"));
+                    context, "declared app · cron-launched · no port", null));
         }
         return out;
     }
@@ -685,6 +700,36 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
         }
         return out;
+    }
+
+    /**
+     * The verified data dir of a fingerprinted service (spec-056 Decision 5 "verify" step): a
+     * {@code PGDATA}/{@code MYSQL_DATADIR} value on the process's environment overrides the
+     * catalog default; nginx (no env var) keeps the default. The read is unprivileged and may
+     * be denied for another user's process — then the catalog default stands.
+     */
+    private String verifiedDataDir(SshExecutor ssh, SshTarget target, String pid,
+                                   ServiceCatalog.Service service) {
+        if (service.dataDirEnvVar() != null) {
+            String override = envValue(ssh, target, pid, service.dataDirEnvVar());
+            if (override != null) {
+                return override;
+            }
+        }
+        return service.dataDir();
+    }
+
+    /** A process environment variable's value from {@code /proc/<pid>/environ} (NUL-separated), or null. */
+    private String envValue(SshExecutor ssh, SshTarget target, String pid, String var) {
+        for (String line : Probes.lines(ssh, target, List.of("cat", "/proc/" + pid + "/environ"))) {
+            for (String entry : line.split("\0")) {
+                if (entry.startsWith(var + "=")) {
+                    String value = entry.substring(var.length() + 1).trim();
+                    return value.isEmpty() ? null : value;
+                }
+            }
+        }
+        return null;
     }
 
     /** Maps a script's <em>directory</em> to its context (cron has no PID to read a cwd from). */
@@ -892,11 +937,13 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     /**
-     * A classified listener with its resolved {@link ContextMapper.Context} (spec-055) and
-     * its {@code sourceNote} provenance (spec-056); {@code context} is {@code null} for a
-     * docker-overlayfs app (mapped by 056's docker branch instead).
+     * A classified app with its resolved {@link ContextMapper.Context} (spec-055), its
+     * {@code sourceNote} provenance and its fingerprint {@code confidence} (spec-056);
+     * {@code context} is {@code null} for a docker-overlayfs app (mapped by 056's docker
+     * branch instead) and {@code confidence} is {@code null} unless it fingerprinted to a
+     * common service.
      */
     private record Resolved(Family family, String appName, int port, String runtime,
-                            ContextMapper.Context context, String sourceNote) {
+                            ContextMapper.Context context, String sourceNote, String confidence) {
     }
 }
