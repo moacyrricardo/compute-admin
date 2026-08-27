@@ -1,6 +1,6 @@
 # 055 — App-model foundations & mapping
 
-**Status:** doing · Linear [BOL-884](https://linear.app/iskeru/issue/BOL-884) · build branch `moacyrricardo/bol-884-cpt-055-app-model-foundations-mapping`.
+**Status:** done · Linear [BOL-884](https://linear.app/iskeru/issue/BOL-884) · build branch `moacyrricardo/bol-884-cpt-055-app-model-foundations-mapping`.
 
 ## Context
 
@@ -208,3 +208,39 @@ human-accepted label. They are never conflated:
   does not model run semantics.
 - **Docker host-path resolution via `docker inspect`** is named as 056's mechanism; this spec
   fixes only that a dockerized context keys on its compose project, not the overlayfs path.
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-884-cpt-055-app-model-foundations-mapping`, stacked on the
+055–060 planning branch (PR #80 → base `moacyrricardo/spec-055-060-app-model-epic`).
+
+How the build differed from / refined the spec:
+
+- **Resolver signature.** `ContextMapper.resolveContext` takes the app-script's **folder** as
+  `scriptPath` (the discovery site has `/proc/<pid>/cwd`, a directory, not a file), with the
+  `scriptFolder` returned equal to that input — faithful to D3 ("from an app-script's folder…").
+  To keep the resolver **pure** (no SSH), the marker-file check for the second wrapper hop is a
+  `Predicate<String>` the caller supplies; a 2-arg convenience overload (no markers → single hop)
+  is provided. `AppMonitorDiscoverer` backs the predicate with a lazy read-only `ls -a` probe, so
+  it only runs when a second hop is actually being weighed.
+- **Physical read.** Both the logical (`readlink /proc/<pid>/cwd`) and physical
+  (`readlink -f /proc/<pid>/cwd`) reads key off the **cwd**; `/proc/<pid>/exe` was not needed
+  (it resolves to the interpreter, not the app's deploy dir). `deployDirName` was refactored to
+  share the single full-path cwd read; name-derivation still takes the basename (D5 seed).
+- **`contextScripts`.** Populated with the sibling **app-name** identities that resolve to the
+  same context (grouping metadata, D4). The literal script-file sweep is 056's; 055 groups what
+  the listener sweep already yields.
+- **`AppPortItem`.** Extended to seven components with a compact constructor defaulting
+  `contextScripts` to an empty list and a 3-arg convenience constructor, so every existing call
+  site and the `app_port_list` JSON seam are untouched (no migration). Verified downstream:
+  `RunService`/`MonitorService` read only `appName`/`port` from the JSON tree, and **no MCP tool
+  reads `app_port_list`**, so the S9-secret `contextKey` never crosses the MCP boundary.
+- **S9 rider #6.** The physical key rides as side-data **outside** `ActionSnapshot`, so 015's
+  pure-offline hash and `ScriptPinService` were left untouched — a redeploy alone cannot
+  re-approve. No `ActionService` rewire was due: 055 has no discovery→pin flow (the promotion
+  *mechanism* is delivered in `ContextMapper`; wiring a discovery-authored pin is 056+).
+- **S9 runtime fix.** `ListActionsTool.tokenView` now basename-renders any path-shaped `LITERAL`
+  argToken value (`renderTokenValue`), guarded by the `McpPathLeakArchTest` source scan.
+- **Known blemish.** The first `ContextMapper` commit had a javadoc `*/`-in-`{@code}` typo that
+  broke compilation; fixed forward in the wiring commit (force-push disallowed), so that one
+  intermediate commit does not compile. Final tree: `mvn test` 305/305 green.
