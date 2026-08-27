@@ -189,6 +189,54 @@ class AppMonitorDiscovererTest {
     }
 
     @Test
+    void discover_ProcessApp_MapsToOwningContextViaWrapperRule() {
+        // cwd /opt/lab/orders/scripts: the "scripts" wrapper hops up to the owning context
+        // /opt/lab/orders (spec-055 D2); the item carries the logical script-folder + context.
+        FakeSshExecutor ssh = new FakeSshExecutor(contextMappedSpringBoot());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        AppPortItem item = springboot.appPortList().get(0);
+
+        assertThat(item.appName()).isEqualTo("orders");
+        assertThat(item.scriptFolder()).isEqualTo("/opt/lab/orders/scripts");
+        assertThat(item.contextDisplay()).isEqualTo("/opt/lab/orders");
+        assertThat(item.contextKey()).isEqualTo("/opt/lab/orders");
+        assertThat(item.contextScripts()).containsExactly("orders");
+    }
+
+    @Test
+    void discover_DockerApp_IsNotMappedToAHostContext() {
+        // cgroup-before-cwd guard (spec-055): a container PID's cwd is an overlayfs path,
+        // never a host context — the context fields stay null (056 owns docker contexts).
+        FakeSshExecutor ssh = new FakeSshExecutor(dockerisedSpringBoot());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        AppPortItem item = springboot.appPortList().get(0);
+
+        assertThat(item.runtime()).isEqualTo("docker");
+        assertThat(item.contextKey()).isNull();
+        assertThat(item.contextDisplay()).isNull();
+        assertThat(item.scriptFolder()).isNull();
+        // No cwd probe is issued for the container PID (the guard short-circuits it).
+        assertThat(ssh.commands).doesNotContain(List.of("readlink", "/proc/1000/cwd"));
+    }
+
+    @Test
+    void discover_SiblingScriptsOfOneApp_GroupUnderTheSharedContext() {
+        // Two listeners whose script-folders collapse to /opt/lab/shop enumerate each other
+        // as sibling app-scripts under the one context identity (spec-055 D4).
+        FakeSshExecutor ssh = new FakeSshExecutor(twoScriptsOneContext());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+
+        assertThat(springboot.appPortList())
+                .allSatisfy(item -> {
+                    assertThat(item.contextKey()).isEqualTo("/opt/lab/shop");
+                    assertThat(item.contextScripts()).containsExactly("orders", "billing");
+                });
+    }
+
+    @Test
     void discover_OnlyEverIssuesReadOnlyProbes() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
@@ -318,6 +366,41 @@ class AppMonitorDiscovererTest {
                     "Manifest-Version: 1.0",
                     "Main-Class: org.springframework.boot.loader.launch.JarLauncher",
                     "Start-Class: com.acme.PaymentGatewayApplication"));
+            default -> notFound();
+        };
+    }
+
+    private Function<List<String>, ExecResult> contextMappedSpringBoot() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))");
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "readlink /proc/1000/cwd" -> ok("/opt/lab/orders/scripts");
+            case "readlink -f /proc/1000/cwd" -> ok("/opt/lab/orders/scripts");
+            default -> notFound();
+        };
+    }
+
+    private Function<List<String>, ExecResult> twoScriptsOneContext() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))",
+                "LISTEN 0      128          0.0.0.0:8090       0.0.0.0:*     users:((\"java\",pid=1001,fd=11))");
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+            case "cat /proc/1001/cmdline" -> ok("java -jar /opt/billing.jar");
+            case "cat /proc/1000/cgroup", "cat /proc/1001/cgroup" ->
+                    ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health",
+                 "curl -sf -m 2 http://127.0.0.1:8090/actuator/health" -> ok("{\"status\":\"UP\"}");
+            // Both scripts collapse to the same owning context /opt/lab/shop.
+            case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/lab/shop/scripts");
+            case "readlink /proc/1001/cwd", "readlink -f /proc/1001/cwd" -> ok("/opt/lab/shop");
             default -> notFound();
         };
     }
