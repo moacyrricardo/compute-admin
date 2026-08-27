@@ -1,5 +1,12 @@
 # 054 — Lightweight app-metadata model
 
+> **WARNING — resolved by specs 055–060 (the app-model epic).** The five forks were decided
+> 2026-08-27 (all recommended) and the model graduated into: **055** foundations & mapping · **056**
+> discovery · **057** footprint probing · **058** standalone-DB sizing · **059** UI (new surfaces) ·
+> **060** MCP surface audit. This concern stays as the record of the clean-slate model and the
+> decisions; the *buildable* detail now lives in those specs. It also resolves 053's identity half
+> (see 053's WARNING).
+
 **Status:** concern · no branch · no Linear (blocked for this repo; tracked as `spec-054`).
 
 > **Design reference:** [`054-assets/mockup-compute-admin.html`](054-assets/mockup-compute-admin.html)
