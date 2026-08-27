@@ -1,6 +1,6 @@
 # 059 — App-model UI (new surfaces)
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as `spec-059`).
+**Status:** todo · Linear [BOL-888](https://linear.app/iskeru/issue/BOL-888) · build branch `moacyrricardo/bol-888-cpt-059-app-model-ui-new-surfaces`. **Blocked by 057 (BOL-886).**
 
 ## Context
 

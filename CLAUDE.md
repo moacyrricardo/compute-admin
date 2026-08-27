@@ -13,12 +13,12 @@ Work is built one **spec** at a time under `specs/NNN-status-slug.md`
 ## Spec workflow
 
 ```
-Tracker:       linear (team BOL, title prefix `CA:`) — BLOCKED, see ## Linear
-Branch prefix: moacyrricardo/spec-NNN-slug   # Linear blocked → fallback pattern
+Tracker:       linear (team BOL, title prefix `CPT:`, project ComputeAdmin) — see ## Linear
+Branch prefix: moacyrricardo/bol-<n>-slug    # Linear-generated branch (issue id + slug)
 Specs dir:     specs/          # index is specs/catalog.md (lowercase)
 ```
 
-- Commit subjects: `spec-NNN Short description` (no issue IDs while Linear is blocked).
+- Commit subjects: `BOL-<n> Short description` (the Linear issue id); use `spec-NNN …` only for a spec that has no issue yet.
 - `CONTRIBUTING.md` is authoritative for commit/PR division and code style.
 - API modules: **None** (see `## API Modules`) — finish-branch skips the API Diff.
 - Version-bump policy: **none**. The app is unversioned (`0.0.1-SNAPSHOT` in `pom.xml`);
@@ -126,10 +126,13 @@ finish-branch closeouts skip the API Diff subsection.
 
 ## Linear
 
-Title prefix **`CA:`** (team `BOL`).
+Team **`BOL`** (Boletim); project **ComputeAdmin**
+(`https://linear.app/iskeru/project/computeadmin-5c1e36a138b4`); issue **title prefix `CPT:`**.
+Issue identifiers are `BOL-<n>` (the team key); the `CPT:` title prefix tags them as compute-admin
+work within the shared team.
 
-**Linear is currently BLOCKED for this repo** — do **not** create or update Linear
-issues for compute-admin work. Run `/new-spec` and the spec skills without the
-Linear step: mark specs `doing`/`done` with **`spec-NNN`** commit subjects (not
-`BOL-<n>`), and don't add an issue identifier to the spec. Revisit only when the
-user unblocks Linear.
+**Linear is active for this repo** (unblocked 2026-08-27). Track implementation issues in the
+ComputeAdmin project with the `CPT:` title prefix; commit subjects use the `BOL-<n>` identifier and
+branches use the Linear-generated name (`moacyrricardo/bol-<n>-slug`). Add the issue id + build branch
+to a spec's Status line when it graduates to a build. The app-model epic 055–060 is tracked as
+**BOL-884…889** (dependency-chained in that order).

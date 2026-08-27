@@ -1,6 +1,6 @@
 # 060 — MCP surface audit
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as `spec-060`).
+**Status:** todo · Linear [BOL-889](https://linear.app/iskeru/issue/BOL-889) · build branch `moacyrricardo/bol-889-cpt-060-mcp-surface-audit`. **Blocked by 058 (BOL-887) + 059 (BOL-888).**
 
 ## Context
 
