@@ -49,7 +49,8 @@ class AppMonitorDiscovererTest {
         assertThat(springboot.actions()).extracting(ProposedAction::name)
                 .containsExactly("health", "metrics", "beans", "info", "process", "cpu");
         assertThat(springboot.appPortList())
-                .containsExactly(new AppPortItem("orders", 8080, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("orders", 8080, "process"));
 
         // python3 uvicorn billing.main:app → fastapi monitor, pre-filled (billing, 8000).
         // No Prometheus on /metrics → the metrics action is not proposed (process + cpu + health).
@@ -57,13 +58,39 @@ class AppMonitorDiscovererTest {
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
                 .containsExactly("process", "cpu", "health");
         assertThat(fastapi.appPortList())
-                .containsExactly(new AppPortItem("billing", 8000, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("billing", 8000, "process"));
 
         // an unclassifiable daemon → generic app monitor, process + cpu probes only.
         ProposedRecipe generic = recipe(recipes, "generic app monitor");
         assertThat(generic.actions()).extracting(ProposedAction::name).containsExactly("process", "cpu");
         assertThat(generic.appPortList())
-                .containsExactly(new AppPortItem("mydaemon", 5000, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("mydaemon", 5000, "process"));
+    }
+
+    @Test
+    void discover_ListeningApp_CarriesPortProvenanceSourceNote() {
+        // Every listening app records which sweep branch found it (spec-056): a host app
+        // folder discovered via its port. The note names the port, never a path (S9).
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        AppPortItem item = springboot.appPortList().get(0);
+
+        assertThat(item.sourceNote()).isEqualTo("app folder · discovered via port :8080");
+    }
+
+    @Test
+    void discover_ContainerRuntimeListener_SourceNoteNamesTheContainerBranch() {
+        // A container PID that still owns a host-visible socket is labelled a container in
+        // its provenance (its host /proc path is never mapped — spec-056 Decision 2/4).
+        FakeSshExecutor ssh = new FakeSshExecutor(dockerisedSpringBoot());
+
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        AppPortItem item = springboot.appPortList().get(0);
+
+        assertThat(item.sourceNote()).isEqualTo("container · discovered via port :8080");
     }
 
     @Test
@@ -76,7 +103,8 @@ class AppMonitorDiscovererTest {
         // with DockerDiscoverer's container name and is stamped runtime = docker.
         ProposedRecipe springboot = recipe(recipes, "springboot monitor");
         assertThat(springboot.appPortList())
-                .containsExactly(new AppPortItem("orders-api", 8080, "docker"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("orders-api", 8080, "docker"));
     }
 
     @Test
@@ -107,7 +135,8 @@ class AppMonitorDiscovererTest {
         ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
 
         assertThat(springboot.appPortList())
-                .containsExactly(new AppPortItem("app", 8080, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("app", 8080, "process"));
     }
 
     @Test
@@ -122,7 +151,9 @@ class AppMonitorDiscovererTest {
         ProposedRecipe http = recipe(recipes, "http app monitor");
         assertThat(http.actions()).extracting(ProposedAction::name)
                 .containsExactly("liveness", "process", "cpu");
-        assertThat(http.appPortList()).containsExactly(new AppPortItem("app", 8080, "process"));
+        assertThat(http.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("app", 8080, "process"));
     }
 
     @Test
@@ -134,7 +165,8 @@ class AppMonitorDiscovererTest {
         ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
 
         assertThat(springboot.appPortList())
-                .containsExactly(new AppPortItem("orders", 8080, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("orders", 8080, "process"));
     }
 
     @Test

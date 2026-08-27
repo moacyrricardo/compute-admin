@@ -190,7 +190,8 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             // `docker inspect` (056). Only PROCESS/SYSTEMD runtimes feed ContextMapper.
             ContextMapper.Context context = runtime == Runtime.DOCKER
                     ? null : resolveContext(ssh, target, listener.pid());
-            resolved.add(new Resolved(family, appName, listener.port(), runtime.label, context));
+            String sourceNote = listeningSourceNote(runtime, listener.port());
+            resolved.add(new Resolved(family, appName, listener.port(), runtime.label, context, sourceNote));
             if (family == Family.FASTAPI && respondsToMetrics(ssh, target, listener.port())) {
                 prometheus = true;
             }
@@ -214,10 +215,10 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         Map<Family, List<AppPortItem>> byFamily = new LinkedHashMap<>();
         for (Resolved r : resolved) {
             AppPortItem item = r.context() == null
-                    ? new AppPortItem(r.appName(), r.port(), r.runtime())
+                    ? new AppPortItem(r.appName(), r.port(), r.runtime(), r.sourceNote())
                     : new AppPortItem(r.appName(), r.port(), r.runtime(),
                     r.context().scriptFolder(), r.context().key(), r.context().display(),
-                    siblingsByContext.getOrDefault(r.context().key(), List.of()));
+                    siblingsByContext.getOrDefault(r.context().key(), List.of()), r.sourceNote());
             byFamily.computeIfAbsent(r.family(), f -> new ArrayList<>()).add(item);
         }
 
@@ -644,15 +645,26 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 List.of(appPortList(APP_LIST_PARAM)));
     }
 
+    /**
+     * The provenance string for a listening app (spec-056): which sweep branch found it.
+     * A container-runtime listener (a host socket the login user can still see) is a
+     * container; everything else is a host app folder. Names the port, never a path (S9).
+     */
+    private String listeningSourceNote(Runtime runtime, int port) {
+        String branch = runtime == Runtime.DOCKER ? "container" : "app folder";
+        return branch + " · discovered via port :" + port;
+    }
+
     /** One listening socket: its port, owning PID, and process name (login user only). */
     private record Listener(int port, String pid, String process) {
     }
 
     /**
-     * A classified listener with its resolved {@link ContextMapper.Context} (spec-055);
-     * {@code context} is {@code null} for a docker-overlayfs app (mapped by 056 instead).
+     * A classified listener with its resolved {@link ContextMapper.Context} (spec-055) and
+     * its {@code sourceNote} provenance (spec-056); {@code context} is {@code null} for a
+     * docker-overlayfs app (mapped by 056's docker branch instead).
      */
     private record Resolved(Family family, String appName, int port, String runtime,
-                            ContextMapper.Context context) {
+                            ContextMapper.Context context, String sourceNote) {
     }
 }

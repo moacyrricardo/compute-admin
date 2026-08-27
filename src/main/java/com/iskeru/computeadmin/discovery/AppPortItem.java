@@ -27,11 +27,24 @@ import java.util.List;
  * could not be mapped (e.g. a docker overlayfs path, which is 056's {@code docker inspect}
  * concern, not a host context).
  *
- * <p>spec-025; context fields added in spec-055.
+ * <p><strong>Provenance (spec-056).</strong> {@code sourceNote} is a short, human-readable
+ * string naming the discovery <em>sweep branch</em> that produced the record — e.g.
+ * {@code "app folder · discovered via port :8080"}, {@code "declared app · cron-launched ·
+ * no port"}, {@code "compose project · discovered via docker"}. It is un-audited discovery
+ * side-data for the 059 UI to render; it never carries a path (paths stay in the S9-secret
+ * {@code contextKey}/{@code scriptFolder} fields) and is never argv or hashed.
+ *
+ * <p><strong>Non-listening apps (spec-056).</strong> A worker/cron/interpreter app that owns
+ * no listening socket is emitted with the sentinel {@code port = 0} (the primitive
+ * {@code int} has no null); the run-time {@code [1, 65535]} validator skips these
+ * non-listening items (a 057 concern). {@code port = 0} together with a {@code sourceNote}
+ * marks the record as declared-only.
+ *
+ * <p>spec-025; context fields added in spec-055; {@code sourceNote} added in spec-056.
  */
 public record AppPortItem(String appName, int port, String runtime,
                           String scriptFolder, String contextKey, String contextDisplay,
-                          List<String> contextScripts) {
+                          List<String> contextScripts, String sourceNote) {
 
     public AppPortItem {
         contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
@@ -39,9 +52,14 @@ public record AppPortItem(String appName, int port, String runtime,
 
     /**
      * An item with no resolved context (existing call sites and un-mappable records). The
-     * context fields default to {@code null}/empty.
+     * context fields default to {@code null}/empty and no provenance is recorded.
      */
     public AppPortItem(String appName, int port, String runtime) {
-        this(appName, port, runtime, null, null, null, List.of());
+        this(appName, port, runtime, null, null, null, List.of(), null);
+    }
+
+    /** An un-mapped item that still records which sweep branch found it (spec-056). */
+    public AppPortItem(String appName, int port, String runtime, String sourceNote) {
+        this(appName, port, runtime, null, null, null, List.of(), sourceNote);
     }
 }
