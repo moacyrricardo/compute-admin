@@ -1,6 +1,6 @@
 # 057 — App footprint probing
 
-**Status:** todo · Linear [BOL-886](https://linear.app/iskeru/issue/BOL-886) · build branch `moacyrricardo/bol-886-cpt-057-app-footprint-probing`. **Blocked by 056 (BOL-885).**
+**Status:** doing · Linear [BOL-886](https://linear.app/iskeru/issue/BOL-886) · build branch `moacyrricardo/bol-886-cpt-057-app-footprint-probing`. **Blocked by 056 (BOL-885).**
 
 ## Context
 
