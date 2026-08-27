@@ -79,6 +79,10 @@
     Expand each for the evidence, pick an option (a recommendation is pre-marked), add your own note if you want to
     override or qualify it, then <strong>Copy prompt</strong> to hand the whole set to an agent. Building this surface
     changes nothing; execution happens only when you run the emitted prompt.
+    <br><br><strong>Two of these also settle the 054 ↔ 053 boundary.</strong> A model review found 054 <em>partially
+    supersedes</em> concern 053 — but the exact cut is load-bearing on <strong>D1</strong> (symlink token, which 053
+    flagged as "worsened") and <strong>D4</strong> (non-listening apps, which decides whether 053's declared-app
+    machinery dissolves or survives). Deciding those two here also decides how much of 053 054 replaces.
   </div>
 
   <div id="cards"></div>
@@ -98,9 +102,9 @@
 const DECISIONS = [
   { id:"D1", tag:"symlink identity",
     q:"When a script or binary is reached through a symlink, what does the context key on?",
-    tension:"Widest downstream blast radius — every consumer of the context key inherits this choice.",
+    tension:"Widest downstream blast radius — every consumer of the context key inherits this choice. Also owns 053's \"worsened\" symlink-vs-resolved token (053 red-team): whatever is chosen here, spec-015's pinned argv and S9 sanitisation must adopt the same answer.",
     rec:"a",
-    evidence:`<p>Keying on the <b>resolved</b> path collapses aliases correctly but makes a <code>current</code>&nbsp;&rarr;&nbsp;<code>releases/&lt;ts&gt;</code> atomic-deploy symlink fork a brand-new context every release. Keying on the <b>logical</b> path stays stable but won't dedup two links to the same file.</p><p>The report's proposed split: resolve <em>file-level</em> links fully, dedup on the physical path, <b>display</b> the logical path, and <b>promote</b> the key to logical when the physical matches <code>*/releases/*</code> or <code>*/versions/*</code>.</p>`,
+    evidence:`<p>Keying on the <b>resolved</b> path collapses aliases correctly but makes a <code>current</code>&nbsp;&rarr;&nbsp;<code>releases/&lt;ts&gt;</code> atomic-deploy symlink fork a brand-new context every release. Keying on the <b>logical</b> path stays stable but won't dedup two links to the same file.</p><p>The report's proposed split: resolve <em>file-level</em> links fully, dedup on the physical path, <b>display</b> the logical path, and <b>promote</b> the key to logical when the physical matches <code>*/releases/*</code> or <code>*/versions/*</code>.</p><p><b>Load-bearing for the 053 supersession.</b> 053's red-team flagged this exact token as <em>worsened</em> — before 053 it had one consumer (015's hash); 053 added two more (pinned argv, path-derived-name stability, S9). The recommended split resolves the identity consumer (release-symlink promotion fixes the name-churn); the <b>rider</b> is that 015's pin path and S9 must then adopt this same token, or "one undecided token, many masters" merely becomes "one decided token, uncoordinated adoption".</p>`,
     opts:[
       { k:"a", lead:"Dedup on physical, display logical, promote release-symlinks to the logical key",
         cons:"Stable across deploys AND dedups aliases; matches how release-symlink deploys actually behave. (report recommendation)",
@@ -146,19 +150,19 @@ const DECISIONS = [
     ]},
   { id:"D4", tag:"non-listening apps",
     q:"Does discovery include apps that don't open a port (workers, cron, batch jobs)?",
-    tension:"Ports + Docker alone can't see any workload that never listens.",
+    tension:"Ports + Docker alone can't see any workload that never listens — AND this fork decides the 053 supersession: 053 justified its whole declared-app apparatus by \"this population is structurally undetectable\". If this sweep is in scope, that population becomes discoverable and 053's declared-app machinery dissolves; if not, it walks back in.",
     rec:"a",
-    evidence:`<p>A port sweep is blind to queue workers, cron jobs, and batch scripts. The complement is <code>systemctl list-units --state=running</code> + cron enumeration + a full <code>ps -eo args</code> interpreter-pattern scan; those apps emit the same record with an empty port list.</p>`,
+    evidence:`<p>A port sweep is blind to queue workers, cron jobs, and batch scripts. The complement is <code>systemctl list-units --state=running</code> + cron enumeration + a full <code>ps -eo args</code> interpreter-pattern scan; those apps emit the same record with an empty port list.</p><p><b>This is the load-bearing fork for superseding 053.</b> 053 decision 4 stood up a first-class <em>declared-app</em> entity (gated proposals, machine-scoping, never-auto-retire, declared-vs-discovered reconciliation) precisely because "a <code>run.sh</code> started by hand, a cron batch job, a bare bash worker — no discoverer reaches them." This sweep <em>is</em> that discoverer. In scope → 053's declared-app apparatus loses its reason to exist (~4 decisions + 3 open questions dissolve). Out of scope → the apparatus is needed, and 054's partial supersede of 053 shrinks. The only residue in-scope leaves is a worker that is neither running nor in crontab at scan time — a small "manual context registration", not 053's full machinery.</p>`,
     opts:[
       { k:"a", lead:"In scope — the ps + systemd + cron sweep is mandatory",
-        cons:"The map is complete; non-listening workloads appear with an empty port list. (report recommendation)",
-        pay:"Non-listening apps: IN SCOPE. Run the systemctl(running) + cron enumeration + ps -eo args interpreter-pattern sweep alongside ports+docker; non-listening apps emit the same record with an empty port list." },
+        cons:"The map is complete; non-listening workloads appear with an empty port list. Dissolves 053's declared-app apparatus. (report recommendation)",
+        pay:"Non-listening apps: IN SCOPE. Run the systemctl(running) + cron enumeration + ps -eo args interpreter-pattern sweep alongside ports+docker; non-listening apps emit the same record with an empty port list. NOTE: this makes 053's \"structurally undetectable\" population discoverable, so 053's declared-app machinery (dec. 4/8/9/10, axis E, OQ2/OQ3) dissolves — the 054↔053 partial-supersede holds." },
       { k:"b", lead:"Ports + Docker only",
-        cons:"Simplest and fastest; but silently misses every non-listening workload.",
-        pay:"Non-listening apps: OUT OF SCOPE. Discovery is ports + docker only; non-listening workloads are not discovered." },
+        cons:"Simplest and fastest; but silently misses every non-listening workload — AND resurrects 053's declared-app machinery.",
+        pay:"Non-listening apps: OUT OF SCOPE. Discovery is ports + docker only; non-listening workloads are not discovered. NOTE: this leaves 053's \"structurally undetectable\" population unreachable, so 053's declared-app machinery (dec. 4/8/9/10, axis E) is still needed and the 054 supersede of 053 shrinks accordingly." },
       { k:"c", lead:"Opt-in per machine (operator enables the extra sweep)",
-        cons:"Cheap by default, complete on request; but the default map is quietly partial.",
-        pay:"Non-listening apps: opt-in per machine. Default discovery is ports+docker; the operator enables the systemd/cron/ps sweep per host when wanted." },
+        cons:"Cheap by default, complete on request; but the default map is quietly partial, and 053's declared-app machinery is needed for hosts where the sweep is off.",
+        pay:"Non-listening apps: opt-in per machine. Default discovery is ports+docker; the operator enables the systemd/cron/ps sweep per host when wanted. NOTE: because the sweep is off by default, 053's declared-app machinery cannot be fully dissolved — it is needed wherever the sweep is disabled." },
     ]},
   { id:"D5", tag:"database sizing scope",
     q:"Which databases get their size probed now?",
