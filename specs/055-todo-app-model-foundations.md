@@ -91,7 +91,7 @@ seam, so no re-approval and no schema migration is forced. Concretely:
   is — `discovery/ProposedRecipe.java:38`).
 - Serialisation flows through the existing seam untouched: `DiscoveryService.persist`
   (`discovery/service/DiscoveryService.java:167`) → `toJson` (:244) →
-  `recipeService.refreshDiscoveredAppPortList(recipeId, json)` (the call inside persist, :184).
+  `recipeService.refreshDiscoveredAppPortList(recipeId, json)` (the call inside persist, :185).
   The three new fields serialise
   with the rest of `AppPortItem`; re-discovery overwrites them (they are not audited, per 054 D1/
   spec-040's thin-BE posture).
@@ -126,7 +126,7 @@ existing `appName(...)` call (~:186), reusing what the chain already computes:
   off the basename (D5/053: basename is the identity seed).
 
 All probes stay **S4-safe**: fixed-argv, read-only, no-sudo (`discovery/service/Probes.java`).
-`realpath`/`readlink -f` run as constant `sh -c` reads with the PID/path as the only bound,
+`realpath`/`readlink -f` run as **fixed argv lists** (`List.of("readlink","-f",path)` via `Probes`, no shell) with the PID/path as the only bound,
 validated inputs — no free-form param, no privileged escalation (privilege upgrade is 054 D3,
 owned by 056/057, not this spec).
 

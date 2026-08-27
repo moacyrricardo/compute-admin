@@ -90,8 +90,11 @@ logical and physical size, landing `PENDING_APPROVAL` like every discovery propo
 where the operator accepts the `sudo` transport. It also classifies the standalone engine as a
 **consumer** (`role = DATABASE`, `source = NATIVE`, following the existing spec-034/041 consumer model)
 on the un-audited `app_port_list` JSON side-data seam, so 057's probing and 059's UI pick it up
-with no migration and no re-approval (the same seam `refreshDiscoveredAppPortList` /
-`DiscoveryService.persist` :184 already uses).
+with no re-approval (the same seam `refreshDiscoveredAppPortList` / `DiscoveryService.persist` :185
+already uses; the column-widening migration is **056's**). **Cross-spec note:** that seam today
+reconciles only the *docker* consumer channel (`proposal.appPortList()` vs `dockerConsumers`), so
+055/056/057 must have added the **native-consumer classification channel** to `DiscoveryService.persist`
+before/with 058 — 058 *populates* it, it does not create it.
 
 ### Probe scripts (S4-safe: constant `sh -c`, read-only, validated inputs)
 

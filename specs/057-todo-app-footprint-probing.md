@@ -16,7 +16,7 @@ because every docker axis divides by those same three denominators (`applyDocker
 (`CPU_PROBE_SCRIPT`, `AppMonitorDiscoverer.java:138`), their RAM sums RSS, and their **disk is
 never attributed at all** — the spec-049 native-`du` disk axis was never built, so today a
 native app's entire real disk footprint silently sits inside OTHER (`consumerAxis` renders it
-"native — n/a", `app.js:2464`).
+"native — n/a", `app.js:2465`).
 
 This spec graduates the **Probing** stage of concern 054 (locked decisions D3 and D5, plus the
 Probing mechanism from the [feasibility report](054-assets/lightweight-app-model-report.html))
