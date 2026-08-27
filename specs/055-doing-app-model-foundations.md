@@ -1,6 +1,6 @@
 # 055 — App-model foundations & mapping
 
-**Status:** todo · Linear [BOL-884](https://linear.app/iskeru/issue/BOL-884) · build branch `moacyrricardo/bol-884-cpt-055-app-model-foundations-mapping`.
+**Status:** doing · Linear [BOL-884](https://linear.app/iskeru/issue/BOL-884) · build branch `moacyrricardo/bol-884-cpt-055-app-model-foundations-mapping`.
 
 ## Context
 
