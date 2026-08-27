@@ -15,7 +15,7 @@ what already runs the raw reads: `AppMonitorDiscoverer`
 (`listeners` ~:204 `ss -ltnp`, `cmdline` :213, `runtimeOf` :219 reading `/proc/<pid>/cgroup`,
 `containerName` :232, `deployDirName` :411 `readlink /proc/<pid>/cwd`) and `DockerComposeDiscoverer`
 (`discovery/service/DockerComposeDiscoverer.java`) enumerates containers by compose-project label
-(`docker ps --format {{json .}}`, :95) while **explicitly bypassing** the `/proc` chain because a
+(`docker ps --format {{json .}}`, :216) while **explicitly bypassing** the `/proc` chain because a
 container's cwd is overlayfs (:30–36). Both feed the shared `RecipeDiscoverer` port
 (`discovery/RecipeDiscoverer.java:36`) and orchestrator `DiscoveryService.discover`
 (`discovery/service/DiscoveryService.java:144`) with its family-enablement gate
@@ -122,8 +122,10 @@ cgroup runtime. 056 adds:
 
 ### The non-listening sweep (new, inside the `APP` discoverer)
 
-Three enumerations, unioned into the same `AppPortItem` shape with an **empty port** (or a sentinel
-`port = 0`, matching the record's existing nullable-port handling), then de-duplicated against the
+Three enumerations, unioned into the same `AppPortItem` shape with a **sentinel `port = 0`**
+(`AppPortItem.port` is a primitive `int`, so 0 marks "no listening port" — there is no nullable-port
+handling to reuse; the [1,65535] run-time port validator must **skip** these non-listening items, a 057
+concern), then de-duplicated against the
 listening set by PID (a PID already found via a socket is not re-emitted):
 
 - **systemd:** `systemctl list-units --type=service --state=running --no-legend --plain` →
@@ -134,9 +136,9 @@ listening set by PID (a PID already found via a socket is not re-emitted):
 - **cron:** enumerate `crontab -l` (login user), `/etc/crontab`, and `/etc/cron.d/*` +
   `/etc/cron.{daily,hourly,weekly,monthly}/*`; extract the command's leading script path. A cron
   app has no live PID; it emits a record keyed on its **script path** (mapped by `ContextMapper`),
-  runtime `PROCESS`, `confidence=low`, empty port. No `CronDiscoverer` overlap issue — that lens
-  (`discovery/service/CronDiscoverer.java`) proposes cron *management* recipes; here cron entries are
-  read only to seed context identity.
+  runtime `PROCESS`, `confidence=low`, sentinel port. No `CronDiscoverer` overlap issue — that lens
+  (`discovery/service/CronDiscoverer.java`) is a **read-only cron listing** (`crontab -l` / `ls /etc/cron.d`,
+  adding/removing entries is its deferred scope); here cron entries are read only to seed context identity.
 - **interpreter scan:** `ps -eo pid=,args=` → for each argv matching the fixed interpreter set
   `{python, python3, node, ruby, php, java, perl, bash, sh}` followed by a **file argument**, take
   that file as the app-script and resolve `/proc/<pid>/cwd` + `readlink -f` for the physical path.
@@ -152,17 +154,21 @@ wrapper set, and cron paths are compile-time constants. This preserves the S4 es
 ### The Docker branch (extend `DockerComposeDiscoverer`)
 
 - **`docker inspect` for resolved facts (054 Docker layer).** Alongside the current
-  `docker ps --format {{json .}}` project grouping (`DockerComposeDiscoverer.java:95`), add
+  `docker ps --format {{json .}}` project grouping (`DockerComposeDiscoverer.java:216`), add
   `docker inspect <id>` to read **`Mounts[]`** (real host paths behind container-side data dirs),
   **`NetworkSettings.Ports`** (published-port truth), and **`Config.Env`** (`PGDATA`/`MYSQL_DATADIR`
   overrides for the fingerprint catalog). "Inspect the live engine, don't parse Dockerfiles" —
   no Dockerfile/compose-source parsing; the only dependency is the Docker CLI already required by
   this discoverer.
-- **DNAT / docker-proxy reconciliation (Decision 4).** For each container's published port from
-  `inspect`, if the listening sweep could not attribute that port to a native host PID (owned by
-  `docker-proxy` or iptables), the port belongs to the **container** — attribute it there, do not
-  drop it and do not treat any `docker-proxy` `/proc` path as a native app-folder. A dockerized
-  context keys on its **compose project** (already grouped here), never the overlayfs path.
+- **DNAT / docker-proxy handling (Decision 4) — two independent per-branch behaviours, not a
+  cross-discoverer join.** `AppMonitorDiscoverer` (family `APP`) and `DockerComposeDiscoverer`
+  (family `DOCKER`) are separate `RecipeDiscoverer` beans invoked independently in
+  `DiscoveryService.discover` (:153–158) with no shared state — neither can see the other's results.
+  So: the **Docker branch** owns published-port truth from `inspect` (a container's port attributes to
+  its compose-project context, keyed on the project, never the overlayfs path); the **listening
+  branch** must positively **recognise and skip** a `docker-proxy` host process (its `/proc` path is
+  never a native app-folder), rather than expecting the Docker branch to reconcile it. No shared seam
+  is introduced.
 
 ### Common-service fingerprinting (fingerprint → catalog → verify)
 
@@ -200,11 +206,17 @@ it).
   055's new arch test (no MCP tool emits a raw absolute path) covers the fields 056 populates. 056
   adds **no** new path-shaped MCP field and **no** LITERAL argToken carrying a resolved path — it
   only fills side-data.
-- **Persistence seam (unchanged).** Resolved records serialise through
-  `DiscoveryService.persist` (:184) → `toJson` (:244) →
-  `recipeService.refreshDiscoveredAppPortList(recipeId, json)` — hash-free, no migration,
-  re-discovery-refreshed. Reconciliation stays on the identity triple `(machine, type, name)`
-  (`DiscoveryService.persist` :167).
+- **Persistence seam + a widening migration.** Resolved records serialise through
+  `DiscoveryService.persist` (:185) → `toJson` (:244) →
+  `recipeService.refreshDiscoveredAppPortList(recipeId, json)` — hash-free (outside the approval hash),
+  re-discovery-refreshed; reconciliation stays on the identity triple `(machine, type, name)`
+  (`DiscoveryService.persist` :167). **One migration is required** (correcting an earlier "no migration"
+  assumption): `app_port_list` is today `@Column(length = 4000)` — VARCHAR(4000) (`Recipe.java:85`),
+  sized for a handful of listening sockets. The unioned sweeps **multiply** the item count (dozens of
+  services / cron / interpreter processes) **and enlarge** each item (three 055 path fields +
+  `sourceNote`), overflowing 4000 chars on a busy host so `persist(...)` throws. A **Flyway migration
+  widens `app_port_list` to `@Lob`/TEXT (CLOB)** — no format change, only capacity. (Capping the
+  emitted list was the alternative; rejected because it silently drops discovered apps.)
 
 ### Integration points
 
