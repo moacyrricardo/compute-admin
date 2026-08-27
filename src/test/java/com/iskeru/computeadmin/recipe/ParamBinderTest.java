@@ -161,6 +161,43 @@ class ParamBinderTest {
                 .isInstanceOf(ParamValidationException.class);
     }
 
+    // --- app-folder footprint component (spec-057, S4) ----------------------
+
+    @Test
+    void bind_AppFolderComponent_BindsAbsolutePathAsDiscreteArgv() {
+        Action action = diskProbeAction();
+
+        // The resolved context path binds as ONE discrete argv element — never concatenated
+        // into the script string; the du template stays a source-controlled constant.
+        List<String> argv = binder.bind(action,
+                Map.of("app-folder", "/opt/orders", "app-name", "orders", "port", "8080"));
+
+        assertThat(argv).containsExactly("du", "-sbx", "/opt/orders");
+    }
+
+    @Test
+    void bind_AppFolderComponent_RelativePath_IsRejected() {
+        Action action = diskProbeAction();
+
+        // Must be absolute (leading /) — a relative path is outside the fixed charset.
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-folder", "opt/orders")))
+                .isInstanceOf(ParamValidationException.class);
+    }
+
+    @Test
+    void bind_AppFolderComponent_ShellMetacharacters_AreRejected() {
+        Action action = diskProbeAction();
+
+        // A space, ';', '$', backticks etc. are outside the shell-safe path charset, so an
+        // injection can never widen the S4 surface even via tampered side-data.
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-folder", "/opt/orders; rm -rf /")))
+                .isInstanceOf(ParamValidationException.class);
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-folder", "/opt/$(whoami)")))
+                .isInstanceOf(ParamValidationException.class);
+        assertThatThrownBy(() -> binder.bind(action, Map.of("app-folder", "/opt/a b")))
+                .isInstanceOf(ParamValidationException.class);
+    }
+
     // --- reserved app-name ops param (spec-026) -----------------------------
 
     @Test
@@ -212,6 +249,17 @@ class ParamBinderTest {
     private Action appProbeAction() {
         return action(false,
                 List.of(literal("probe"), param("app-name"), param("port")),
+                List.of(appPortListDef("apps")));
+    }
+
+    /**
+     * A footprint disk probe (spec-057): a fixed {@code du} template whose only bound value is
+     * the per-context {@code app-folder} path, plus the {@code APP_PORT_LIST} composite it
+     * fans out over.
+     */
+    private Action diskProbeAction() {
+        return action(false,
+                List.of(literal("du"), literal("-sbx"), param("app-folder")),
                 List.of(appPortListDef("apps")));
     }
 
