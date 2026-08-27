@@ -13,9 +13,11 @@ import com.iskeru.computeadmin.ssh.SshTarget;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -160,18 +162,41 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     /** A 64/12-hex container id (as opposed to a human container name). */
     private static final Pattern HEX_ID = Pattern.compile("[0-9a-f]{12,}");
 
+    /** The fixed interpreter set the non-listening scan recognises (spec-056 Decision 3). */
+    private static final Set<String> INTERPRETERS = Set.of(
+            "python", "python3", "node", "ruby", "php", "java", "perl", "bash", "sh");
+
+    /** A script-path token that looks like an interpreter's file argument (not a flag/module). */
+    private static final Pattern SCRIPT_ARG = Pattern.compile(".*\\.(py|js|rb|php|pl|sh|jar)$");
+
+    /** A well-formed systemd service unit name (the only bound input to `systemctl show`, S4). */
+    private static final Pattern SERVICE_UNIT = Pattern.compile("[A-Za-z0-9@._-]+\\.service");
+
+    /**
+     * The fixed cron-enumeration script (spec-056 Decision 3): read every cron source the login
+     * user can see — its own {@code crontab -l}, {@code /etc/crontab}, {@code /etc/cron.d/*} and
+     * the {@code /etc/cron.{daily,hourly,weekly,monthly}} run-parts dirs — and print their lines.
+     * The body is a source-controlled constant with no bound input, so it is trivially S4-safe;
+     * it only reads (never {@code crontab -e}/install), the spec-006 read-only contract.
+     */
+    private static final String CRON_PROBE_SCRIPT = String.join("\n",
+            "crontab -l 2>/dev/null",
+            "cat /etc/crontab 2>/dev/null",
+            "cat /etc/cron.d/* 2>/dev/null",
+            "for d in /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly; do",
+            "  for f in \"$d\"/*; do [ -f \"$f\" ] && echo \"$f\"; done",
+            "done");
+
     @Override
     public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
         SshTarget target = Probes.target(machine);
         List<Listener> listeners = listeners(ssh, target);
-        if (listeners.isEmpty()) {
-            return List.of();
-        }
 
         // Classify each app and map it to its owning context (spec-055). Two passes: first
         // resolve every listener, then group by contextKey so a context can enumerate the
         // sibling app-scripts collapsing to it (grouping metadata only, spec-055 D4).
         List<Resolved> resolved = new ArrayList<>();
+        Set<String> listeningPids = new HashSet<>();
         boolean prometheus = false;
         for (Listener listener : listeners) {
             // Decision 4: a published container port may be owned on the host by
@@ -181,6 +206,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             if (isDockerProxy(listener.process())) {
                 continue;
             }
+            listeningPids.add(listener.pid());
             String cmdline = cmdline(ssh, target, listener.pid());
             Runtime runtime = runtimeOf(ssh, target, listener.pid());
             String container = runtime == Runtime.DOCKER ? containerName(ssh, target, listener.pid()) : null;
@@ -202,6 +228,17 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             if (family == Family.FASTAPI && respondsToMetrics(ssh, target, listener.port())) {
                 prometheus = true;
             }
+        }
+
+        // Non-listening sweep (spec-056 Decision 3 / 054 D4): union the workers, systemd
+        // services, cron jobs and interpreter processes that own no listening socket, so the
+        // "structurally undetectable" population becomes discoverable. Each emits the same
+        // record shape with a sentinel port 0 and its own sourceNote, de-duplicated by PID
+        // against the listening set.
+        resolved.addAll(nonListeningApps(ssh, target, listeningPids));
+
+        if (resolved.isEmpty()) {
+            return List.of();
         }
 
         // Sibling enumeration (spec-055 D4): the app-scripts that resolve to one context,
@@ -500,6 +537,185 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private boolean hasMarkerFile(SshExecutor ssh, SshTarget target, String dir) {
         List<String> entries = Probes.lines(ssh, target, List.of("ls", "-a", dir));
         return entries.stream().anyMatch(ContextMapper.markerFiles()::contains);
+    }
+
+    // --- non-listening sweep (spec-056 Decision 3) --------------------------
+
+    /**
+     * The union of the three non-listening enumerations — running systemd services, cron
+     * jobs, and interpreter processes with no listening socket — each resolved to its owning
+     * context and de-duplicated by PID against {@code seenPids} (the listening set) and each
+     * other. A PID whose cgroup routes it to Docker (Decision 2) is dropped; its context comes
+     * from the Docker branch, never from its overlayfs {@code /proc} path.
+     *
+     * <p><strong>S4 safety.</strong> Every read is a constant argv or a fixed {@code sh -c}
+     * script; the only bound inputs are a validated PID (integer) or a service-unit name matched
+     * against {@link #SERVICE_UNIT}. No free-form param, no mutating verb, no {@code sudo}.
+     */
+    private List<Resolved> nonListeningApps(SshExecutor ssh, SshTarget target, Set<String> seenPids) {
+        List<Resolved> out = new ArrayList<>();
+        Set<String> emitted = new HashSet<>(seenPids);
+        out.addAll(systemdApps(ssh, target, emitted));
+        out.addAll(interpreterApps(ssh, target, emitted));
+        out.addAll(cronApps(ssh, target));
+        return out;
+    }
+
+    /** Running {@code *.service} units (spec-056): unit → {@code MainPID} → context, runtime systemd. */
+    private List<Resolved> systemdApps(SshExecutor ssh, SshTarget target, Set<String> emitted) {
+        List<Resolved> out = new ArrayList<>();
+        List<String> units = Probes.lines(ssh, target, List.of(
+                "systemctl", "list-units", "--type=service", "--state=running", "--no-legend", "--plain"));
+        for (String line : units) {
+            String unit = line.trim().split("\\s+")[0];
+            if (!SERVICE_UNIT.matcher(unit).matches()) {
+                continue;
+            }
+            String pid = mainPid(ssh, target, unit);
+            if (pid == null || !emitted.add(pid)) {
+                continue; // no main process (oneshot), or already found via a socket / another sweep
+            }
+            if (runtimeOf(ssh, target, pid) == Runtime.DOCKER) {
+                continue; // Decision 2: a containerised unit's /proc path is never a host context
+            }
+            String appName = sanitize(unit.substring(0, unit.length() - ".service".length()), 0);
+            out.add(new Resolved(Family.GENERIC, appName, 0, Runtime.SYSTEMD.label,
+                    resolveContext(ssh, target, pid), "declared app · systemd unit · no port"));
+        }
+        return out;
+    }
+
+    /** The {@code MainPID} of a running unit ({@code systemctl show}), or null when it has none. */
+    private String mainPid(SshExecutor ssh, SshTarget target, String unit) {
+        List<String> out = Probes.lines(ssh, target,
+                List.of("systemctl", "show", "-p", "MainPID", "--value", unit));
+        if (out.isEmpty()) {
+            return null;
+        }
+        String pid = out.get(0).trim();
+        return pid.isEmpty() || pid.equals("0") ? null : pid;
+    }
+
+    /**
+     * Interpreter processes (spec-056): {@code ps -eo pid=,args=} → an argv whose leading token
+     * is a known interpreter followed by a script file argument. The script names the app; its
+     * physical context comes from {@code /proc/<pid>/cwd}, like the listening branch. Skips any
+     * PID already emitted by an earlier sweep or routed to Docker (Decision 2).
+     */
+    private List<Resolved> interpreterApps(SshExecutor ssh, SshTarget target, Set<String> emitted) {
+        List<Resolved> out = new ArrayList<>();
+        for (String line : Probes.lines(ssh, target, List.of("ps", "-eo", "pid=,args="))) {
+            String trimmed = line.trim();
+            int sp = trimmed.indexOf(' ');
+            if (sp <= 0) {
+                continue;
+            }
+            String pid = trimmed.substring(0, sp);
+            if (!pid.matches("\\d+")) {
+                continue;
+            }
+            String script = interpreterScript(trimmed.substring(sp + 1).trim());
+            if (script == null || !emitted.add(pid)) {
+                continue;
+            }
+            if (runtimeOf(ssh, target, pid) == Runtime.DOCKER) {
+                continue; // Decision 2
+            }
+            String appName = sanitize(baseName(script), 0);
+            out.add(new Resolved(Family.GENERIC, appName, 0, Runtime.PROCESS.label,
+                    resolveContext(ssh, target, pid), "declared app · interpreter process · no port"));
+        }
+        return out;
+    }
+
+    /**
+     * The interpreter's target script from a {@code ps args} string, or null when the argv is
+     * not {@code <interpreter> [flags] <script-file>}. A leading interpreter is required and the
+     * first non-flag token must look like a script (absolute path or a known script extension),
+     * so {@code python3 -m uvicorn} (a module, not a file) is correctly rejected.
+     */
+    private String interpreterScript(String args) {
+        String[] tokens = args.split("\\s+");
+        if (tokens.length < 2 || !INTERPRETERS.contains(baseName(tokens[0]))) {
+            return null;
+        }
+        for (int i = 1; i < tokens.length; i++) {
+            String t = tokens[i];
+            if (t.startsWith("-")) {
+                continue; // an interpreter flag (-u, -O, -jar, …) precedes the script
+            }
+            return t.startsWith("/") || SCRIPT_ARG.matcher(t).matches() ? t : null;
+        }
+        return null;
+    }
+
+    /**
+     * Cron-launched apps (spec-056): read every cron source ({@link #CRON_PROBE_SCRIPT}) and take
+     * each command's leading absolute script path. A cron app has no live PID, so it is keyed on
+     * its script path and mapped through the script's directory. Runtime process, sentinel port.
+     */
+    private List<Resolved> cronApps(SshExecutor ssh, SshTarget target) {
+        List<Resolved> out = new ArrayList<>();
+        Set<String> seenScripts = new HashSet<>();
+        List<String> lines = Probes.lines(ssh, target, List.of("sh", "-c", CRON_PROBE_SCRIPT));
+        for (String path : cronScriptPaths(lines)) {
+            if (!seenScripts.add(path)) {
+                continue;
+            }
+            ContextMapper.Context context = resolveContextForDir(ssh, target, parentDir(path));
+            out.add(new Resolved(Family.GENERIC, sanitize(baseName(path), 0), 0, Runtime.PROCESS.label,
+                    context, "declared app · cron-launched · no port"));
+        }
+        return out;
+    }
+
+    /** The leading absolute path of each non-comment cron line (the command's script), in order. */
+    private List<String> cronScriptPaths(List<String> lines) {
+        List<String> out = new ArrayList<>();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            for (String token : trimmed.split("\\s+")) {
+                if (token.startsWith("/")) {
+                    out.add(token);
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Maps a script's <em>directory</em> to its context (cron has no PID to read a cwd from). */
+    private ContextMapper.Context resolveContextForDir(SshExecutor ssh, SshTarget target, String dir) {
+        if (dir == null) {
+            return null;
+        }
+        return ContextMapper.resolveContext(dir, realPath(ssh, target, dir),
+                d -> hasMarkerFile(ssh, target, d));
+    }
+
+    /** {@code readlink -f <path>} (the physical dedup path), or null when unreadable. */
+    private String realPath(SshExecutor ssh, SshTarget target, String path) {
+        List<String> out = Probes.lines(ssh, target, List.of("readlink", "-f", path));
+        if (out.isEmpty()) {
+            return null;
+        }
+        String p = out.get(0).trim();
+        return p.isEmpty() ? null : p;
+    }
+
+    /** The last path segment of {@code path} (its basename). */
+    private String baseName(String path) {
+        int slash = path.lastIndexOf('/');
+        return slash >= 0 ? path.substring(slash + 1) : path;
+    }
+
+    /** The parent directory of {@code path}, or {@code /} for a top-level file. */
+    private String parentDir(String path) {
+        int slash = path.lastIndexOf('/');
+        return slash > 0 ? path.substring(0, slash) : "/";
     }
 
     /**
