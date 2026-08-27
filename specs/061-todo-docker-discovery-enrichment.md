@@ -40,8 +40,10 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
    `docker ps` enumeration, the Docker branch runs one batched
    `docker inspect --format '{{json .}}' <id>…` over the container IDs `docker ps` returned
    (each ID validated against `[0-9a-f]{12,64}` before it enters the argv). From each inspect
-   document it reads exactly four things: **`Mounts[]`** (bind sources + named-volume names and
-   their container-side destinations), **`NetworkSettings.Ports`** (fallback
+   document — correlated back to its `docker ps` container by the document's `Id`/`Name` — it
+   reads: **`Mounts[]`** (each mount's host `Source` path, its `Destination`, and `Type`; a named
+   volume's `Source` is its host `_data` mountpoint, e.g. `/var/lib/docker/volumes/<name>/_data`),
+   **`NetworkSettings.Ports`** (fallback
    `HostConfig.PortBindings`) — the DNAT published-port truth: host-published port ↔
    container-internal port, resolving the docker-proxy blind spot the native branch skips —
    **`Config.Env`** (whitelisted keys only, see Implementation) and **`Config.Image`** +
@@ -58,6 +60,10 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
    **never a path** (S9). These items ride the same un-audited `app_port_list` side-data seam;
    docker recipes' checks are fixed param-free reads (`DockerComposeDiscoverer.java:193–208`), so
    no run-time fan-out ever binds these items and the `[1,65535]` validator concern does not arise.
+   An **ordinary (non-datastore) app container** carries the same shape with `scriptFolder` and
+   `contextScripts` **null** — no host app-folder is claimed for it; its bytes are the docker
+   writable-layer/volume story spec-037 owns, not a host `du`. Only a fingerprinted-DB container
+   sets `scriptFolder` (Decision 4); 059 renders null as honest-absence.
 
 3. **Image-tag fingerprinting mirrors the native fingerprint→catalog→verify.** `ServiceCatalog`
    gains `fingerprintByImage(imageRef)`: normalise the ref the way `DatastoreImages` does
@@ -65,8 +71,11 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
    `DatastoreImages.java:13–17`) against the same four Debian/Ubuntu rows (`ServiceCatalog.java:41–46`).
    Verify: the catalog's `dataDirEnvVar` (`PGDATA`/`MYSQL_DATADIR`) read from `Config.Env`
    overrides the catalog default **container-side** data dir; that dir is then translated through
-   `Mounts[]` (longest-prefix destination match) to the **host-side** bytes — a bind source path,
-   or a named volume. Two agreeing signals — image **and** port (the catalog `defaultPort` appears
+   `Mounts[]` (longest-prefix destination match) to the **host-side** bytes. The translated value
+   is **always the mount's host `Source` path** — a bind's source, or a named volume's host `_data`
+   mountpoint (`docker inspect` reports both as `Source`), **never the bare volume name** — so a
+   single value kind, a real `du`-able host path, lands in `scriptFolder` (Decision 4). Two
+   agreeing signals — image **and** port (the catalog `defaultPort` appears
    among the container's internal ports) — stamp `confidence = "high"`; image alone stamps
    `"low"`; unmatched images stamp `null`. Same field, same semantics as 056 Decision 5.
 
@@ -78,8 +87,13 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
    with `/`), so a dockerized DB **shares its compose project's context id** rather than standing
    alone, exactly as 055/056 decided, without routing an overlayfs path through `ContextMapper`.
    For a fingerprinted DB container, the Mounts-translated host data location rides in the item's
-   `scriptFolder` field (the seam 057's volume-`du` numerator will key on); it is S9-secret
-   side-data like every 055 path field.
+   `scriptFolder` field (the seam 057's volume-`du` numerator will key on) — always a host `Source`
+   path per Decision 3, so 057 runs its physical-size `du` on `scriptFolder` directly. **057 must
+   never `du` a docker item's `contextKey`**: that is the synthetic `compose:`/`container:` token,
+   not a path — for docker-origin records the sizing target is `scriptFolder`, the context key is
+   identity only. A named-volume `_data` mountpoint under the docker data-root is root-owned, so an
+   unprivileged `du` degrades-and-labels exactly as 057's D3 posture prescribes. `scriptFolder` is
+   S9-secret side-data like every 055 path field.
 
 5. **No `DiscovererFamily` change.** `docker inspect` is more reads on the **same** root-equivalent
    socket the `DOCKER` family already gates default-off (`DiscovererFamily.java:33`); the
@@ -95,14 +109,17 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
   `List.of("docker", "inspect", "--format", "{{json .}}", id1, …)` via `Probes.lines`
   (`Probes.java:36`) — one exec for all containers; IDs regex-validated (`[0-9a-f]{12,64}`) before
   joining the argv; a malformed inspect line degrades to a skipped container, never a failed probe
-  (same posture as `containers()`'s per-line catch, :228–230).
+  (same posture as `containers()`'s per-line catch, :228–230) — the skip logs **only the container
+  id**, never the raw inspect line (it carries the full `Config.Env`, secrets included; see the
+  no-secrets rule below).
 - Parse per container: published ports from `NetworkSettings.Ports` (entries with a non-null
   `HostPort`), falling back to `HostConfig.PortBindings`; internal ports (the map keys, for the
   fingerprint port signal); `Mounts[]` as `(type, source, destination)` triples; `Config.Image`;
   the `com.docker.compose.project.working_dir` label; and **only** the env keys the fingerprinted
   row's `dataDirEnvVar` names — `Config.Env` also carries secrets (`POSTGRES_PASSWORD`, …), so the
-  raw env array is **never** retained, logged, or serialised; extraction is a whitelisted-key scan
-  and the values kept are directory paths only.
+  raw env array **and the raw inspect line that contains it** are **never** retained, logged,
+  serialised, or placed in an exception message; extraction is a whitelisted-key scan and the values
+  kept are directory paths only. Any parse-failure or WARN log names the container id alone.
 - Build `AppPortItem`s per Decision 2/4 in `projectRecipe` (:137), `standaloneDatastoreRecipe`
   (:168) **and** `bucketRecipe` (:178) — unclassified standalone containers publish DNAT ports too,
   and 056 Decision 4 forbids dropping them; the bucket recipe's items key `container:<name>`.
@@ -128,8 +145,17 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
   CLOB column. Readers are tolerant by design: `MonitorService.parseDockerConsumers` reads
   `root.get("dockerConsumers")` (`monitor/service/MonitorService.java:204`) — unchanged;
   `parseAppPortList` (:166–188) requires `root.isArray()` and is extended with one branch — when
-  the root is an object, read the `appPortList` array member. Old rows parse as before; re-discovery
-  rewrites the column anyway.
+  the root is an object, read its `appPortList` member (**absent on a pre-061 docker object row ⇒
+  the empty list, never an error**). Old rows parse as before; re-discovery rewrites the column
+  anyway.
+- **`RunService` never sees this root.** 055's Implementation Notes name `RunService` as a reader
+  of the JSON, but it parses only the **run-time-supplied `APP_PORT_LIST` param** value
+  (`RunService.runFanOut` → `parseItems(supplied.get(appPortListName))`,
+  `run/service/RunService.java:210`), reached only when the action carries an `APP_PORT_LIST` param
+  (`appPortListParamName`, :274). Docker-branch recipes carry **fixed param-free checks**
+  (Decision 2), so `appPortListParamName` returns null and `RunService` never parses a docker
+  recipe's persisted `app_port_list` column — the combined-object root is structurally unreachable
+  from the run path. Only the two discovery/monitor readers above touch it.
 - **No migration.** `app_port_list` has been CLOB since 056's `V15__widen_app_port_list.sql`; this
   spec adds JSON bytes, not schema. Flyway is not touched.
 
@@ -147,11 +173,23 @@ probe on the docker socket already gated by the `DOCKER` family opt-in.
 ### Tests
 
 Unit-test the inspect parser (ports/mounts/env-whitelist extraction from canned inspect JSON,
-including the `PortBindings` fallback and a malformed line), `fingerprintByImage` (registry-prefixed,
-tag/digest-suffixed, `bitnami/postgresql` variants; mariadb never matching the mysql row), the
-Mounts longest-prefix translation (bind vs named volume), and the combined-object round trip
-(`persist` → `parseAppPortList` + `parseDockerConsumers` on the same value). The `ca-sshd`
-container recipe in CLAUDE.md plus a compose project on the target verifies live.
+including the `PortBindings` fallback, a malformed line, and confirmation no `Env` value or raw
+inspect line reaches a log), `fingerprintByImage` (registry-prefixed, tag/digest-suffixed,
+`bitnami/postgresql` variants; mariadb never matching the mysql row), the Mounts longest-prefix
+translation (bind `Source` vs named-volume `_data` `Source`), and the combined-object round trip
+(`persist` → `parseAppPortList` + `parseDockerConsumers` on the same value) **plus old-format
+regressions** — a bare array, and a bare `{dockerConsumers}` object with no `appPortList` member ⇒
+the empty list.
+
+**Live target.** The `ca-sshd` container (project CLAUDE.md) has **no docker engine**, so the
+Docker branch (`Probes.commandExists(…, "docker")`) never fires against it — it cannot verify this
+feature. Verify instead against an SSH target that *runs* a docker engine: the `localssh` profile
+against the dev host (which has docker), or a docker-in-docker sidecar reachable over SSH. Bring up
+one bind-mounted app container and one `postgres:16` container in a compose project; **verified =**
+the persisted docker row carries, for the postgres container, `confidence = high`, a
+`compose:<project>` `contextKey`, and a host `Source` path in `scriptFolder`; and a published port
+yields an `AppPortItem` whose `port` is the **host** port with a `sourceNote` naming the
+`:host→container/proto` mapping.
 
 ## Known Gaps
 
@@ -163,6 +201,11 @@ container recipe in CLAUDE.md plus a compose project on the target verifies live
   the discoverers are independent beans by 056's explicit design (no shared seam), and the monitor
   read's existing `appName` dedup (spec-033) is the only collapse. Acceptable duplication; 059 may
   refine presentation.
+- **Host-interface and multi-protocol nuance dropped.** Only the published host *port* is read,
+  not its `HostIp`, so a loopback-only `127.0.0.1:5432` publish is indistinguishable from
+  `0.0.0.0:5432`; and a port published on both tcp and udp yields two items with identical
+  `appName`+`port`. Both are accepted v1 scope cuts — the map records reachability coarsely; 059
+  may collapse the protocol pair in presentation.
 - **`working_dir` is trusted as display only.** The compose label can be stale (project deployed
   from a deleted dir) or absent (`docker run`); it never becomes an identity key — the synthetic
   `compose:`/`container:` token is the key, so staleness cannot fork or merge contexts.
