@@ -1,5 +1,19 @@
 # 053 — App model & verb contract
 
+> **NOTE — partially superseded by concern 054 (provisional).** A model comparison found that
+> ~10 of this concern's 17 decisions are *identity / measurement* calls that concern **054**
+> (lightweight app-metadata model) re-answers from a clean slate — the declared-app substrate and
+> its lifecycle (dec. 4, 8–10, axes C/E, OQ2/OQ3), classification-as-declaration (dec. 2, dec. 5's
+> A4 side-data half), path-derivation + normalisation/alias map (dec. 12–13), the probe-constant
+> table (dec. 16, axis D), and the **symlink-vs-resolved** token this concern flagged as *worsened*
+> (→ 054 OQ1). What **stays here** is the **verb & command contract**, whose complexity is forced by
+> the approval gate (spec-004/015), not the identity model: the closed verb vocabulary (dec. 3),
+> identity+verb inside the hash + re-approve (dec. 5 A1, dec. 7), never-in-argv (dec. 6), multi-app
+> commands (dec. 11), MCP verbs + `part` (dec. 14–15), and OQ4/OQ5. **The cut is load-bearing on
+> 054's OQ1 + OQ4 and is not final** until those forks are locked; the full retitle to a
+> verb-and-command contract, and a WARNING replacing this note, follow then. See 054's
+> *Relationship to other documents* for the decision-by-decision split.
+
 **Status:** concern (most axes decided in the 2026-08-12 reviews; a short residue stays
 open) · no branch · no Linear (blocked for this repo).
 
