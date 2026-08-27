@@ -12,6 +12,7 @@ import java.util.function.Function;
 import static com.iskeru.computeadmin.discovery.FakeSshExecutor.notFound;
 import static com.iskeru.computeadmin.discovery.FakeSshExecutor.ok;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * {@link AppMonitorDiscoverer} against a fake executor (spec-025): the {@code ss}→PID→
@@ -143,8 +144,11 @@ class AppMonitorDiscovererTest {
 
         ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
+        // The deploy dir is now also mapped to a context (spec-055), so assert the
+        // name-derivation this test targets on the legacy (appName, port, runtime) fields.
         assertThat(springboot.appPortList())
-                .containsExactly(new AppPortItem("birthday-rsvp", 8080, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("birthday-rsvp", 8080, "process"));
     }
 
     @Test
@@ -155,8 +159,11 @@ class AppMonitorDiscovererTest {
 
         ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
+        // Context mapping (spec-055) now also populates the context fields; this test
+        // targets name-derivation, so assert on the legacy scalar fields.
         assertThat(springboot.appPortList())
-                .containsExactly(new AppPortItem("payment-gateway", 8080, "process"));
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
+                .containsExactly(tuple("payment-gateway", 8080, "process"));
     }
 
     @Test
