@@ -1,7 +1,14 @@
+> **SUPERSEDED — not implemented.** Reframed by concern **054** (lightweight app-metadata
+> model), which re-opens "what is an app on disk, and how big is it" from a clean slate — a
+> uniform wrapper-directory mapping rule and a generic per-context disk probe, in place of this
+> spec's per-language detector tables and its joint edit to spec-041's `computeOther`. The
+> mechanisms here are preserved as *options* in 054, not lost. Closed as `done` (shipped nothing);
+> the symlink-vs-resolved identity question 049 left open is now 054's Open Question 1.
+
 # 049 — App-folder & footprint detection
 
-**Status:** todo · no branch yet · no Linear (blocked for this repo; tracked as
-`spec-049`).
+**Status:** done — superseded by 054 · no branch (never built) · no Linear (blocked for this
+repo; tracked as `spec-049`).
 
 ## Context
 
