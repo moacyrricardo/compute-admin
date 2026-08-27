@@ -88,26 +88,48 @@ Each 049/050 mechanism reappears here as an *option*, not a given:
   orthogonal to *this* concern (it is a **verb** question → 053) — 054 only needs the *grouping* of
   those scripts under a context, not their run semantics.
 
+## Decisions taken (locked 2026-08-27)
+
+All five forks were resolved through the
+[decision surface](054-assets/lightweight-app-model-decide.html); each took its recommended option.
+
+1. **Symlink identity key (D1 → the split).** Dedup contexts on the resolved *physical* path,
+   **display** the logical path, and **promote** the key to the logical path when the physical path
+   matches `*/releases/*` or `*/versions/*` (so a redeploy doesn't fork a new context). This is the
+   token 053's red-team flagged as *worsened*; **spec-015's pinned argv and S9 sanitisation must
+   adopt this same key** (a coordination rider, below).
+2. **Wrapper-dir hop depth (D2 → one hop + marker-gated second).** Single hop by default; a bounded
+   **second** hop only when the intermediate dir is also a wrapper *and* the candidate carries a
+   marker file (`.git`/`compose.yaml`/`package.json`). Cap at 2 hops; the boundary clamp always
+   applies. Git-rooted monorepos group at the repo root — documented as intended behaviour.
+3. **Privilege posture (D3 → degrade-and-label).** Without sudo, degrade gracefully and label every
+   degraded number — RSS as an upper bound (not PSS), cgroup instead of per-PID, `permission-denied`
+   instead of a fake `0`, `confidence=low` on procfs-denied mappings; never read "no PID" / a blank
+   users-column as "no process". **Operator addition (D3 note):** expose an on-demand **"re-probe
+   with sudo"** that upgrades a degraded reading to full fidelity (PSS, per-PID, other-user paths).
+   *(Real work — see below.)*
+4. **Non-listening apps (D4 → in scope).** The `systemctl`(running) + cron enumeration + `ps -eo
+   args` interpreter sweep runs alongside ports+docker; non-listening apps emit the same record with
+   an empty port list. **Consequence:** 053's "structurally undetectable" population becomes
+   discoverable, so 053's declared-app machinery dissolves and the **054↔053 partial supersede
+   holds** (see Relationship).
+5. **Database sizing (D5 → docker-only now).** Logical (`docker exec` size query) + physical
+   (data-volume `du`) for dockerized DBs. **Standalone (non-docker) DB sizing is deferred to its own
+   future spec** (same SQL, host-side transport) — created via `/spec-workflow:new` when scheduled
+   (D5 note). *(Deferred spec — see below.)*
+
 ## Open Questions
 
-The five genuine forks, carried in full (with evidence + a recommended option) on the
-[decision surface](054-assets/lightweight-app-model-decide.html). Each must be settled before 054 can
-graduate into a spec.
+**All five resolved on 2026-08-27 (see *Decisions taken*).** What remains is not open questions but
+**work** — none of it done by recording these decisions:
 
-1. **Symlink identity key** — when a script/binary is reached through a symlink, does the context key
-   on the resolved *physical* path, the *logical* path, or a split (dedup on physical, display
-   logical, promote release-symlinks to logical)? *Widest downstream blast radius.* This is the exact
-   token 053's red-team flagged as **worsened** (symlink-vs-resolved), so 054 owns resolving it.
-   *Report lean: the split.*
-2. **Wrapper-dir hop depth** — one hop, a marker-gated bounded second hop, or an unbounded walk to
-   the git root? Governs whether nested monorepo scripts reach the repo root. *Report lean: one hop +
-   marker-gated second.*
-3. **Privilege posture** — degrade-and-label without sudo (the ~80 % path), require sudo/root, or
-   unprivileged-only? *Report lean: degrade and label every degraded number.*
-4. **Non-listening apps** — in scope via a mandatory `systemctl`/cron/`ps` sweep, ports+docker only,
-   or opt-in per machine? Ports+Docker alone can't see workers/cron/batch. *Report lean: in scope.*
-5. **Database sizing scope** — Docker-only now (standalone a documented future hook), include
-   standalone now, or drop the DB axis? *Report lean: Docker-only now.*
+- **Graduate this concern into a build spec** (`/spec-workflow:new`) — the implementable
+  discovery → mapping → probing model. That spec resolves 054 (adds the WARNING here) and is where
+  the real code lives.
+- **A deferred spec for standalone (non-docker) DB sizing** (D5 note) — its own `/spec-workflow:new`.
+- **Two flagged real-work riders:** the on-demand *re-probe with sudo* action (D3 note), and having
+  **spec-015's pin path + S9 sanitisation adopt D1's symlink key** — the coordination the 053
+  red-team demanded (one decided token, adopted by all its masters, not just declared once here).
 
 ## Relationship to other documents
 
@@ -131,9 +153,11 @@ graduate into a spec.
     flag), the **never-in-argv** invariant (dec. 6), multi-app commands (dec. 11), MCP-speaks-verbs
     and `part` addressing (dec. 14, 15), "agent proposes / UI decides" (from dec. 8), the
     accept-at-approval rider (dec. 12), and OQ4/OQ5.
-  - **The cut is load-bearing on 054's OQ1 + OQ4** and is therefore *provisional* until those forks
-    are locked: if OQ4 lands "ports + docker only," 053's declared-app machinery walks back in. The
-    full 053 retitle + WARNING is deferred to when the forks are decided; recorded here as intent.
+  - **The cut was load-bearing on 054's OQ1 + OQ4 — now decided (2026-08-27).** OQ1 took the split
+    symlink key and **OQ4 landed IN SCOPE**, so 053's declared-app machinery dissolves and this
+    partial supersede **holds** (had OQ4 gone "ports + docker only," it would have walked back in).
+    The full 053 retitle + WARNING lands when 054 **graduates into its build spec** — a concern is
+    retired by a resolving spec, not by another concern.
 - **032–041** — the consumer/footprint axes 054's Probing stage feeds; 041's single-denominator
   `computeOther` is the disk-axis integration point.
 - **040 (monitor runtime view & model weight)** — 054's "mechanism, not server-side classification"
