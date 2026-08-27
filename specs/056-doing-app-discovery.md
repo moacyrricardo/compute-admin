@@ -1,6 +1,6 @@
 # 056 — App discovery
 
-**Status:** todo · Linear [BOL-885](https://linear.app/iskeru/issue/BOL-885) · build branch `moacyrricardo/bol-885-cpt-056-app-discovery`. **Blocked by 055 (BOL-884).**
+**Status:** doing · Linear [BOL-885](https://linear.app/iskeru/issue/BOL-885) · build branch `moacyrricardo/bol-885-cpt-056-app-discovery`. **Blocked by 055 (BOL-884).**
 
 ## Context
 
