@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>compute-admin · UI mockup</title>
+<style>
+/* =========================================================================
+   compute-admin — clickable UI mockup (facsimile, not a document)
+   Shell chrome (identity switcher · screen tabs · annotations) sits OUTSIDE
+   the product surface. The product surface is fully re-skinned per identity;
+   it is never viewer-theme-aware — each identity is a committed product theme.
+   ========================================================================= */
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  background:#0a0c10;color:#e6e9ef;
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;cursor:pointer;}
+
+/* ============================ SHELL CHROME =============================== */
+/* Neutral, identity-independent — deliberately reads as scaffolding, not app */
+.shellbar{
+  position:sticky;top:0;z-index:400;
+  display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+  padding:9px 18px;
+  background:#101318;border-bottom:1px solid #262b34;
+  color:#c4cad4;font-size:13px;
+}
+.shellbar .brand-chip{
+  display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.02em;color:#eef1f6;
+}
+.shellbar .brand-chip .sq{width:14px;height:14px;border-radius:4px;
+  background:linear-gradient(135deg,#38bec9,#7c8cff);}
+.shellbar .lbl{text-transform:uppercase;letter-spacing:.14em;font-size:10px;color:#6b7280;}
+.seg{display:inline-flex;background:#191d24;border:1px solid #2b313b;border-radius:8px;padding:2px;gap:2px;}
+.seg button{
+  border:0;background:transparent;color:#9aa1ad;font-size:12.5px;font-weight:600;
+  padding:5px 12px;border-radius:6px;letter-spacing:.01em;
+}
+.seg button:hover{color:#e6e9ef;}
+.seg button.on{background:#2f333c;color:#fff;box-shadow:inset 0 0 0 1px #3c424d;}
+.shell-tabs{display:inline-flex;gap:2px;}
+.shell-spacer{flex:1 1 auto;}
+.anno-btn{
+  border:1px solid #2b313b;background:#191d24;color:#c4cad4;
+  border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:600;
+  display:inline-flex;align-items:center;gap:7px;
+}
+.anno-btn:hover{border-color:#3c8; color:#eef1f6;}
+.anno-btn.on{background:#123; border-color:#2dd4bf;color:#8ff0e0;}
+.anno-btn .ic{width:15px;height:15px;}
+
+/* ============================ STAGE ==================================== */
+.stage{min-height:calc(100vh - 46px);position:relative;}
+
+/* ======================================================================= */
+/*  PER-IDENTITY DESIGN TOKENS                                              */
+/*  Every component below reads var()s; each identity redefines the whole   */
+/*  palette + type + shape. This is a product skin, not a light/dark toggle.*/
+/* ======================================================================= */
+
+/* ---- 1 · CURRENT (spec-012 clone) — LIGHT ----------------------------- */
+body[data-identity="current"]{
+  --ground:#f8fafc;--surface:#ffffff;--surface-2:#f1f5f9;--border:#e2e8f0;
+  --text:#0f172a;--text-dim:#475569;--text-faint:#94a3b8;
+  --accent:#0891b2;--accent-2:#0891b2;--accent-ink:#ffffff;
+  --s-ok:#16a34a;--s-warn:#d97706;--s-bad:#dc2626;--s-info:#2563eb;--s-neutral:#94a3b8;
+  --c-1:#6366f1;--c-2:#0d9488;--c-3:#a855f7;--c-4:#e11d48;--c-5:#d97706;
+  --c-docker:#64748b;--c-system:#78716c;
+  --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --font-display:var(--font-sans);
+  --radius:6px;--radius-sm:4px;
+  --elevation:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.10);
+  --btn-primary-shadow:none;
+  --hair:1px;
+}
+/* ---- 2 · ISKERU — DARK, gold ----------------------------------------- */
+body[data-identity="iskeru"]{
+  --ground:#0b0d12;--surface:#141925;--surface-2:#1a2030;--border:#232a3a;
+  --text:#eef1f7;--text-dim:#9aa3b6;--text-faint:#6b7488;
+  --accent:#d9a441;--accent-2:#c87f4a;--accent-ink:#17130a;
+  --accent-grad:linear-gradient(135deg,#e0b052,#c87f4a);
+  --accent-soft:rgba(217,164,65,.13);
+  --s-ok:#34d399;--s-warn:#fbbf24;--s-bad:#f87171;--s-info:#60a5fa;--s-neutral:#6b7488;
+  --c-1:#818cf8;--c-2:#2dd4bf;--c-3:#c084fc;--c-4:#fb7185;--c-5:#fbbf24;
+  --c-docker:#94a3b8;--c-system:#a8a29e;
+  --font-sans:"Inter",-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --font-display:"Space Grotesk","Segoe UI",system-ui,sans-serif;
+  --radius:16px;--radius-sm:10px;
+  --elevation:0 14px 40px -16px rgba(0,0,0,.6);
+  --btn-primary-shadow:0 10px 28px -12px rgba(217,164,65,.7);
+  --hair:1px;
+}
+/* ---- 3 · BLUEPRINT (invented) — LIGHT, drafting ----------------------- */
+body[data-identity="blueprint"]{
+  --ground:#eef2f6;--surface:#fbfdff;--surface-2:#e4eaf1;--border:#c3d0de;
+  --text:#0f2137;--text-dim:#436079;--text-faint:#8399ad;
+  --accent:#2f6df6;--accent-2:#2f6df6;--accent-ink:#ffffff;
+  --s-ok:#15803d;--s-warn:#b45309;--s-bad:#b91c1c;--s-info:#2f6df6;--s-neutral:#64748b;
+  --c-1:#2563eb;--c-2:#0e7490;--c-3:#7c3aed;--c-4:#b91c1c;--c-5:#b45309;
+  --c-docker:#5b6b7d;--c-system:#93a3b3;
+  --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --font-display:var(--font-sans);
+  --radius:2px;--radius-sm:2px;
+  --elevation:none;
+  --btn-primary-shadow:none;
+  --hair:1px;
+}
+
+/* ======================================================================= */
+/*  PRODUCT FRAME — layout personality differs per identity                */
+/* ======================================================================= */
+.pframe{
+  min-height:calc(100vh - 46px);
+  background:var(--ground);color:var(--text);
+  font-family:var(--font-sans);font-size:16px;line-height:1.5;
+  display:grid;
+}
+.pf-brand{display:flex;align-items:center;gap:10px;font-weight:700;}
+.pf-brand .dot{width:11px;height:11px;border-radius:50%;background:var(--accent);flex:none;}
+.pf-nav{display:flex;}
+.pf-nav a{
+  color:var(--text-dim);text-decoration:none;font-size:14px;border-radius:var(--radius);
+  padding:7px 12px;white-space:nowrap;
+}
+.pf-nav a:hover{background:var(--surface-2);color:var(--text);}
+.pf-nav a.active{background:var(--surface-2);color:var(--text);font-weight:600;}
+.pf-topbar{display:flex;align-items:center;gap:12px;justify-content:flex-end;}
+.pf-user{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--text-dim);}
+.pf-user .av{width:26px;height:26px;border-radius:50%;background:var(--surface-2);
+  border:1px solid var(--border);display:grid;place-items:center;font-size:12px;font-weight:700;color:var(--text-dim);}
+.pf-view{padding:26px 30px;min-width:0;}
+.pf-titleblock{display:none;}
+
+/* --- CURRENT: real 240px left-nav shell -------------------------------- */
+body[data-identity="current"] .pframe{
+  grid-template-columns:240px 1fr;grid-template-rows:auto 1fr;
+  grid-template-areas:"brand topbar" "nav view";
+}
+body[data-identity="current"] .pf-brand{grid-area:brand;padding:13px 16px;
+  background:var(--surface);border-bottom:1px solid var(--border);border-right:1px solid var(--border);}
+body[data-identity="current"] .pf-topbar{grid-area:topbar;padding:11px 24px;
+  background:var(--surface);border-bottom:1px solid var(--border);}
+body[data-identity="current"] .pf-nav{grid-area:nav;flex-direction:column;gap:4px;padding:12px;
+  background:var(--surface);border-right:1px solid var(--border);}
+body[data-identity="current"] .pf-view{grid-area:view;max-width:1000px;}
+
+/* --- ISKERU: glassy sticky header, spacious centered view -------------- */
+body[data-identity="iskeru"] .pframe{
+  position:relative;grid-template-columns:auto 1fr auto;grid-template-rows:auto 1fr;
+  grid-template-areas:"brand nav topbar" "view view view";
+}
+body[data-identity="iskeru"] .pframe::before{
+  content:"";position:fixed;inset:46px 0 0 0;pointer-events:none;z-index:0;
+  background:
+    radial-gradient(760px 380px at 84% -6%,rgba(200,127,74,.16),transparent 60%),
+    radial-gradient(680px 360px at 4% 2%,rgba(217,164,65,.13),transparent 58%);
+}
+body[data-identity="iskeru"] .pf-brand,
+body[data-identity="iskeru"] .pf-nav,
+body[data-identity="iskeru"] .pf-topbar{
+  position:sticky;top:46px;z-index:20;
+  background:rgba(11,13,18,.72);backdrop-filter:saturate(150%) blur(12px);
+  border-bottom:1px solid var(--border);align-items:center;height:70px;
+}
+body[data-identity="iskeru"] .pf-brand{grid-area:brand;padding:0 8px 0 34px;font-family:var(--font-display);letter-spacing:-.01em;}
+body[data-identity="iskeru"] .pf-brand .dot{width:20px;height:20px;border-radius:7px;background:var(--accent-grad);
+  box-shadow:0 0 18px -2px rgba(217,164,65,.55);}
+body[data-identity="iskeru"] .pf-nav{grid-area:nav;justify-content:center;gap:6px;}
+body[data-identity="iskeru"] .pf-nav a{border-radius:999px;font-weight:500;}
+body[data-identity="iskeru"] .pf-nav a.active{background:var(--accent-soft);color:var(--accent);}
+body[data-identity="iskeru"] .pf-topbar{grid-area:topbar;padding:0 34px 0 8px;}
+body[data-identity="iskeru"] .pf-view{grid-area:view;position:relative;z-index:1;
+  max-width:1080px;margin:0 auto;padding:40px 34px 80px;width:100%;}
+
+/* --- BLUEPRINT: drafting sheet, grid paper, hairline rail --------------- */
+body[data-identity="blueprint"] .pframe{
+  grid-template-columns:220px 1fr;grid-template-rows:auto 1fr;
+  grid-template-areas:"brand topbar" "nav view";
+  background-color:var(--ground);
+  background-image:
+    linear-gradient(rgba(47,109,246,.06) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(47,109,246,.06) 1px,transparent 1px);
+  background-size:22px 22px;
+}
+body[data-identity="blueprint"] .pf-brand{grid-area:brand;padding:14px 16px;
+  background:var(--surface);border-bottom:1px solid var(--border);border-right:1px solid var(--border);
+  font-family:var(--font-mono);text-transform:uppercase;letter-spacing:.12em;font-size:13px;}
+body[data-identity="blueprint"] .pf-brand .dot{border-radius:2px;}
+body[data-identity="blueprint"] .pf-topbar{grid-area:topbar;padding:12px 24px;
+  background:var(--surface);border-bottom:1px solid var(--border);}
+body[data-identity="blueprint"] .pf-nav{grid-area:nav;flex-direction:column;gap:1px;padding:14px 10px;
+  background:var(--surface);border-right:1px solid var(--border);}
+body[data-identity="blueprint"] .pf-nav a{border-radius:2px;text-transform:uppercase;
+  letter-spacing:.09em;font-size:11.5px;font-weight:600;font-family:var(--font-mono);}
+body[data-identity="blueprint"] .pf-nav a.active{background:transparent;color:var(--accent);
+  box-shadow:inset 2px 0 0 var(--accent);}
+body[data-identity="blueprint"] .pf-view{grid-area:view;max-width:1040px;}
+body[data-identity="blueprint"] .pf-titleblock{
+  display:grid;grid-template-columns:repeat(3,1fr);margin-top:34px;
+  border:1px solid var(--border);background:var(--surface);font-family:var(--font-mono);font-size:11px;}
+body[data-identity="blueprint"] .pf-titleblock div{padding:8px 12px;border-right:1px solid var(--border);}
+body[data-identity="blueprint"] .pf-titleblock div:last-child{border-right:0;}
+body[data-identity="blueprint"] .pf-titleblock .k{text-transform:uppercase;letter-spacing:.1em;color:var(--text-faint);font-size:9px;}
+body[data-identity="blueprint"] .pf-titleblock .v{color:var(--text);margin-top:2px;}
+
+/* ======================================================================= */
+/*  SHARED COMPONENTS (token-driven)                                        */
+/* ======================================================================= */
+.pf-view h1{margin:0;font-size:27px;font-weight:700;font-family:var(--font-display);letter-spacing:-.01em;}
+.pf-view h2{margin:0;font-size:19px;font-weight:600;font-family:var(--font-display);}
+.pf-view h3{margin:0;font-size:16px;font-weight:600;}
+.mono{font-family:var(--font-mono);}
+.dim{color:var(--text-dim);}
+.faint{color:var(--text-faint);}
+.sm{font-size:14px;}.xs{font-size:12px;}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+  flex-wrap:wrap;margin-bottom:22px;}
+.page-head .sub{color:var(--text-dim);font-size:14px;margin-top:5px;}
+.crumbs{font-size:13px;color:var(--text-dim);margin-bottom:10px;}
+.crumbs .sepr{opacity:.5;margin:0 6px;}
+.section{margin-top:26px;}
+.section-label{text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:700;
+  color:var(--text-faint);margin-bottom:10px;}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--elevation);padding:18px;}
+body[data-identity="iskeru"] .card{padding:24px;}
+body[data-identity="blueprint"] .card{position:relative;}
+/* Blueprint corner ticks on cards — drafting registration marks */
+body[data-identity="blueprint"] .card::before,
+body[data-identity="blueprint"] .card::after{
+  content:"";position:absolute;width:7px;height:7px;pointer-events:none;
+  border-color:var(--accent);border-style:solid;opacity:.55;}
+body[data-identity="blueprint"] .card::before{left:-1px;top:-1px;border-width:1px 0 0 1px;}
+body[data-identity="blueprint"] .card::after{right:-1px;bottom:-1px;border-width:0 1px 1px 0;}
+.card + .card{margin-top:14px;}
+.stack{display:flex;flex-direction:column;gap:14px;}
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.row-between{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.grow{flex:1 1 auto;min-width:0;}
+
+/* chips: colour + dot + label (state is never colour-only) */
+.chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;
+  font-size:12px;font-weight:600;line-height:1.6;border:1px solid currentColor;white-space:nowrap;}
+body[data-identity="blueprint"] .chip{border-radius:2px;text-transform:uppercase;letter-spacing:.05em;font-size:11px;}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none;}
+.chip--ok{color:var(--s-ok);}.chip--warn{color:var(--s-warn);}.chip--bad{color:var(--s-bad);}
+.chip--info{color:var(--s-info);}.chip--neutral{color:var(--s-neutral);}
+
+.tag{display:inline-block;padding:2px 9px;border-radius:var(--radius-sm);font-size:12px;
+  background:var(--surface-2);color:var(--text-dim);border:1px solid var(--border);}
+body[data-identity="iskeru"] .tag{border-radius:999px;}
+.fw-badge{display:inline-block;padding:2px 8px;border-radius:var(--radius-sm);font-size:11px;
+  font-family:var(--font-mono);border:1px solid var(--border);color:var(--text-dim);}
+.fw-badge--springboot{color:var(--s-ok);border-color:var(--s-ok);}
+.fw-badge--fastapi{color:var(--s-info);border-color:var(--s-info);}
+.fw-badge--datastore{color:var(--accent);border-color:var(--accent);}
+.fw-badge--compose{color:var(--c-docker);border-color:var(--c-docker);}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-sans);
+  font-size:14px;font-weight:600;padding:8px 16px;border-radius:var(--radius);
+  border:1px solid var(--border);background:var(--surface);color:var(--text);}
+.btn:hover{background:var(--surface-2);}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn .ic{width:15px;height:15px;}
+.btn--primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);box-shadow:var(--btn-primary-shadow);}
+body[data-identity="iskeru"] .btn--primary{background:var(--accent-grad);}
+body[data-identity="iskeru"] .btn--primary:hover{transform:translateY(-1px);box-shadow:0 14px 34px -10px rgba(217,164,65,.85);}
+.btn--primary:hover{filter:brightness(1.05);background:var(--accent);}
+body[data-identity="iskeru"] .btn--primary:hover{background:var(--accent-grad);}
+.btn--ok{color:var(--s-ok);border-color:var(--s-ok);background:transparent;}
+.btn--ok:hover{background:var(--surface-2);}
+.btn--sm{padding:5px 11px;font-size:12px;}
+body[data-identity="blueprint"] .btn{text-transform:uppercase;letter-spacing:.05em;font-size:12.5px;}
+
+/* forms */
+label.fl{display:block;font-size:14px;font-weight:600;margin-bottom:5px;}
+.field{margin-bottom:16px;}
+.field .hint{font-size:12px;color:var(--text-dim);margin-top:5px;}
+input[type=text],input[type=number]{width:100%;font-family:var(--font-sans);font-size:14px;
+  padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--surface);color:var(--text);}
+body[data-identity="iskeru"] input{background:var(--surface-2);}
+input.mono{font-family:var(--font-mono);}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 22px;}
+.form-grid .span2{grid-column:1/-1;}
+.port-row{display:flex;gap:14px;}
+.port-row .field:first-child{flex:0 0 120px;}
+.port-row .field:last-child{flex:1;}
+
+/* command / key block */
+.command{display:block;max-width:100%;font-family:var(--font-mono);font-size:13px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px;overflow-x:auto;white-space:pre;line-height:1.7;color:var(--text);}
+.kv{display:grid;grid-template-columns:minmax(110px,max-content) 1fr;gap:7px 18px;font-size:14px;}
+.kv dt{color:var(--text-dim);}
+.kv dd{margin:0;}
+.kv dd.mono{font-family:var(--font-mono);}
+
+/* banner */
+.banner{border-radius:var(--radius);padding:12px 15px;font-size:14px;border:1px solid currentColor;
+  display:flex;gap:9px;align-items:flex-start;}
+.banner .bb{color:var(--text);}
+.banner--info{color:var(--s-info);}
+.banner--ok{color:var(--s-ok);}
+
+/* facts strip */
+.facts{display:flex;flex-wrap:wrap;gap:0;border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;background:var(--surface);}
+.facts .f{padding:12px 18px;border-right:1px solid var(--border);flex:1 1 auto;min-width:120px;}
+.facts .f:last-child{border-right:0;}
+.facts .fk{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-faint);}
+.facts .fv{font-size:15px;font-weight:600;margin-top:3px;font-family:var(--font-mono);}
+
+/* meters (small badge meters) */
+.mini-metrics{display:flex;gap:14px;flex-wrap:wrap;}
+.mm{display:flex;flex-direction:column;gap:3px;min-width:74px;}
+.mm .mk{font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;}
+.mm .mv{font-size:14px;font-weight:600;font-family:var(--font-mono);}
+
+/* ---- consumer footprint: stacked bars + legend (spec-034 idiom) ------- */
+.fp-axis{margin-bottom:16px;}
+.fp-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+.fp-name{font-size:13px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;}
+.fp-val{font-size:13px;font-family:var(--font-mono);color:var(--text-faint);}
+.fp-track{display:flex;height:24px;border-radius:var(--radius-sm);overflow:hidden;
+  background:var(--surface-2);border:1px solid var(--border);}
+body[data-identity="iskeru"] .fp-track{border-radius:8px;}
+.seg-c{height:100%;transition:opacity .15s ease,filter .15s ease;cursor:pointer;}
+.seg-c:hover{filter:brightness(1.12) saturate(1.1);}
+.seg-c[data-dim="1"]{opacity:.16;}
+.seg-c--sys{background-image:repeating-linear-gradient(45deg,
+  rgba(255,255,255,.16),rgba(255,255,255,.16) 4px,transparent 4px,transparent 9px);}
+.c-1{background:var(--c-1);}.c-2{background:var(--c-2);}.c-3{background:var(--c-3);}
+.c-dk{background:var(--c-docker);}.c-sy{background:var(--c-system);}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;}
+.legend-chip{display:inline-flex;align-items:center;gap:8px;cursor:pointer;padding:4px 10px;
+  border-radius:var(--radius-sm);font-size:12px;background:var(--surface-2);color:var(--text-dim);
+  border:1px solid var(--border);}
+body[data-identity="iskeru"] .legend-chip{border-radius:999px;}
+.legend-chip:hover{border-color:var(--accent);}
+.legend-chip[data-off="1"]{opacity:.45;}
+.legend-dot{width:11px;height:11px;border-radius:3px;flex:none;}
+.legend-dot--sys{background-image:repeating-linear-gradient(45deg,
+  rgba(0,0,0,.25),rgba(0,0,0,.25) 3px,transparent 3px,transparent 6px);}
+.legend-chip .pct{font-family:var(--font-mono);color:var(--text-faint);}
+
+/* list rows (recipes / runs) */
+.list{list-style:none;margin:0;padding:0;}
+.list>li{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);
+  padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.list>li:hover{border-color:var(--accent);}
+.list .li-main{flex:1 1 auto;min-width:0;}
+.li-title{font-weight:600;}
+.li-sub{font-size:12.5px;color:var(--text-dim);margin-top:2px;}
+
+/* discovery contexts */
+.disco-controls{display:flex;flex-direction:column;gap:12px;margin-bottom:18px;}
+.searchbar{display:flex;align-items:center;gap:9px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius);padding:9px 13px;}
+body[data-identity="iskeru"] .searchbar{border-radius:999px;background:var(--surface-2);}
+.searchbar .ic{width:17px;height:17px;color:var(--text-faint);flex:none;}
+.searchbar input{border:0;background:transparent;color:var(--text);font-size:14px;width:100%;outline:none;padding:0;}
+.chip-row{display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+.chip-row .grp-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-faint);margin-right:2px;}
+.fchip{padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;cursor:pointer;
+  background:var(--surface);color:var(--text-dim);border:1px solid var(--border);font-family:inherit;}
+body[data-identity="blueprint"] .fchip{border-radius:2px;text-transform:uppercase;letter-spacing:.04em;}
+.fchip:hover{border-color:var(--accent);}
+.fchip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);}
+body[data-identity="iskeru"] .fchip.on{background:var(--accent-grad);color:var(--accent-ink);}
+
+.ctx{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  box-shadow:var(--elevation);margin-bottom:14px;overflow:hidden;position:relative;}
+body[data-identity="blueprint"] .ctx::before,
+body[data-identity="blueprint"] .ctx::after{content:"";position:absolute;width:8px;height:8px;
+  border-color:var(--accent);border-style:solid;opacity:.5;pointer-events:none;}
+body[data-identity="blueprint"] .ctx::before{left:-1px;top:-1px;border-width:1px 0 0 1px;}
+body[data-identity="blueprint"] .ctx::after{right:-1px;bottom:-1px;border-width:0 1px 1px 0;}
+.ctx-head{display:flex;align-items:center;gap:12px;padding:14px 18px;
+  border-bottom:1px solid var(--border);flex-wrap:wrap;}
+.ctx-path{font-family:var(--font-mono);font-size:14.5px;font-weight:600;color:var(--text);}
+.ctx-src{font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;}
+.ctx-body{padding:14px 18px;}
+.ctx-metrics{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;}
+.dbadge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:var(--radius-sm);
+  font-size:11.5px;font-family:var(--font-mono);background:var(--surface-2);border:1px solid var(--border);color:var(--text-dim);}
+body[data-identity="iskeru"] .dbadge{border-radius:999px;}
+.act-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px dashed var(--border);flex-wrap:wrap;}
+.act-row:last-child{border-bottom:0;}
+.act-cmd{font-family:var(--font-mono);font-size:13px;color:var(--text);}
+.act-verb{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-faint);
+  border:1px solid var(--border);border-radius:3px;padding:1px 6px;}
+.act-spacer{flex:1 1 auto;}
+.act-state{display:inline-flex;}
+.approve-btn{border:1px solid var(--s-ok);color:var(--s-ok);background:transparent;
+  border-radius:var(--radius);padding:5px 11px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;}
+.approve-btn:hover{background:var(--surface-2);}
+.approve-btn .ic{width:13px;height:13px;}
+
+/* screens visibility */
+.screen{display:none;}
+.screen.active{display:block;}
+
+/* toast */
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);
+  background:#0f172a;color:#f8fafc;padding:10px 18px;border-radius:8px;font-size:14px;
+  box-shadow:0 8px 30px rgba(0,0,0,.4);z-index:500;opacity:0;pointer-events:none;transition:opacity .2s;}
+.toast.show{opacity:1;}
+
+/* ======================= ANNOTATIONS OVERLAY =========================== */
+.anno-panel{position:fixed;top:46px;right:0;bottom:0;width:390px;max-width:92vw;z-index:450;
+  background:#0f1319;border-left:1px solid #262b34;color:#d5dae2;
+  transform:translateX(100%);transition:transform .22s ease;overflow-y:auto;
+  box-shadow:-20px 0 50px rgba(0,0,0,.45);}
+.anno-panel.on{transform:translateX(0);}
+.anno-panel h3{margin:0 0 4px;font-size:15px;color:#fff;}
+.anno-panel .ap-head{padding:18px 20px;border-bottom:1px solid #262b34;}
+.anno-panel .ap-sec{padding:16px 20px;border-bottom:1px solid #1c2129;}
+.anno-panel .ap-sec .lbl{text-transform:uppercase;letter-spacing:.12em;font-size:10px;color:#6b7280;margin-bottom:8px;}
+.anno-panel p{margin:0 0 9px;font-size:13px;line-height:1.55;color:#c4cad4;}
+.anno-panel .basis{border-left:2px solid #2dd4bf;padding-left:11px;}
+.anno-panel .invented{border-left:2px solid #d9a441;padding-left:11px;}
+.anno-panel code{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#191d24;
+  padding:1px 5px;border-radius:4px;color:#9ff0e0;}
+.anno-panel .close{position:absolute;top:14px;right:16px;background:transparent;border:0;color:#8a92a0;font-size:20px;}
+.anno-tag{color:#6b7280;font-size:12px;}
+@media(max-width:820px){
+  .form-grid{grid-template-columns:1fr;}
+  body[data-identity="iskeru"] .pf-nav{display:none;}
+}
+</style>
+</head>
+<body data-identity="current">
+
+<!-- ============================ SHELL CHROME ============================ -->
+<div class="shellbar">
+  <span class="brand-chip"><span class="sq"></span>compute-admin</span>
+  <span class="lbl">mockup</span>
+  <div class="seg" id="ident-switch">
+    <button data-ident="current" class="on">Current</button>
+    <button data-ident="iskeru">Iskeru</button>
+    <button data-ident="blueprint">Blueprint</button>
+  </div>
+  <div class="seg shell-tabs" id="screen-switch">
+    <button data-screen="add" class="on">A · Add machine</button>
+    <button data-screen="discover">B · Discover</button>
+    <button data-screen="dash">C · Dashboard</button>
+  </div>
+  <span class="shell-spacer"></span>
+  <button class="anno-btn" id="anno-toggle">
+    <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg>
+    annotations
+  </button>
+</div>
+
+<div class="stage">
+<div class="pframe">
+
+  <!-- product chrome -->
+  <div class="pf-brand"><span class="dot"></span><span>compute-admin</span></div>
+  <div class="pf-topbar">
+    <div class="pf-user"><span class="dim">ops@lab</span><span class="av">OP</span></div>
+  </div>
+  <nav class="pf-nav">
+    <a href="#" class="active">Machines</a>
+    <a href="#">Monitor</a>
+    <a href="#">Blueprints</a>
+    <a href="#">Runs</a>
+    <a href="#">MCP surface</a>
+    <a href="#">Tokens</a>
+    <a href="#">App key</a>
+  </nav>
+
+  <main class="pf-view">
+
+    <!-- ============================================================ -->
+    <!-- SCREEN A · ADD MACHINE                                        -->
+    <!-- ============================================================ -->
+    <section class="screen active" data-screen="add">
+      <div class="crumbs">Machines <span class="sepr">/</span> Register</div>
+      <div class="page-head">
+        <div>
+          <h1>Register a machine</h1>
+          <div class="sub">Add an SSH-reachable Linux host. compute-admin connects with its own key — no passwords stored.</div>
+        </div>
+      </div>
+
+      <div class="stack" style="max-width:760px">
+        <div class="card">
+          <div class="section-label">Connection</div>
+          <div class="field span2">
+            <label class="fl">Name / label</label>
+            <input type="text" value="lab-fra-01" />
+            <div class="hint">Display name across the fleet. Also seeds the MCP machine identity.</div>
+          </div>
+          <div class="form-grid">
+            <div class="field span2">
+              <label class="fl">Host</label>
+              <input type="text" class="mono" value="10.2.3.11" />
+            </div>
+          </div>
+          <div class="port-row">
+            <div class="field">
+              <label class="fl">Port</label>
+              <input type="number" class="mono" value="22" />
+            </div>
+            <div class="field">
+              <label class="fl">Login user</label>
+              <input type="text" class="mono" value="deploy" />
+            </div>
+          </div>
+          <div class="field">
+            <label class="fl">Tags</label>
+            <div class="row" id="tag-box" style="gap:7px">
+              <span class="tag">frankfurt</span>
+              <span class="tag">prod</span>
+              <span class="tag">arm64</span>
+              <input type="text" id="tag-input" placeholder="add tag + Enter"
+                     style="width:150px;padding:4px 9px;font-size:12px" />
+            </div>
+            <div class="hint">Tags drive filtering and auto-grouping on the Machines list.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-label">Authorize this key on the target</div>
+          <div class="banner banner--info" style="margin-bottom:12px">
+            <svg class="ic" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex:none;margin-top:1px"><path d="M12 2 4 6v6c0 5 3.4 7.7 8 10 4.6-2.3 8-5 8-10V6l-8-4Z"/></svg>
+            <div class="bb"><strong>compute-admin authenticates with its own key.</strong> Append the public key below to
+            <code class="mono">~deploy/.ssh/authorized_keys</code> on the target host, then Test connection.</div>
+          </div>
+          <code class="command" id="pubkey">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH8x2fN0pQ3mZ2v1r4kLtcbe7yqWjs9Rf0aP1oQ6uKd compute-admin@lab</code>
+          <div class="row" style="margin-top:12px">
+            <button class="btn" id="copy-key">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>
+              Copy key
+            </button>
+            <span class="xs faint mono">SHA256:9f3c…a1e0 · ed25519</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row-between">
+            <div>
+              <div class="section-label" style="margin-bottom:2px">Test connection</div>
+              <span class="xs dim">Runs a real SSH handshake and probes basic facts before you register.</span>
+            </div>
+            <button class="btn" id="test-btn">
+              <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v6M4.9 7 9 9M19.1 7 15 9M6 20a6 6 0 0 1 12 0"/></svg>
+              Test connection
+            </button>
+          </div>
+          <div id="test-result" style="margin-top:14px;display:none"></div>
+        </div>
+
+        <div class="row" style="justify-content:flex-end">
+          <button class="btn">Cancel</button>
+          <button class="btn btn--primary">Register machine</button>
+        </div>
+      </div>
+      <div class="pf-titleblock">
+        <div><div class="k">Drawing</div><div class="v">CA-A · register</div></div>
+        <div><div class="k">Host</div><div class="v">10.2.3.11:22</div></div>
+        <div><div class="k">Rev</div><div class="v">mock-0.1</div></div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- SCREEN B · DISCOVER                                           -->
+    <!-- ============================================================ -->
+    <section class="screen" data-screen="discover">
+      <div class="crumbs">Machines <span class="sepr">/</span> lab-fra-01 <span class="sepr">/</span> Discover</div>
+      <div class="page-head">
+        <div>
+          <h1>Discover scripts &amp; recipes</h1>
+          <div class="sub">Discoverers walked <span class="mono">lab-fra-01</span> and grouped what they found by app context. Approve an action to add it as a recipe — <strong>there is no approve tool; only the UI approves.</strong></div>
+        </div>
+      </div>
+
+      <div class="disco-controls">
+        <div class="searchbar">
+          <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="disco-search" placeholder="search scripts, apps, ports…" />
+        </div>
+        <div class="chip-row" id="type-filters">
+          <span class="grp-label">Type</span>
+          <button class="fchip" data-grp="type" data-v="MONITOR">MONITOR</button>
+          <button class="fchip" data-grp="type" data-v="SYSTEMD">SYSTEMD</button>
+          <button class="fchip" data-grp="type" data-v="DATABASE">DATABASE</button>
+          <button class="fchip" data-grp="type" data-v="NGINX">NGINX</button>
+          <button class="fchip" data-grp="type" data-v="CUSTOM">CUSTOM</button>
+        </div>
+        <div class="chip-row" id="src-filters">
+          <span class="grp-label">Source</span>
+          <button class="fchip" data-grp="src" data-v="docker">docker</button>
+          <button class="fchip" data-grp="src" data-v="systemd">systemd</button>
+          <button class="fchip" data-grp="src" data-v="port">port</button>
+          <button class="fchip" data-grp="src" data-v="nginx">nginx</button>
+        </div>
+      </div>
+
+      <div id="ctx-list">
+
+        <!-- payments-api : native app folder, port + systemd -->
+        <div class="ctx" data-type="SYSTEMD MONITOR CUSTOM" data-src="port systemd"
+             data-search="payments-api opt lab run.sh migrate.sh spring boot 8080 systemd">
+          <div class="ctx-head">
+            <div>
+              <div class="ctx-path">/opt/lab/payments-api</div>
+              <div class="ctx-src">app folder · discovered via port :8080 + systemd unit</div>
+            </div>
+            <div class="ctx-metrics">
+              <span class="fw-badge fw-badge--springboot">spring-boot</span>
+              <span class="dbadge">DISK 168&nbsp;MB</span>
+              <span class="dbadge">RAM 512&nbsp;MB</span>
+              <span class="dbadge">CPU 24%</span>
+            </div>
+          </div>
+          <div class="ctx-body">
+            <div class="act-row" data-search="run.sh start systemd restart">
+              <span class="act-verb">restart</span>
+              <span class="act-cmd">systemctl restart payments-api</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="migrate.sh migration database deploy">
+              <span class="act-verb">deploy</span>
+              <span class="act-cmd">./migrate.sh --to latest</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="footprint metrics disk du monitor">
+              <span class="act-verb">metrics</span>
+              <span class="act-cmd">footprint (du -sb /opt/lab/payments-api)</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ledger : docker compose project (with dockerized postgres part) -->
+        <div class="ctx" data-type="DATABASE CUSTOM MONITOR" data-src="docker"
+             data-search="docker ledger compose postgres worker api logs restart run-query datastore">
+          <div class="ctx-head">
+            <div>
+              <div class="ctx-path">docker://ledger</div>
+              <div class="ctx-src">compose project · discovered via docker · 3 parts</div>
+            </div>
+            <div class="ctx-metrics">
+              <span class="fw-badge fw-badge--compose">compose</span>
+              <span class="dbadge">DISK 4.2&nbsp;GB</span>
+              <span class="dbadge">RAM 1.1&nbsp;GB</span>
+              <span class="dbadge">CPU 18%</span>
+            </div>
+          </div>
+          <div class="ctx-body">
+            <div class="act-row" data-search="ledger-api logs">
+              <span class="act-verb">logs</span>
+              <span class="act-cmd">docker compose -p ledger logs api</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="ledger-worker restart">
+              <span class="act-verb">restart</span>
+              <span class="act-cmd">docker compose -p ledger restart worker</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="postgres 16 database datastore part run-query restart stop">
+              <span class="act-verb">status</span>
+              <span class="act-cmd">psql -c '\l'  <span class="faint">— part </span><span class="fw-badge fw-badge--datastore" style="margin-left:4px">postgres:16 · datastore</span></span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- nginx : standalone -->
+        <div class="ctx" data-type="NGINX" data-src="nginx"
+             data-search="nginx sites-available reload test-config enable-site ledger payments default">
+          <div class="ctx-head">
+            <div>
+              <div class="ctx-path">nginx</div>
+              <div class="ctx-src">reverse proxy · discovered via nginx · sites-available</div>
+            </div>
+            <div class="ctx-metrics">
+              <span class="dbadge">3 sites</span>
+              <span class="dbadge">DISK 21&nbsp;MB</span>
+              <span class="dbadge">CPU 2%</span>
+            </div>
+          </div>
+          <div class="ctx-body">
+            <div class="xs dim mono" style="margin-bottom:10px">sites-available: payments.conf · ledger.conf · default</div>
+            <div class="act-row" data-search="test-config nginx -t">
+              <span class="act-verb">status</span>
+              <span class="act-cmd">nginx -t</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="reload nginx -s">
+              <span class="act-verb">restart</span>
+              <span class="act-cmd">nginx -s reload</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="enable-site ln symlink">
+              <span class="act-verb">deploy</span>
+              <span class="act-cmd">ln -s ../sites-available/{site}.conf sites-enabled/</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- notify-worker : declared / undetectable (concern 053) -->
+        <div class="ctx" data-type="CUSTOM" data-src=""
+             data-search="notify-worker run.sh cron hand-launched declared native worker opt lab">
+          <div class="ctx-head">
+            <div>
+              <div class="ctx-path">/opt/lab/notify-worker</div>
+              <div class="ctx-src">declared app · cron-launched · no port, no unit — not auto-detected</div>
+            </div>
+            <div class="ctx-metrics">
+              <span class="chip chip--warn">DECLARED</span>
+              <span class="dbadge">RAM 96&nbsp;MB</span>
+            </div>
+          </div>
+          <div class="ctx-body">
+            <div class="xs dim" style="margin-bottom:10px">Hand-launched native workloads have no discoverer. Declared by an operator so approved commands can target it (v1: not monitored).</div>
+            <div class="act-row" data-search="run.sh start hand-launched">
+              <span class="act-verb">start</span>
+              <span class="act-cmd">./run.sh</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+            <div class="act-row" data-search="kill.sh stop">
+              <span class="act-verb">stop</span>
+              <span class="act-cmd">./kill.sh</span>
+              <span class="act-spacer"></span>
+              <span class="act-state"><span class="chip chip--neutral">DRAFT</span></span>
+              <button class="approve-btn"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Approve → add recipe</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="banner banner--info" id="no-results" style="display:none">
+          <div class="bb">No contexts match the current search / filters.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- SCREEN C · MACHINE DASHBOARD                                  -->
+    <!-- ============================================================ -->
+    <section class="screen" data-screen="dash">
+      <div class="crumbs">Machines <span class="sepr">/</span> lab-fra-01</div>
+      <div class="page-head">
+        <div>
+          <div class="row" style="gap:12px">
+            <h1>lab-fra-01</h1>
+            <span class="chip chip--ok">ONLINE</span>
+          </div>
+          <div class="sub"><span class="mono">deploy@10.2.3.11:22</span> · last probed 2m ago
+            &nbsp;<span class="tag">frankfurt</span> <span class="tag">prod</span> <span class="tag">arm64</span></div>
+        </div>
+        <div class="row">
+          <button class="btn btn--sm">Re-probe</button>
+          <button class="btn btn--sm btn--primary">Run action</button>
+        </div>
+      </div>
+
+      <div class="facts">
+        <div class="f"><div class="fk">OS</div><div class="fv">Ubuntu 24.04</div></div>
+        <div class="f"><div class="fk">Kernel</div><div class="fv">6.8.0-31</div></div>
+        <div class="f"><div class="fk">Uptime</div><div class="fv">18d 4h</div></div>
+        <div class="f"><div class="fk">Cores</div><div class="fv">8</div></div>
+        <div class="f"><div class="fk">RAM</div><div class="fv">16 GB</div></div>
+        <div class="f"><div class="fk">Arch</div><div class="fv">arm64</div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Consumer footprint — attributed per app (host-relative)</div>
+        <div class="card">
+          <div class="fp-axis">
+            <div class="fp-head"><span class="fp-name">CPU</span><span class="fp-val">62% used · 8 cores</span></div>
+            <div class="fp-track" data-axis="cpu">
+              <div class="seg-c c-1"  data-k="payments" style="width:24%"></div>
+              <div class="seg-c c-2"  data-k="ledger"   style="width:18%"></div>
+              <div class="seg-c c-3"  data-k="notify"   style="width:8%"></div>
+              <div class="seg-c c-dk" data-k="docker"   style="width:12%"></div>
+              <div class="seg-c c-sy seg-c--sys" data-k="system" style="width:38%"></div>
+            </div>
+          </div>
+          <div class="fp-axis">
+            <div class="fp-head"><span class="fp-name">RAM</span><span class="fp-val">73% used · 16 GB</span></div>
+            <div class="fp-track" data-axis="ram">
+              <div class="seg-c c-1"  data-k="payments" style="width:27%"></div>
+              <div class="seg-c c-2"  data-k="ledger"   style="width:22%"></div>
+              <div class="seg-c c-3"  data-k="notify"   style="width:10%"></div>
+              <div class="seg-c c-dk" data-k="docker"   style="width:14%"></div>
+              <div class="seg-c c-sy seg-c--sys" data-k="system" style="width:27%"></div>
+            </div>
+          </div>
+          <div class="fp-axis" style="margin-bottom:0">
+            <div class="fp-head"><span class="fp-name">DISK</span><span class="fp-val">66% used · 512 GB</span></div>
+            <div class="fp-track" data-axis="disk">
+              <div class="seg-c c-1"  data-k="payments" style="width:11%"></div>
+              <div class="seg-c c-2"  data-k="ledger"   style="width:31%"></div>
+              <div class="seg-c c-3"  data-k="notify"   style="width:5%"></div>
+              <div class="seg-c c-dk" data-k="docker"   style="width:19%"></div>
+              <div class="seg-c c-sy seg-c--sys" data-k="system" style="width:34%"></div>
+            </div>
+          </div>
+          <div class="legend" id="fp-legend">
+            <button class="legend-chip" data-k="payments"><span class="legend-dot c-1"></span>payments-api <span class="pct">·spring</span></button>
+            <button class="legend-chip" data-k="ledger"><span class="legend-dot c-2"></span>ledger <span class="pct">·compose</span></button>
+            <button class="legend-chip" data-k="notify"><span class="legend-dot c-3"></span>notify-worker</button>
+            <button class="legend-chip" data-k="docker"><span class="legend-dot c-dk"></span>docker <span class="pct">·bucket</span></button>
+            <button class="legend-chip" data-k="system"><span class="legend-dot c-sy legend-dot--sys"></span>OTHER / system</button>
+          </div>
+          <div class="xs faint" style="margin-top:10px">Click a consumer to isolate it across all three axes. The hatched tail is unattributed system + kernel usage — colour is never the sole signal.</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-label">Recipes &amp; actions</div>
+        <ul class="list">
+          <li>
+            <div class="li-main"><div class="li-title">payments-api · restart</div>
+              <div class="li-sub mono">SYSTEMD · systemctl restart payments-api</div></div>
+            <span class="chip chip--ok">APPROVED</span>
+            <button class="btn btn--sm btn--primary">Run</button>
+          </li>
+          <li>
+            <div class="li-main"><div class="li-title">payments-api · migrate</div>
+              <div class="li-sub mono">CUSTOM · ./migrate.sh --to latest</div></div>
+            <span class="chip chip--warn">PENDING_APPROVAL</span>
+            <button class="btn btn--sm btn--ok">Approve</button>
+          </li>
+          <li>
+            <div class="li-main"><div class="li-title">ledger · logs</div>
+              <div class="li-sub mono">DATABASE · docker compose -p ledger logs api</div></div>
+            <span class="chip chip--ok">APPROVED</span>
+            <button class="btn btn--sm btn--primary">Run</button>
+          </li>
+          <li>
+            <div class="li-main"><div class="li-title">nginx · reload</div>
+              <div class="li-sub mono">NGINX · nginx -s reload</div></div>
+            <span class="chip chip--neutral">DRAFT</span>
+            <button class="btn btn--sm" disabled>Run</button>
+          </li>
+          <li>
+            <div class="li-main"><div class="li-title">notify-worker · run.sh</div>
+              <div class="li-sub mono">CUSTOM · ./run.sh</div></div>
+            <span class="chip chip--bad">REVOKED</span>
+            <button class="btn btn--sm" disabled>Run</button>
+          </li>
+        </ul>
+      </div>
+
+      <div class="section" style="display:grid;grid-template-columns:1fr 320px;gap:16px">
+        <div>
+          <div class="section-label">Recent runs</div>
+          <ul class="list">
+            <li>
+              <div class="li-main"><div class="li-title">payments-api · restart</div><div class="li-sub">2m ago · 1.4s · exit 0</div></div>
+              <span class="chip chip--ok">DONE</span>
+            </li>
+            <li>
+              <div class="li-main"><div class="li-title">ledger · migrate</div><div class="li-sub">running now · 41s elapsed</div></div>
+              <span class="chip chip--info">RUNNING</span>
+            </li>
+            <li>
+              <div class="li-main"><div class="li-title">host · facts probe</div><div class="li-sub">2m ago · 0.6s · exit 0</div></div>
+              <span class="chip chip--ok">DONE</span>
+            </li>
+            <li>
+              <div class="li-main"><div class="li-title">notify-worker · run.sh</div><div class="li-sub">1h ago · exit 137</div></div>
+              <span class="chip chip--bad">FAILED</span>
+            </li>
+            <li>
+              <div class="li-main"><div class="li-title">host · disk cleanup</div><div class="li-sub">yesterday · connection dropped</div></div>
+              <span class="chip chip--neutral">INTERRUPTED</span>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <div class="section-label">SSH / connectivity</div>
+          <div class="card">
+            <dl class="kv">
+              <dt>Status</dt><dd><span class="chip chip--ok">ONLINE</span></dd>
+              <dt>Host</dt><dd class="mono">10.2.3.11:22</dd>
+              <dt>Login user</dt><dd class="mono">deploy</dd>
+              <dt>Key</dt><dd class="mono xs">ed25519 · SHA256:9f3c…a1e0</dd>
+              <dt>Handshake</dt><dd>2m ago · 180 ms</dd>
+              <dt>Transport</dt><dd class="mono">MINA sshd</dd>
+            </dl>
+            <button class="btn btn--sm" style="margin-top:14px;width:100%">Test connection</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="pf-titleblock">
+        <div><div class="k">Drawing</div><div class="v">CA-C · dashboard</div></div>
+        <div><div class="k">Machine</div><div class="v">lab-fra-01</div></div>
+        <div><div class="k">Probed</div><div class="v">2m ago</div></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+</div>
+
+<!-- ============================ ANNOTATIONS ============================ -->
+<aside class="anno-panel" id="anno-panel">
+  <div class="ap-head">
+    <button class="close" id="anno-close">×</button>
+    <h3>Mockup annotations</h3>
+    <p class="anno-tag">Fidelity notes for the <strong id="anno-ident">Current</strong> identity · form factor: desktop admin (≈1000–1080px), reflows to 1 column.</p>
+  </div>
+  <div class="ap-sec">
+    <div class="lbl">Fidelity basis</div>
+    <p class="basis" id="anno-basis">Cloned from the running app — <code>static/tokens.css</code> + <code>static/app.css</code> (spec-012). Palette, radius (6px), elevation, the 240px left-nav shell, chips, meters and the segmented consumer bars are the real component idiom.</p>
+  </div>
+  <div class="ap-sec">
+    <div class="lbl">Invented / net-new</div>
+    <p class="invented"><strong>Context-grouped discovery view (Screen B)</strong> is partly net-new: the app-model of grouping scripts by app-folder / compose-project / declared-app is drawn from concerns <code>049</code> &amp; <code>053</code>, which are not yet built. The "DECLARED" app context is a forward-looking sketch of 053's declared-app population.</p>
+    <p class="invented"><strong>Blueprint identity</strong> is invented for this mockup — an engineering-drawing skin (grid paper, hairline borders, drafting rail + title-block, mono ids). Not a shipped theme.</p>
+  </div>
+  <div class="ap-sec">
+    <div class="lbl">Stubs &amp; substitutions</div>
+    <p>Brand fonts are substituted with system stacks — Iskeru's "Space Grotesk" display / "Inter" body approximated via <code>system-ui</code> + weight/letter-spacing; no web fonts are fetched.</p>
+    <p>Nav items (Monitor, Blueprints, Runs, MCP surface, Tokens, App key) are stubbed — only the three task screens route.</p>
+    <p>All data is fabricated; no backend, no <code>fetch</code>. Test-connection, search/filter, the approval gate and legend isolation are faked client-side happy paths.</p>
+    <p>The approval affordance models the real gate: an action goes <code>DRAFT → PENDING_APPROVAL → APPROVED</code> and only the UI approves — there is no approve tool on the MCP surface.</p>
+  </div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  "use strict";
+  var body = document.body;
+
+  /* ---- toast ---- */
+  var toastEl = document.getElementById('toast'), toastT;
+  function toast(msg){
+    toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(function(){ toastEl.classList.remove('show'); }, 1900);
+  }
+
+  /* ---- identity switch ---- */
+  var identBasis = {
+    current: {
+      name:'Current',
+      basis:'Cloned from the running app — tokens.css + app.css (spec-012). Palette, radius (6px), elevation, the 240px left-nav shell, chips, meters and the segmented consumer bars are the real component idiom.'
+    },
+    iskeru: {
+      name:'Iskeru',
+      basis:'Derived from repos/iskeru/assets/styles.css. Dark ground #0b0d12, gold accent #d9a441 with the 135° gold gradient, 16px radius, big soft shadows + gold glow, glassy sticky blurred header, faint radial ambient glows. Space Grotesk / Inter approximated by system stacks.'
+    },
+    blueprint: {
+      name:'Blueprint',
+      basis:'Invented for this mockup — an engineering-drawing identity: blue-grey drafting-paper ground, deep navy ink, one drafting-blue accent #2f6df6, hairline 1px borders, a faint blueprint grid, mono for all ids/paths/ports, uppercase letter-spaced rail + a title-block. Precise, technical, calm.'
+    }
+  };
+  document.getElementById('ident-switch').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    body.setAttribute('data-identity', b.dataset.ident);
+    this.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x===b); });
+    var info = identBasis[b.dataset.ident];
+    document.getElementById('anno-ident').textContent = info.name;
+    document.getElementById('anno-basis').textContent = info.basis;
+  });
+
+  /* ---- screen tabs ---- */
+  document.getElementById('screen-switch').addEventListener('click', function(e){
+    var b = e.target.closest('button'); if(!b) return;
+    var scr = b.dataset.screen;
+    this.querySelectorAll('button').forEach(function(x){ x.classList.toggle('on', x===b); });
+    document.querySelectorAll('.screen').forEach(function(s){
+      s.classList.toggle('active', s.dataset.screen === scr);
+    });
+    window.scrollTo(0,0);
+  });
+
+  /* ---- annotations ---- */
+  var annoPanel = document.getElementById('anno-panel'), annoBtn = document.getElementById('anno-toggle');
+  function annoSet(on){ annoPanel.classList.toggle('on', on); annoBtn.classList.toggle('on', on); }
+  annoBtn.addEventListener('click', function(){ annoSet(!annoPanel.classList.contains('on')); });
+  document.getElementById('anno-close').addEventListener('click', function(){ annoSet(false); });
+
+  /* ---- A: tags ---- */
+  var tagInput = document.getElementById('tag-input');
+  tagInput.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && this.value.trim()){
+      var t = document.createElement('span'); t.className='tag'; t.textContent = this.value.trim();
+      this.parentNode.insertBefore(t, this); this.value='';
+    }
+  });
+
+  /* ---- A: copy key ---- */
+  document.getElementById('copy-key').addEventListener('click', function(){
+    var txt = document.getElementById('pubkey').textContent;
+    if(navigator.clipboard){ navigator.clipboard.writeText(txt).catch(function(){}); }
+    toast('Public key copied to clipboard');
+  });
+
+  /* ---- A: test connection ---- */
+  var testBtn = document.getElementById('test-btn'), testRes = document.getElementById('test-result');
+  function showProbing(next){
+    testRes.style.display='block';
+    testRes.innerHTML = '<span class="chip chip--info">PROBING…</span> <span class="dim sm">opening SSH handshake to 10.2.3.11:22…</span>';
+    setTimeout(next, 850);
+  }
+  function showOnline(){
+    testRes.innerHTML =
+      '<div class="banner banner--ok" style="margin-bottom:12px"><div class="bb"><strong>ONLINE</strong> · handshake ok in 180&nbsp;ms. Probed facts:</div></div>'+
+      '<div class="facts"><div class="f"><div class="fk">OS</div><div class="fv">Ubuntu 24.04</div></div>'+
+      '<div class="f"><div class="fk">Kernel</div><div class="fv">6.8.0-31</div></div>'+
+      '<div class="f"><div class="fk">Uptime</div><div class="fv">18d 4h</div></div>'+
+      '<div class="f"><div class="fk">Cores</div><div class="fv">8</div></div>'+
+      '<div class="f"><div class="fk">RAM</div><div class="fv">16 GB</div></div></div>'+
+      '<div class="row xs" style="margin-top:10px"><span class="dim">Simulate a failure instead?</span> <a href="#" id="sim-fail" style="color:var(--accent)">show UNREACHABLE</a></div>';
+    document.getElementById('sim-fail').addEventListener('click', function(ev){ ev.preventDefault(); showProbing(showUnreachable); });
+  }
+  function showUnreachable(){
+    testRes.innerHTML =
+      '<div class="banner" style="color:var(--s-bad)"><div class="bb"><strong>UNREACHABLE</strong> · no route to host / connection refused on 10.2.3.11:22. '+
+      'Check the port, that sshd is running, and that the key above is in authorized_keys.</div></div>'+
+      '<div class="row xs" style="margin-top:10px"><a href="#" id="sim-ok" style="color:var(--accent)">retry — show ONLINE</a></div>';
+    document.getElementById('sim-ok').addEventListener('click', function(ev){ ev.preventDefault(); showProbing(showOnline); });
+  }
+  testBtn.addEventListener('click', function(){ showProbing(showOnline); });
+
+  /* ---- B: search + filters ---- */
+  var searchEl = document.getElementById('disco-search');
+  var activeFilters = {type:new Set(), src:new Set()};
+  function applyDisco(){
+    var q = (searchEl.value||'').toLowerCase().trim();
+    var anyVisible = false;
+    document.querySelectorAll('#ctx-list .ctx').forEach(function(ctx){
+      var hay = (ctx.dataset.search||'') + ' ' + (ctx.dataset.type||'') + ' ' + (ctx.dataset.src||'');
+      hay = hay.toLowerCase();
+      var types = (ctx.dataset.type||'').split(/\s+/);
+      var srcs = (ctx.dataset.src||'').split(/\s+/);
+      var okQ = !q || hay.indexOf(q) !== -1;
+      var okType = activeFilters.type.size===0 || [].concat(types).some(function(t){ return activeFilters.type.has(t); });
+      var okSrc = activeFilters.src.size===0 || [].concat(srcs).some(function(s){ return activeFilters.src.has(s); });
+      var show = okQ && okType && okSrc;
+      ctx.style.display = show ? '' : 'none';
+      if(show){
+        anyVisible = true;
+        // per-action search narrowing (only when there is a query)
+        ctx.querySelectorAll('.act-row').forEach(function(r){
+          var rh = ((r.dataset.search||'')+' '+r.textContent).toLowerCase();
+          r.style.display = (!q || rh.indexOf(q)!==-1) ? '' : 'none';
+        });
+      }
+    });
+    document.getElementById('no-results').style.display = anyVisible ? 'none' : 'flex';
+  }
+  searchEl.addEventListener('input', applyDisco);
+  document.querySelectorAll('.fchip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      var grp = this.dataset.grp, v = this.dataset.v;
+      if(activeFilters[grp].has(v)){ activeFilters[grp].delete(v); this.classList.remove('on'); }
+      else { activeFilters[grp].add(v); this.classList.add('on'); }
+      applyDisco();
+    });
+  });
+
+  /* ---- B: approval gate ---- */
+  document.querySelectorAll('.approve-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var row = this.closest('.act-row');
+      var stateEl = row.querySelector('.act-state');
+      // DRAFT -> PENDING_APPROVAL -> (UI approves) APPROVED
+      stateEl.innerHTML = '<span class="chip chip--warn">PENDING_APPROVAL</span>';
+      this.disabled = true; this.style.opacity = '.5';
+      toast('Proposed as recipe — pending approval');
+      setTimeout(function(){
+        stateEl.innerHTML = '<span class="chip chip--ok">APPROVED</span>';
+        btn.innerHTML = 'Added to recipes';
+        toast('Approved in UI — recipe added');
+      }, 950);
+    });
+  });
+
+  /* ---- C: legend isolation ---- */
+  var legend = document.getElementById('fp-legend');
+  var isolated = null;
+  function applyIsolation(){
+    document.querySelectorAll('.fp-track .seg-c').forEach(function(seg){
+      seg.dataset.dim = (isolated && seg.dataset.k !== isolated) ? '1' : '';
+    });
+    legend.querySelectorAll('.legend-chip').forEach(function(c){
+      c.dataset.off = (isolated && c.dataset.k !== isolated) ? '1' : '';
+    });
+  }
+  legend.addEventListener('click', function(e){
+    var c = e.target.closest('.legend-chip'); if(!c) return;
+    isolated = (isolated === c.dataset.k) ? null : c.dataset.k;
+    applyIsolation();
+  });
+  // clicking a bar segment isolates that consumer too
+  document.querySelectorAll('.fp-track').forEach(function(tr){
+    tr.addEventListener('click', function(e){
+      var s = e.target.closest('.seg-c'); if(!s) return;
+      isolated = (isolated === s.dataset.k) ? null : s.dataset.k;
+      applyIsolation();
+    });
+  });
+})();
+</script>
+</body>
+</html>

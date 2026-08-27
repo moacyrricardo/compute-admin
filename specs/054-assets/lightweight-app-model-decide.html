@@ -1,0 +1,266 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App Model — Decisions</title>
+<style>
+  :root{ --bg:#fff; --fg:#1a1a1a; --muted:#5a6472; --accent:#2563eb; --accent2:#0d9488; --warn:#b45309; --border:#e5e7eb; --card:#f8f9fa; --code:#f2f4f7; --codefg:#0f172a; --recbg:rgba(13,148,136,.10); }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0a6; --accent:#6ea8fe; --accent2:#5eead4; --warn:#fbbf24; --border:#2a2d34; --card:#171a20; --code:#12151b; --codefg:#dbe4f0; --recbg:rgba(94,234,212,.09); } }
+  :root[data-theme="dark"]{ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0a6; --accent:#6ea8fe; --accent2:#5eead4; --warn:#fbbf24; --border:#2a2d34; --card:#171a20; --code:#12151b; --codefg:#dbe4f0; --recbg:rgba(94,234,212,.09); }
+  :root[data-theme="light"]{ --bg:#fff; --fg:#1a1a1a; --muted:#5a6472; --accent:#2563eb; --accent2:#0d9488; --warn:#b45309; --border:#e5e7eb; --card:#f8f9fa; --code:#f2f4f7; --codefg:#0f172a; --recbg:rgba(13,148,136,.10); }
+  *{box-sizing:border-box}
+  body{ margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header.top{ position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:1rem; padding:.7rem 1.2rem; background:color-mix(in srgb,var(--bg) 88%, transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); }
+  header.top h1{ font-size:1rem; margin:0; font-weight:650; }
+  header.top .sub{ color:var(--muted); font-size:.8rem; }
+  .spacer{ flex:1 }
+  .btnrow{ display:flex; gap:.4rem; flex-wrap:wrap; align-items:center }
+  button.ui{ font:inherit; font-size:.8rem; padding:.34rem .7rem; border:1px solid var(--border); background:var(--card); color:var(--fg); border-radius:7px; cursor:pointer; }
+  button.ui:hover{ border-color:var(--accent); color:var(--accent); }
+  button.ui.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.ui.primary:disabled{ opacity:.45; cursor:not-allowed; }
+  button.ui.primary:not(:disabled):hover{ color:#fff; filter:brightness(1.08); }
+  main{ max-width:900px; margin:0 auto; padding:1.4rem 1.2rem 6rem; }
+  a.rep{ color:var(--accent); text-decoration:none; font-weight:600; border-bottom:1px dotted var(--accent); }
+  .intro{ border:1px solid var(--border); border-left:4px solid var(--accent); background:var(--card); border-radius:10px; padding:.9rem 1.1rem; margin:1.2rem 0 1.8rem; font-size:.95rem; }
+  .counter{ font-size:.82rem; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .counter b{ color:var(--accent2) }
+  .card{ border:1px solid var(--border); border-radius:11px; margin:1.1rem 0; background:var(--bg); overflow:hidden; }
+  .card.done{ border-color:var(--accent2); }
+  .chead{ padding:.9rem 1.1rem .6rem; }
+  .cnum{ font-size:.72rem; font-weight:700; letter-spacing:.06em; color:var(--accent); text-transform:uppercase; }
+  .cq{ font-size:1.08rem; font-weight:600; margin:.25rem 0 .1rem; }
+  .tension{ font-size:.86rem; color:var(--muted); margin:.3rem 0 0; }
+  .opts{ padding:.3rem 1.1rem .5rem; display:flex; flex-direction:column; gap:.5rem; }
+  label.opt{ display:flex; gap:.7rem; align-items:flex-start; border:1px solid var(--border); border-radius:9px; padding:.65rem .8rem; cursor:pointer; transition:border-color .12s, background .12s; }
+  label.opt:hover{ border-color:var(--accent); }
+  label.opt.rec{ background:var(--recbg); }
+  label.opt.sel{ border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  label.opt input{ margin-top:.28rem; flex:none; accent-color:var(--accent); width:16px; height:16px; }
+  .opt .otext{ font-size:.92rem; }
+  .opt .olead{ font-weight:600; }
+  .opt .ocons{ color:var(--muted); font-size:.86rem; display:block; margin-top:.15rem; }
+  .recpill{ display:inline-block; font-size:.66rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--accent2); border:1px solid var(--accent2); border-radius:99px; padding:.02rem .4rem; margin-left:.4rem; vertical-align:middle; }
+  details{ border-top:1px solid var(--border); margin:.4rem 0 0; background:var(--card); }
+  details>summary{ cursor:pointer; padding:.55rem 1.1rem; font-size:.84rem; font-weight:550; list-style:none; color:var(--muted); }
+  details>summary::-webkit-details-marker{ display:none }
+  details>summary::before{ content:"▸"; color:var(--accent); margin-right:.5rem; display:inline-block; transition:transform .15s; }
+  details[open]>summary::before{ transform:rotate(90deg) }
+  details .body{ padding:.1rem 1.1rem 1rem; font-size:.9rem; }
+  .note{ padding:.2rem 1.1rem 1rem; }
+  .note label{ font-size:.78rem; color:var(--muted); display:block; margin-bottom:.3rem; }
+  .note textarea{ width:100%; min-height:2.4rem; resize:vertical; font:inherit; font-size:.88rem; background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:8px; padding:.5rem .6rem; }
+  .note textarea:focus{ outline:none; border-color:var(--accent); }
+  code{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.86em; background:var(--code); color:var(--codefg); padding:.06em .35em; border-radius:4px; }
+  pre{ background:var(--code); color:var(--codefg); padding:.7rem .9rem; border-radius:8px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.8rem; line-height:1.5; }
+  .payout{ position:sticky; bottom:0; margin-top:2rem; }
+  #payload{ width:100%; min-height:9rem; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.78rem; background:var(--code); color:var(--codefg); border:1px solid var(--border); border-radius:9px; padding:.8rem; white-space:pre; overflow:auto; }
+  .hint{ font-size:.82rem; color:var(--muted); margin:.5rem 0; }
+  .toast{ position:fixed; bottom:1rem; left:50%; transform:translateX(-50%); background:var(--accent2); color:#04201c; font-weight:600; font-size:.85rem; padding:.5rem .9rem; border-radius:8px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show{ opacity:1 }
+</style></head>
+<body>
+<header class="top">
+  <div>
+    <h1>Lightweight App-Model — Decisions</h1>
+    <div class="sub">Companion to <a class="rep" href="./lightweight-app-model-report.html">the feasibility report&nbsp;↗</a></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="btnrow">
+    <span class="counter" id="counter"><b>0</b> of 5 decided</span>
+    <button class="ui" onclick="acceptRec()">Accept all recommended</button>
+    <button class="ui" onclick="resetAll()">Reset</button>
+    <button class="ui" onclick="var r=document.documentElement;r.setAttribute('data-theme',r.getAttribute('data-theme')==='dark'?'light':'dark')">◐ theme</button>
+  </div>
+</header>
+<main>
+
+  <div class="intro">
+    Almost everything in <a class="rep" href="./lightweight-app-model-report.html">the report</a> is <em>mechanism</em> —
+    determined by Linux, not by preference. These five are the genuine <strong>forks the model has to commit to</strong>.
+    Expand each for the evidence, pick an option (a recommendation is pre-marked), add your own note if you want to
+    override or qualify it, then <strong>Copy prompt</strong> to hand the whole set to an agent. Building this surface
+    changes nothing; execution happens only when you run the emitted prompt.
+  </div>
+
+  <div id="cards"></div>
+
+  <div class="payout">
+    <div class="hint">The prompt below is enabled once all five are decided. Your notes are appended verbatim under each choice.</div>
+    <textarea id="payload" readonly placeholder="Make a choice on each card to assemble the prompt…"></textarea>
+    <div class="btnrow" style="margin-top:.6rem">
+      <button class="ui primary" id="copybtn" disabled onclick="copyPayload()">Copy prompt</button>
+      <span class="hint" style="margin:0">→ paste back here, or into a fresh session, to execute.</span>
+    </div>
+  </div>
+</main>
+<div class="toast" id="toast">Copied</div>
+
+<script>
+const DECISIONS = [
+  { id:"D1", tag:"symlink identity",
+    q:"When a script or binary is reached through a symlink, what does the context key on?",
+    tension:"Widest downstream blast radius — every consumer of the context key inherits this choice.",
+    rec:"a",
+    evidence:`<p>Keying on the <b>resolved</b> path collapses aliases correctly but makes a <code>current</code>&nbsp;&rarr;&nbsp;<code>releases/&lt;ts&gt;</code> atomic-deploy symlink fork a brand-new context every release. Keying on the <b>logical</b> path stays stable but won't dedup two links to the same file.</p><p>The report's proposed split: resolve <em>file-level</em> links fully, dedup on the physical path, <b>display</b> the logical path, and <b>promote</b> the key to logical when the physical matches <code>*/releases/*</code> or <code>*/versions/*</code>.</p>`,
+    opts:[
+      { k:"a", lead:"Dedup on physical, display logical, promote release-symlinks to the logical key",
+        cons:"Stable across deploys AND dedups aliases; matches how release-symlink deploys actually behave. (report recommendation)",
+        pay:"Symlink identity: dedup contexts on the resolved physical path, DISPLAY the logical path, and when the physical path matches */releases/* or */versions/* promote the context key to the logical path so redeploys don't fork a new context." },
+      { k:"b", lead:"Always key on the fully-resolved physical path",
+        cons:"Simplest rule; but every atomic-deploy release forks a brand-new context.",
+        pay:"Symlink identity: always key the context on the fully-resolved physical path (realpath -f), accepting that release-symlink deploys fork a new context each release." },
+      { k:"c", lead:"Always key on the logical (unresolved) path",
+        cons:"Stable human-facing names; but two symlinks to the same script never collapse into one context.",
+        pay:"Symlink identity: always key the context on the logical (unresolved) path, accepting that distinct symlinks to the same file are not deduplicated." },
+    ]},
+  { id:"D2", tag:"wrapper hop depth",
+    q:"How far up does the wrapper-dir rule climb from the script-folder to the context?",
+    tension:"Governs whether nested monorepo scripts reach the repo root or stop at their component dir.",
+    rec:"a",
+    evidence:`<p>A single hop is safe but leaves <code>backend/scripts/run.sh</code> at <code>backend</code>, not the repo root. An unbounded walk reaches the root but over-groups independent deployables and breaks on non-git deployments.</p><p>The operator's own <code>frontend</code>/<code>backend</code> instruction <em>wants</em> those to merge to the shared root — so the bounded double-hop, gated on a marker file (<code>.git</code>, <code>compose.yaml</code>, <code>package.json</code>), threads the needle.</p>`,
+    opts:[
+      { k:"a", lead:"One hop by default; bounded second hop only when the intermediate is also a wrapper AND the target has a marker file",
+        cons:"Reaches the repo root for nested scripts without climbing coincidental name collisions. Document \"git-rooted monorepos group at the repo root\" as intended. (report recommendation)",
+        pay:"Wrapper hop depth: single hop by default; allow a bounded SECOND hop only when the intermediate dir is also in the wrapper set AND the candidate carries a marker file (.git/compose.yaml/package.json). Cap at 2 hops; boundary clamp always applies. Document that git-rooted monorepos group at the repo root." },
+      { k:"b", lead:"Always exactly one hop",
+        cons:"Most predictable; but leaves backend/scripts/run.sh at 'backend', splitting a monorepo's components.",
+        pay:"Wrapper hop depth: always exactly one hop past a wrapper dir, never a second. Nested component scripts stay at their component dir." },
+      { k:"c", lead:"Walk up to the nearest marker / git root, unbounded",
+        cons:"Groups aggressively; but breaks on non-git deployments and can climb onto a shared parent.",
+        pay:"Wrapper hop depth: walk up unbounded to the nearest marker/git root, accepting over-grouping of independent deployables and undefined behavior on non-git deployments." },
+    ]},
+  { id:"D3", tag:"privilege posture",
+    q:"What does the prober require, and how does it behave without root?",
+    tension:"Sets the onboarding bar and the app's blast radius on every managed host.",
+    rec:"a",
+    evidence:`<p>~80% of the map is obtainable as an ordinary login user. <code>sudo</code> buys <em>other users'</em> process internals (PSS, exe/cwd) and Docker/volume internals. Every privileged probe has a degraded fallback: RSS instead of PSS, cgroup instead of per-PID, <code>permission-denied</code> instead of a fake <code>0</code>.</p><p>The failure to avoid: silently reading \"no PID\" as \"no process\", or a non-sudo <code>ss</code> blank users-column as \"no owner\".</p>`,
+    opts:[
+      { k:"a", lead:"Degrade gracefully, and LABEL every degraded number",
+        cons:"Works on locked-down hosts; partial data is marked partial, never faked. (report recommendation)",
+        pay:"Privilege posture: degrade gracefully without sudo (RSS-labelled-as-upper-bound instead of PSS, cgroup instead of per-PID, permission-denied instead of 0, confidence=low on procfs-denied mappings). Never treat 'no PID'/'blank users-column' as 'no process'." },
+      { k:"b", lead:"Require passwordless sudo / root on every managed host",
+        cons:"Full fidelity everywhere; but raises the onboarding bar and widens the app's blast radius.",
+        pay:"Privilege posture: require passwordless sudo/root on every managed host; probes assume full privilege and do not implement degraded fallbacks." },
+      { k:"c", lead:"Unprivileged-only — never sudo, skip what needs it",
+        cons:"Smallest footprint; but silently loses other users' processes and all Docker/volume internals.",
+        pay:"Privilege posture: never use sudo; skip any probe that needs elevation and report it as skipped, accepting loss of other users' process internals and Docker/volume internals." },
+    ]},
+  { id:"D4", tag:"non-listening apps",
+    q:"Does discovery include apps that don't open a port (workers, cron, batch jobs)?",
+    tension:"Ports + Docker alone can't see any workload that never listens.",
+    rec:"a",
+    evidence:`<p>A port sweep is blind to queue workers, cron jobs, and batch scripts. The complement is <code>systemctl list-units --state=running</code> + cron enumeration + a full <code>ps -eo args</code> interpreter-pattern scan; those apps emit the same record with an empty port list.</p>`,
+    opts:[
+      { k:"a", lead:"In scope — the ps + systemd + cron sweep is mandatory",
+        cons:"The map is complete; non-listening workloads appear with an empty port list. (report recommendation)",
+        pay:"Non-listening apps: IN SCOPE. Run the systemctl(running) + cron enumeration + ps -eo args interpreter-pattern sweep alongside ports+docker; non-listening apps emit the same record with an empty port list." },
+      { k:"b", lead:"Ports + Docker only",
+        cons:"Simplest and fastest; but silently misses every non-listening workload.",
+        pay:"Non-listening apps: OUT OF SCOPE. Discovery is ports + docker only; non-listening workloads are not discovered." },
+      { k:"c", lead:"Opt-in per machine (operator enables the extra sweep)",
+        cons:"Cheap by default, complete on request; but the default map is quietly partial.",
+        pay:"Non-listening apps: opt-in per machine. Default discovery is ports+docker; the operator enables the systemd/cron/ps sweep per host when wanted." },
+    ]},
+  { id:"D5", tag:"database sizing scope",
+    q:"Which databases get their size probed now?",
+    tension:"Standalone DBs need per-engine credential/socket discovery the model hasn't built yet.",
+    rec:"a",
+    evidence:`<p>Dockerized DBs size cleanly: logical via <code>docker exec &lt;cid&gt; psql … pg_database_size()</code> (creds from the container env) and physical via the data volume's <code>du</code>. Standalone DBs need host-side peer-auth / credential discovery (<code>sudo -u postgres psql</code>, <code>debian-sys-maint</code> for mysql) — the same SQL, a different transport.</p><p>The logical-vs-physical gap is itself a useful signal (WAL/binlog/bloat), so dropping the axis loses information.</p>`,
+    opts:[
+      { k:"a", lead:"Docker-only now; standalone DBs a documented future hook",
+        cons:"Dockerized DBs need no host credential discovery; standalone is deferred with the mechanism noted. (report recommendation)",
+        pay:"Database sizing: DOCKER-ONLY now — logical (docker exec size query) + physical (data volume du). Standalone-DB sizing is a documented future hook (same SQL, host-side transport), explicitly out of scope for now." },
+      { k:"b", lead:"Include standalone DBs now too",
+        cons:"Complete coverage; but pulls per-engine credential/peer-auth discovery on the host into scope up front.",
+        pay:"Database sizing: include standalone DBs now — discover host-side credentials (sudo -u <dbuser> psql, debian-sys-maint for mysql) and run the same size queries, in addition to dockerized DBs." },
+      { k:"c", lead:"Drop the DB axis for now",
+        cons:"Least work; but loses the logical-vs-physical gap that best signals DB growth.",
+        pay:"Database sizing: drop the dedicated DB axis for now — a DB context is measured like any other (disk/ram/cpu only), no engine-level size query." },
+    ]},
+];
+
+const state = {}; // id -> option key
+const notes = {}; // id -> textarea value
+
+function render(){
+  const root = document.getElementById('cards');
+  root.innerHTML = '';
+  DECISIONS.forEach(d=>{
+    const card = document.createElement('section');
+    card.className = 'card'; card.id = 'card-'+d.id;
+    let opts = d.opts.map(o=>{
+      const isRec = o.k===d.rec;
+      return `<label class="opt${isRec?' rec':''}" data-d="${d.id}" data-o="${o.k}">
+        <input type="radio" name="${d.id}" value="${o.k}">
+        <span class="otext"><span class="olead">${o.lead}${isRec?'<span class="recpill">recommended</span>':''}</span>
+        <span class="ocons">${o.cons}</span></span></label>`;
+    }).join('');
+    card.innerHTML = `
+      <div class="chead">
+        <div class="cnum">${d.id} · ${d.tag}</div>
+        <div class="cq">${d.q}</div>
+        <p class="tension">${d.tension}</p>
+      </div>
+      <div class="opts">${opts}</div>
+      <details><summary>Evidence from the report</summary><div class="body">${d.evidence}</div></details>
+      <div class="note"><label for="note-${d.id}">Your note / override (optional — appended to the prompt)</label>
+        <textarea id="note-${d.id}" data-d="${d.id}" placeholder="e.g. 'go with (a) but cap the sibling scan at depth 2' — free text"></textarea></div>`;
+    root.appendChild(card);
+  });
+  root.querySelectorAll('input[type=radio]').forEach(r=>{
+    r.addEventListener('change', e=>{ state[e.target.name]=e.target.value; sync(); });
+  });
+  root.querySelectorAll('textarea[data-d]').forEach(t=>{
+    t.addEventListener('input', e=>{ notes[e.target.dataset.d]=e.target.value; buildPayload(); });
+  });
+  sync();
+}
+
+function sync(){
+  DECISIONS.forEach(d=>{
+    const card = document.getElementById('card-'+d.id);
+    card.querySelectorAll('label.opt').forEach(l=>{
+      l.classList.toggle('sel', state[d.id]===l.dataset.o);
+    });
+    card.classList.toggle('done', !!state[d.id]);
+  });
+  const n = Object.keys(state).length;
+  document.getElementById('counter').innerHTML = `<b>${n}</b> of ${DECISIONS.length} decided`;
+  const all = n===DECISIONS.length;
+  document.getElementById('copybtn').disabled = !all;
+  buildPayload();
+}
+
+function buildPayload(){
+  const ta = document.getElementById('payload');
+  const n = Object.keys(state).length;
+  if(n===0){ ta.value=''; return; }
+  let lines = [];
+  lines.push("Execute the following lightweight-app-model design decisions in /mnt/mydata/repos/compute-admin");
+  lines.push("(companion to lightweight-app-model-report.html §Design calls; Linear is BLOCKED — use spec-NNN references, do not create issues):");
+  lines.push("");
+  DECISIONS.forEach((d,i)=>{
+    const k = state[d.id];
+    if(!k){ lines.push(`${i+1}. [${d.id}] — UNDECIDED`); return; }
+    const o = d.opts.find(x=>x.k===k);
+    lines.push(`${i+1}. [${d.id} · chose ${k}] ${o.pay}`);
+    const nt = (notes[d.id]||'').trim();
+    if(nt){ nt.split('\n').forEach(l=> lines.push(`      note: ${l}`)); }
+  });
+  lines.push("");
+  lines.push("Source of record: lightweight-app-model-report.html (clean-slate model, independent of current specs/code).");
+  lines.push("Where a decision commits real work rather than a doc note, say so before acting; do not push — the user pushes.");
+  ta.value = lines.join('\n');
+}
+
+function acceptRec(){ DECISIONS.forEach(d=>{ state[d.id]=d.rec; const r=document.querySelector(`input[name="${d.id}"][value="${d.rec}"]`); if(r) r.checked=true; }); sync(); }
+function resetAll(){ Object.keys(state).forEach(k=>delete state[k]); document.querySelectorAll('input[type=radio]').forEach(r=>r.checked=false); sync(); }
+function copyPayload(){
+  const t = document.getElementById('payload').value;
+  const done = ()=>{ const el=document.getElementById('toast'); el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1400); };
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done, fallback); } else { fallback(); }
+  function fallback(){ const ta=document.getElementById('payload'); ta.removeAttribute('readonly'); ta.select(); try{document.execCommand('copy');}catch(e){} ta.setAttribute('readonly','');
+    window.getSelection && window.getSelection().removeAllRanges(); done(); }
+}
+render();
+</script>
+</body></html>

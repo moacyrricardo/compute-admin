@@ -1,0 +1,576 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lightweight App Model</title>
+<style>
+  :root{ --bg:#fff; --fg:#1a1a1a; --muted:#5a6472; --accent:#2563eb; --accent2:#0d9488; --warn:#b45309; --border:#e5e7eb; --card:#f8f9fa; --code:#f2f4f7; --codefg:#0f172a; }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0a6; --accent:#6ea8fe; --accent2:#5eead4; --warn:#fbbf24; --border:#2a2d34; --card:#171a20; --code:#12151b; --codefg:#dbe4f0; } }
+  :root[data-theme="dark"]{ --bg:#0f1115; --fg:#e8e8e8; --muted:#9aa0a6; --accent:#6ea8fe; --accent2:#5eead4; --warn:#fbbf24; --border:#2a2d34; --card:#171a20; --code:#12151b; --codefg:#dbe4f0; }
+  :root[data-theme="light"]{ --bg:#fff; --fg:#1a1a1a; --muted:#5a6472; --accent:#2563eb; --accent2:#0d9488; --warn:#b45309; --border:#e5e7eb; --card:#f8f9fa; --code:#f2f4f7; --codefg:#0f172a; }
+  *{box-sizing:border-box}
+  body{ margin:0; background:var(--bg); color:var(--fg); font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header.top{ position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:1rem; padding:.7rem 1.2rem; background:color-mix(in srgb,var(--bg) 88%, transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--border); }
+  header.top h1{ font-size:1.02rem; margin:0; font-weight:650; letter-spacing:.1px; }
+  header.top .sub{ color:var(--muted); font-size:.82rem; }
+  .spacer{ flex:1 }
+  .btnrow{ display:flex; gap:.4rem; flex-wrap:wrap }
+  button.ui{ font:inherit; font-size:.8rem; padding:.34rem .7rem; border:1px solid var(--border); background:var(--card); color:var(--fg); border-radius:7px; cursor:pointer; }
+  button.ui:hover{ border-color:var(--accent); color:var(--accent); }
+  main{ max-width:1000px; margin:0 auto; padding:1.5rem 1.2rem 5rem; }
+  nav.toc{ display:flex; flex-wrap:wrap; gap:.4rem; margin:1rem 0 2rem; }
+  nav.toc a{ font-size:.8rem; text-decoration:none; color:var(--muted); border:1px solid var(--border); padding:.28rem .6rem; border-radius:99px; }
+  nav.toc a:hover{ color:var(--accent); border-color:var(--accent); }
+  h2{ font-size:1.4rem; margin:2.6rem 0 .5rem; padding-top:.6rem; scroll-margin-top:4rem; }
+  h2 .n{ color:var(--accent); font-variant-numeric:tabular-nums; margin-right:.5rem; font-weight:700; }
+  h3{ font-size:1.06rem; margin:1.6rem 0 .4rem; }
+  p{ margin:.6rem 0 }
+  .lead{ font-size:1.06rem; }
+  .muted{ color:var(--muted) }
+  .verdict{ border:1px solid var(--border); border-left:4px solid var(--accent); background:var(--card); border-radius:10px; padding:1rem 1.2rem; margin:1.2rem 0; }
+  .verdict h2{ margin:.1rem 0 .5rem; padding:0; font-size:1.15rem; }
+  .grid2{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:.8rem; margin:1rem 0; }
+  .kpi{ border:1px solid var(--border); border-radius:9px; padding:.7rem .8rem; background:var(--card); }
+  .kpi b{ display:block; font-size:1.5rem; color:var(--accent); font-variant-numeric:tabular-nums; }
+  .kpi span{ font-size:.82rem; color:var(--muted) }
+  figure{ margin:1.4rem 0; }
+  figure svg{ width:100%; height:auto; display:block; }
+  figcaption{ font-size:.82rem; color:var(--muted); margin-top:.5rem; text-align:center; }
+  .fig-wrap{ border:1px solid var(--border); border-radius:10px; padding:1.1rem; background:var(--card); overflow-x:auto; }
+  table{ border-collapse:collapse; width:100%; font-size:.86rem; margin:.6rem 0; }
+  .scroll{ overflow-x:auto; }
+  th,td{ text-align:left; padding:.42rem .55rem; border-bottom:1px solid var(--border); vertical-align:top; }
+  th{ color:var(--muted); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.03em; }
+  code{ font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.86em; background:var(--code); color:var(--codefg); padding:.08em .35em; border-radius:4px; }
+  pre{ background:var(--code); color:var(--codefg); padding:.8rem 1rem; border-radius:8px; overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.82rem; line-height:1.5; margin:.6rem 0; }
+  details{ border:1px solid var(--border); border-radius:8px; margin:.7rem 0; background:var(--card); }
+  details>summary{ cursor:pointer; padding:.6rem .85rem; font-size:.88rem; font-weight:550; list-style:none; }
+  details>summary::-webkit-details-marker{ display:none }
+  details>summary::before{ content:"▸"; color:var(--accent); margin-right:.5rem; display:inline-block; transition:transform .15s; }
+  details[open]>summary::before{ transform:rotate(90deg) }
+  details>summary:hover{ color:var(--accent) }
+  details .body{ padding:.2rem 1rem 1rem; }
+  .tag{ display:inline-block; font-size:.7rem; font-weight:600; padding:.1rem .45rem; border-radius:99px; border:1px solid; margin-left:.35rem; vertical-align:middle; }
+  .tag.free{ color:var(--accent2); border-color:var(--accent2); }
+  .tag.sudo{ color:var(--warn); border-color:var(--warn); }
+  .tag.docker{ color:var(--accent); border-color:var(--accent); }
+  .callout{ border:1px solid var(--border); border-left:4px solid var(--warn); background:var(--card); border-radius:8px; padding:.8rem 1rem; margin:1rem 0; font-size:.92rem; }
+  .callout b{ color:var(--warn) }
+  .pill{ font-size:.72rem; color:var(--muted); border:1px solid var(--border); border-radius:5px; padding:.05rem .35rem; }
+  ul.tight{ margin:.5rem 0; padding-left:1.2rem; }
+  ul.tight li{ margin:.28rem 0; }
+  .decision{ border:1px solid var(--border); border-radius:9px; padding:.2rem 1rem; margin:.8rem 0; background:var(--card); }
+  .decision summary{ font-weight:600; }
+  .rec{ color:var(--accent2); font-weight:600; }
+  a.src{ color:var(--accent); text-decoration:none; border-bottom:1px dotted var(--accent); }
+  hr{ border:none; border-top:1px solid var(--border); margin:2.5rem 0 0; }
+  .footnote{ font-size:.8rem; color:var(--muted); margin-top:2rem; }
+</style></head>
+<body>
+<header class="top">
+  <div>
+    <h1>Lightweight App-Metadata Model</h1>
+    <div class="sub">A clean-slate feasibility blueprint for SSH-Linux hosts</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="btnrow">
+    <button class="ui" onclick="allDetails(true)">Expand all</button>
+    <button class="ui" onclick="allDetails(false)">Collapse all</button>
+    <button class="ui" onclick="var r=document.documentElement;r.setAttribute('data-theme',r.getAttribute('data-theme')==='dark'?'light':'dark')">◐ theme</button>
+  </div>
+</header>
+<main>
+
+  <p class="lead">This report tests one idea end to end: that an app on a Linux box can be described by a small,
+  purely-mechanical triple — <b>an app-script, the folder it lives in, and the app/context folder that owns it</b> —
+  and that from that triple alone we can group scripts and probe <b>disk, RAM, CPU, and (for Docker) database</b>
+  usage. It deliberately ignores what compute-admin has already built or spec'd; it asks only what is <em>true and
+  reachable over SSH</em> on a real Linux host. Four Linux-systems investigations feed it — discovery, mapping,
+  probing, and the Docker/common-service layer — and they interlock as one pipeline.</p>
+
+  <div class="verdict">
+    <h2>Verdict — the model holds, and most of it needs no root</h2>
+    <p>The triple is <b>feasible and largely deterministic</b>. Apps are discoverable by listening ports and by
+    Docker; the script→context derivation is a fixed <em>wrapper-directory</em> rule with a handful of documented
+    failure modes; and every resource axis has a concrete probe whose cost and privilege are known. The single most
+    consequential design fact: <b>~80% of the map is obtainable as an ordinary login user</b> — <code>sudo</code>
+    buys you <em>other users'</em> process internals and Docker/volume internals, and every privileged probe has a
+    labelled, degraded fallback. The two calls you actually have to <em>make</em> (not discover) are the
+    <a class="src" href="#dec">symlink identity key</a> and how aggressively the wrapper rule hops; everything else
+    is mechanism.</p>
+    <div class="grid2">
+      <div class="kpi"><b>4</b><span>discovery + mapping + probing + docker/service — one pipeline</span></div>
+      <div class="kpi"><b>~80%</b><span>of the map available with no <code>sudo</code>, no docker group</span></div>
+      <div class="kpi"><b>0</b><span>new parsers to build — the Docker engine <em>is</em> the processor</span></div>
+      <div class="kpi"><b>3</b><span>cadence tiers: fast procfs (30–60s) / docker (1–5m) / du (hourly+)</span></div>
+    </div>
+  </div>
+
+  <nav class="toc">
+    <a href="#pipeline">The pipeline</a>
+    <a href="#model">Data model</a>
+    <a href="#discovery">1 · Discovery</a>
+    <a href="#mapping">2 · Mapping</a>
+    <a href="#probing">3 · Probing</a>
+    <a href="#docker">4 · Docker &amp; services</a>
+    <a href="#dec">Design calls</a>
+    <a href="#deps">Dependencies</a>
+    <a href="./lightweight-app-model-decide.html" style="border-color:var(--accent2);color:var(--accent2)">Decision surface&nbsp;↗</a>
+  </nav>
+
+  <!-- ============ PIPELINE ============ -->
+  <h2 id="pipeline"><span class="n">◆</span>How the four pieces interlock</h2>
+  <p>Nothing here is standalone. <b>Discovery</b> emits a raw record per candidate app; <b>Mapping</b> turns that
+  record's path signals into a context and its sibling scripts; <b>Probing</b> measures each context. The
+  <b>Docker/service layer</b> is not a fourth stage in series — it feeds <em>all three</em>: it resolves container
+  identity for discovery, hands host paths to mapping, and tells probing which volumes to measure.</p>
+
+  <figure class="fig-wrap">
+    <svg viewBox="0 0 920 340" role="img" aria-label="Pipeline: an SSH-Linux host feeds Discovery, which feeds Mapping, which feeds Probing, producing a Context; a Docker and common-service extraction layer feeds all three stages.">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="currentColor"/></marker>
+        <marker id="ara" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--accent)"/></marker>
+      </defs>
+      <!-- host -->
+      <rect x="12" y="120" width="120" height="70" rx="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="72" y="150" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">SSH-Linux</text>
+      <text x="72" y="168" text-anchor="middle" font-size="11" fill="var(--muted)">host</text>
+      <!-- discovery -->
+      <rect x="190" y="115" width="150" height="80" rx="9" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <text x="265" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="var(--accent)">1 · Discovery</text>
+      <text x="265" y="164" text-anchor="middle" font-size="10.5" fill="var(--muted)">ports + docker</text>
+      <text x="265" y="179" text-anchor="middle" font-size="10.5" fill="var(--muted)">+ fingerprint</text>
+      <!-- mapping -->
+      <rect x="400" y="115" width="150" height="80" rx="9" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <text x="475" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="var(--accent)">2 · Mapping</text>
+      <text x="475" y="164" text-anchor="middle" font-size="10.5" fill="var(--muted)">wrapper-dir rule</text>
+      <text x="475" y="179" text-anchor="middle" font-size="10.5" fill="var(--muted)">+ siblings</text>
+      <!-- probing -->
+      <rect x="610" y="115" width="150" height="80" rx="9" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <text x="685" y="145" text-anchor="middle" font-size="13" font-weight="700" fill="var(--accent)">3 · Probing</text>
+      <text x="685" y="164" text-anchor="middle" font-size="10.5" fill="var(--muted)">disk / ram / cpu</text>
+      <text x="685" y="179" text-anchor="middle" font-size="10.5" fill="var(--muted)">+ db (docker)</text>
+      <!-- context output -->
+      <rect x="820" y="120" width="88" height="70" rx="9" fill="none" stroke="var(--accent2)" stroke-width="2"/>
+      <text x="864" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="var(--accent2)">Context</text>
+      <text x="864" y="167" text-anchor="middle" font-size="10" fill="var(--muted)">+ metrics</text>
+      <!-- main arrows -->
+      <g fill="currentColor" font-size="9.5">
+        <line x1="132" y1="155" x2="185" y2="155" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <line x1="340" y1="155" x2="395" y2="155" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="367" y="148" text-anchor="middle" fill="var(--muted)">signals</text>
+        <line x1="550" y1="155" x2="605" y2="155" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="577" y="148" text-anchor="middle" fill="var(--muted)">app-folder</text>
+        <line x1="760" y1="155" x2="815" y2="155" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+      </g>
+      <!-- docker/service layer -->
+      <rect x="190" y="255" width="570" height="58" rx="9" fill="none" stroke="var(--accent2)" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="475" y="280" text-anchor="middle" font-size="12" font-weight="700" fill="var(--accent2)">4 · Docker &amp; common-service extraction</text>
+      <text x="475" y="298" text-anchor="middle" font-size="10" fill="var(--muted)">docker inspect · compose config · service catalog — feeds all three stages</text>
+      <!-- feed arrows up -->
+      <g stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="3 3">
+        <line x1="265" y1="255" x2="265" y2="197" marker-end="url(#ara)"/>
+        <line x1="475" y1="255" x2="475" y2="197" marker-end="url(#ara)"/>
+        <line x1="685" y1="255" x2="685" y2="197" marker-end="url(#ara)"/>
+      </g>
+    </svg>
+    <figcaption>The three serial stages (solid) run left to right; the Docker/service layer (dashed) feeds each of them rather than sitting in the chain.</figcaption>
+  </figure>
+
+  <!-- ============ DATA MODEL ============ -->
+  <h2 id="model"><span class="n">◆</span>The data model that flows through it</h2>
+  <p>One record is emitted per <b>app-script</b> at discovery; mapping collapses app-scripts that resolve to the
+  same <b>context</b>; probing hangs metrics off the context. The operator's worked example — two scripts, one under
+  <code>scripts/</code> and one at the root, both belonging to <code>/opt/lab/app1</code> — is exactly the grouping
+  the model must produce.</p>
+
+  <figure class="fig-wrap">
+    <svg viewBox="0 0 900 300" role="img" aria-label="Two app-script records, run.sh under a scripts wrapper folder and migrate.sh at the app root, both map to one Context /opt/lab/app1 which carries disk, ram, cpu and db metrics.">
+      <defs><marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="currentColor"/></marker></defs>
+      <!-- script A -->
+      <rect x="15" y="30" width="270" height="86" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+      <text x="30" y="52" font-size="11.5" font-weight="700" fill="var(--accent)">app-script</text>
+      <text x="30" y="70" font-size="11" fill="currentColor" font-family="monospace">/opt/lab/app1/scripts/run.sh</text>
+      <text x="30" y="88" font-size="10" fill="var(--muted)">script-folder = …/app1/scripts</text>
+      <text x="30" y="104" font-size="10" fill="var(--muted)">pid · ports · exe · cwd · cmdline</text>
+      <!-- script B -->
+      <rect x="15" y="140" width="270" height="86" rx="8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+      <text x="30" y="162" font-size="11.5" font-weight="700" fill="var(--accent)">app-script</text>
+      <text x="30" y="180" font-size="11" fill="currentColor" font-family="monospace">/opt/lab/app1/migrate.sh</text>
+      <text x="30" y="198" font-size="10" fill="var(--muted)">script-folder = …/app1</text>
+      <text x="30" y="214" font-size="10" fill="var(--muted)">pid · exe · cwd · cmdline</text>
+      <!-- arrows to context -->
+      <line x1="285" y1="73" x2="430" y2="118" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2)"/>
+      <line x1="285" y1="183" x2="430" y2="138" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2)"/>
+      <text x="350" y="86" font-size="9.5" fill="var(--muted)" text-anchor="middle">wrapper hop</text>
+      <text x="350" y="176" font-size="9.5" fill="var(--muted)" text-anchor="middle">identity</text>
+      <!-- context -->
+      <rect x="440" y="70" width="180" height="120" rx="10" fill="none" stroke="var(--accent2)" stroke-width="2.2"/>
+      <text x="530" y="96" font-size="13" font-weight="700" fill="var(--accent2)" text-anchor="middle">Context</text>
+      <text x="530" y="115" font-size="11" fill="currentColor" text-anchor="middle" font-family="monospace">/opt/lab/app1</text>
+      <line x1="455" y1="126" x2="605" y2="126" stroke="var(--border)" stroke-width="1"/>
+      <text x="530" y="145" font-size="10" fill="var(--muted)" text-anchor="middle">groups both scripts</text>
+      <text x="530" y="162" font-size="10" fill="var(--muted)" text-anchor="middle">+ sibling scan (depth 3)</text>
+      <text x="530" y="179" font-size="10" fill="var(--muted)" text-anchor="middle">= unit of measurement</text>
+      <!-- metrics -->
+      <line x1="620" y1="130" x2="675" y2="130" stroke="currentColor" stroke-width="1.4" marker-end="url(#ar2)"/>
+      <g>
+        <rect x="685" y="40" width="200" height="45" rx="7" fill="none" stroke="var(--border)" stroke-width="1.3"/>
+        <text x="700" y="60" font-size="10.5" font-weight="600" fill="currentColor">disk</text>
+        <text x="700" y="76" font-size="9.5" fill="var(--muted)">du(app-folder − mounts) + volumes</text>
+        <rect x="685" y="93" width="200" height="45" rx="7" fill="none" stroke="var(--border)" stroke-width="1.3"/>
+        <text x="700" y="113" font-size="10.5" font-weight="600" fill="currentColor">ram</text>
+        <text x="700" y="129" font-size="9.5" fill="var(--muted)">Σ PSS over the context's pids</text>
+        <rect x="685" y="146" width="200" height="45" rx="7" fill="none" stroke="var(--border)" stroke-width="1.3"/>
+        <text x="700" y="166" font-size="10.5" font-weight="600" fill="currentColor">cpu</text>
+        <text x="700" y="182" font-size="9.5" fill="var(--muted)">Δ(utime+stime) over interval</text>
+        <rect x="685" y="199" width="200" height="45" rx="7" fill="none" stroke="var(--border)" stroke-width="1.3"/>
+        <text x="700" y="219" font-size="10.5" font-weight="600" fill="var(--accent)">db</text>
+        <text x="700" y="235" font-size="9.5" fill="var(--muted)">docker exec size query (docker only)</text>
+      </g>
+    </svg>
+    <figcaption>Two app-scripts collapse into one context by the wrapper-dir rule; the context is what carries the four metric axes. Self-consistency check: every sibling, re-run through mapping, must resolve back to the same context.</figcaption>
+  </figure>
+
+  <!-- ============ 1 DISCOVERY ============ -->
+  <h2 id="discovery"><span class="n">1</span>Discovery — finding the apps</h2>
+  <p>Two independent sweeps, unioned: <b>listening ports</b> and <b>Docker</b>. The port sweep enumerates listeners,
+  then resolves each socket → PID → filesystem identity (<code>exe</code>, <code>cwd</code>, <code>cmdline</code>).
+  The full <em>port inventory</em> is unprivileged; only the port→PID join for <em>other users'</em> sockets needs
+  <code>sudo</code>. Common services (nginx, mysql, mariadb, postgres) are then fingerprinted by process/exe → port →
+  package, with two agreeing signals treated as confident.</p>
+
+  <div class="callout"><b>The routing rule that everything depends on:</b> read <code>/proc/&lt;pid&gt;/cgroup</code>
+  <em>before</em> trusting <code>exe</code>/<code>cwd</code>. A containerized PID's host-side paths are overlayfs
+  internals (<code>/var/lib/docker/overlay2/…</code>) — never a real app-folder. cgroup tells you container vs
+  systemd-unit vs session in one world-readable read, and routes the record to the Docker branch.</p>
+
+  <h3>The two blind spots that would otherwise lose apps</h3>
+  <ul class="tight">
+    <li><b>DNAT / <code>docker-proxy</code> ports</b> — a published container port may be owned by
+    <code>docker-proxy</code>, or by <em>no host process at all</em> (iptables owns it). Any port <code>docker ps</code>
+    reports but <code>ss</code> can't attribute must be resolved through the Docker branch, not <code>/proc</code>.</li>
+    <li><b>Non-listening apps</b> — queue workers, cron jobs, batch scripts never appear in a port sweep. Mandatory
+    complements: <code>systemctl list-units --state=running</code>, cron enumeration, and a full
+    <code>ps -eo args</code> interpreter-pattern scan. They emit the same record with an empty port list.</li>
+  </ul>
+
+  <details><summary>Evidence — listener enumeration &amp; the port→PID→identity join <span class="tag free">no-sudo inventory</span> <span class="tag sudo">sudo for others' pids</span></summary>
+  <div class="body">
+    <div class="scroll"><table>
+      <thead><tr><th>Command</th><th>Output shape</th><th>Caveat</th></tr></thead>
+      <tbody>
+        <tr><td><code>sudo ss -tlnp</code></td><td><code>LISTEN … 0.0.0.0:80 … users:(("nginx",pid=812,…))</code></td><td>Primary probe. Without sudo the <code>users:()</code> column is blank for other users' sockets — <b>silently</b>, no error.</td></tr>
+        <tr><td><code>ss -tlnp</code> (no sudo)</td><td>same rows, empty Process column</td><td>Full port inventory is unprivileged; only the join needs sudo.</td></tr>
+        <tr><td><code>cat /proc/net/tcp{,6}</code></td><td>hex <code>local_address</code> + <code>inode</code>, <code>st=0A</code>=LISTEN</td><td>Always present, needs no tools. Gives an inode, not a PID — join via fd scan.</td></tr>
+        <tr><td><code>readlink /proc/&lt;pid&gt;/exe</code></td><td><code>/usr/sbin/nginx</code> (<code>(deleted)</code> if replaced)</td><td>Needs sudo for other users' PIDs. Raw <b>app-script</b> signal when the binary <em>is</em> the app.</td></tr>
+        <tr><td><code>tr '\0' ' ' &lt; /proc/&lt;pid&gt;/cmdline</code></td><td><code>python3 /opt/app/server.py --port 8000</code></td><td><b>World-readable.</b> For interpreters the real app-script is argv[1+], not <code>exe</code>.</td></tr>
+        <tr><td><code>cat /proc/&lt;pid&gt;/cgroup</code></td><td><code>0::/system.slice/docker-4f6e….scope</code></td><td>World-readable. The container-vs-unit router — read <em>first</em>.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="font-size:.82rem">Capture <code>ss</code> and the <code>/proc</code> reads in <b>one</b> SSH round-trip (a single uploaded script) to avoid TOCTOU between the socket read and the PID read; record <code>starttime</code> (stat field 22) so PID churn between polls is detectable.</p>
+  </div>
+  </details>
+
+  <details><summary>Evidence — Docker sweep &amp; common-service fingerprints <span class="tag docker">docker group / sudo</span></summary>
+  <div class="body">
+    <p>One batch — <code>sudo docker ps -q | xargs -r sudo docker inspect</code> — yields every field below in a
+    single round-trip. <code>.State.Pid</code> is the host PID that plugs a container straight back into the
+    <code>/proc</code> machinery; <code>com.docker.compose.project.working_dir</code> is a first-class app-folder
+    candidate handed downstream verbatim.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Service</th><th>Process signal</th><th>Port</th><th>Dockerized vs standalone</th></tr></thead>
+      <tbody>
+        <tr><td>nginx</td><td><code>comm=nginx</code>, master via <code>exe</code> (cmdline is rewritten)</td><td>80/443</td><td>cgroup hex ⇒ container; <code>.service</code> ⇒ standalone. <code>nginx -T</code> dumps effective config incl. every <code>root</code>/<code>proxy_pass</code>.</td></tr>
+        <tr><td>mysql</td><td><code>comm=mysqld</code>, <code>exe=/usr/sbin/mysqld</code></td><td>3306</td><td>Containerized: <code>dpkg -S</code> fails on host (binary in image); image tag <code>mysql:8</code> is the fingerprint.</td></tr>
+        <tr><td>mariadb</td><td><code>comm=mariadbd</code> (clean discriminator vs mysql)</td><td>3306</td><td>disambiguate by binary, not the shared <code>/var/lib/mysql</code> path.</td></tr>
+        <tr><td>postgres</td><td>postmaster <code>cmdline</code> has <code>-D &lt;PGDATA&gt;</code>; fingerprint the <b>parent</b> (children have rewritten cmdlines)</td><td>5432</td><td>versioned exe <code>/usr/lib/postgresql/&lt;v&gt;/bin/postgres</code>; image <code>postgres:16</code> for docker.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="font-size:.82rem">Decide dockerized-vs-standalone per PID: (1) cgroup contains <code>docker-&lt;64hex&gt;.scope</code>/<code>libpod</code> ⇒ containerized; (2) port owned by <code>docker-proxy</code> or DNAT-only ⇒ containerized behind NAT; (3) image tag is itself the fingerprint. Infra noise (<code>sshd</code>, <code>systemd-*</code>, exporters) is <em>suppressed but tagged <code>infra</code></em>, never deleted.</p>
+  </div>
+  </details>
+
+  <!-- ============ 2 MAPPING ============ -->
+  <h2 id="mapping"><span class="n">2</span>Mapping — script → script-folder → context</h2>
+  <p>Given a discovery record, derive the <b>script-folder</b> (where it lives) and the <b>app-folder / context</b>
+  (who owns it) with no LLM — pure heuristics. The core is the <b>wrapper-directory rule</b>: if the script sits
+  directly under a wrapper dir (<code>scripts</code>, <code>bin</code>, <code>sbin</code>, <code>frontend</code>,
+  <code>backend</code>, <code>cmd</code>, <code>dist</code>, <code>build</code>, …), the context is the
+  <em>parent</em> of that wrapper; otherwise the context is the script-folder itself. <b>One hop by default</b>; a
+  second hop is allowed only when the intermediate dir is also a wrapper <em>and</em> the target carries a marker
+  file (<code>.git</code>, <code>compose.yaml</code>, <code>package.json</code>…).</p>
+
+  <figure class="fig-wrap">
+    <svg viewBox="0 0 860 190" role="img" aria-label="run.sh under app1/scripts hops up past the scripts wrapper dir to /opt/lab/app1; migrate.sh already at /opt/lab/app1 stays; both share the context. A boundary clamp forbids hopping onto /opt, /srv, /home, /usr.">
+      <defs><marker id="ar3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="var(--accent)"/></marker></defs>
+      <text x="20" y="30" font-size="11" font-family="monospace" fill="currentColor">/opt/lab/app1/<tspan fill="var(--warn)" font-weight="700">scripts</tspan>/run.sh</text>
+      <text x="20" y="150" font-size="11" font-family="monospace" fill="currentColor">/opt/lab/app1/migrate.sh</text>
+      <!-- hop arrow -->
+      <path d="M 320 26 C 420 26, 420 88, 500 88" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#ar3)"/>
+      <text x="410" y="20" font-size="10" fill="var(--accent)">hop past wrapper</text>
+      <path d="M 250 146 C 380 146, 400 100, 500 96" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#ar3)"/>
+      <text x="360" y="140" font-size="10" fill="var(--muted)">already at root</text>
+      <!-- context -->
+      <rect x="505" y="66" width="200" height="52" rx="9" fill="none" stroke="var(--accent2)" stroke-width="2"/>
+      <text x="605" y="90" font-size="12" font-weight="700" fill="var(--accent2)" text-anchor="middle">context</text>
+      <text x="605" y="107" font-size="11" font-family="monospace" fill="currentColor" text-anchor="middle">/opt/lab/app1</text>
+      <!-- clamp note -->
+      <rect x="505" y="140" width="330" height="34" rx="7" fill="none" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="4 3"/>
+      <text x="515" y="161" font-size="10" fill="var(--warn)">clamp: never hop onto / · /opt · /srv · /home · /usr</text>
+    </svg>
+    <figcaption>The wrapper hop collapses <code>scripts/run.sh</code> and root-level <code>migrate.sh</code> into one context; a boundary clamp stops the hop from ever landing on a bare convention root.</figcaption>
+  </figure>
+
+  <details><summary>Evidence — the algorithm, step by step (procfs → canonicalize → hop → clamp)</summary>
+  <div class="body">
+    <p><b>Step 0 — normalise to a script path.</b> PID-based: <code>readlink /proc/&lt;pid&gt;/exe</code>; if the basename
+    is an interpreter (<code>python*, node, ruby, java, bash, gunicorn…</code>), discard it and parse
+    <code>cmdline</code> for the real script, resolving relative paths against <code>/proc/&lt;pid&gt;/cwd</code>.
+    <code>python -m pkg</code> / <code>-c '…'</code> have no file → fall back to <code>cwd</code>. Docker: translate
+    <code>WorkingDir</code> through the longest-prefix bind <code>Mount</code> to a host path; if no bind covers it,
+    the container <em>is</em> the context (<code>docker://&lt;name&gt;</code>) — never walk the overlayfs upperdir.</p>
+    <pre>P=$(realpath -m "$S"); SF=$(dirname "$P"); AF=$SF
+case "$(basename "$SF")" in
+  scripts|script|bin|sbin|libexec|tools|frontend|backend|cmd|dist|build|out|target|app|src)
+    par=$(dirname "$SF")
+    case "$par" in /|/opt|/srv|/home|/usr|/var|/etc|/usr/local) ;; *) AF=$par;; esac;;
+esac</pre>
+    <p><b>Steps 1–4:</b> canonicalize (<code>realpath -m</code> tolerates <code>(deleted)</code>), take
+    <code>dirname</code> for the script-folder, apply the single wrapper hop, then <b>clamp</b> — if the hop would
+    land on <code>/</code> or a bare convention root, revert to the script-folder. <b>Step 5</b> (advisory): a marker
+    file at the candidate raises confidence and gates the bounded double hop; it never reverts a hop.</p>
+  </div>
+  </details>
+
+  <details><summary>Evidence — worked examples, incl. the tricky ones</summary>
+  <div class="body">
+    <div class="scroll"><table>
+      <thead><tr><th>Input signal</th><th>script-folder</th><th>context</th><th>rule</th></tr></thead>
+      <tbody>
+        <tr><td><code>/opt/lab/app1/scripts/run.sh</code></td><td><code>…/app1/scripts</code></td><td><code>/opt/lab/app1</code></td><td>wrapper hop</td></tr>
+        <tr><td><code>/opt/lab/app1/migrate.sh</code></td><td><code>/opt/lab/app1</code></td><td><code>/opt/lab/app1</code></td><td>no hop — groups with the above</td></tr>
+        <tr><td><code>/srv/myapp/server</code> (exe)</td><td><code>/srv/myapp</code></td><td><code>/srv/myapp</code></td><td>non-wrapper</td></tr>
+        <tr><td>exe=<code>python3.11</code>, cmd=<code>manage.py runserver</code>, cwd=<code>…/app1/backend</code></td><td><code>…/app1/backend</code></td><td><code>/opt/lab/app1</code></td><td>interpreter skip + cwd-resolve + <code>backend</code> hop, <code>.git</code> confirms</td></tr>
+        <tr><td>docker WorkingDir=<code>/app</code>, mount <code>/opt/lab/app3:/app</code></td><td><code>/opt/lab/app3</code></td><td><code>/opt/lab/app3</code></td><td>mount translation</td></tr>
+        <tr><td>docker WorkingDir=<code>/app</code>, no bind</td><td>—</td><td><code>docker://&lt;ctr&gt;</code></td><td>image-baked → container is context</td></tr>
+        <tr><td><code>/usr/bin/redis-server</code> (exe)</td><td><code>/usr/bin</code></td><td>tagged <code>system</code></td><td>clamp fires (parent <code>/usr</code>)</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+  </details>
+
+  <details><summary>Evidence — symlink policy &amp; sibling enumeration</summary>
+  <div class="body">
+    <p><b>Symlinks.</b> Resolve <em>file-level</em> links fully and key dedup on the physical path, but <b>display the
+    logical (unresolved) path</b>; when the physical path matches <code>*/releases/*</code> or <code>*/versions/*</code>
+    (a <code>current</code>→<code>releases/&lt;ts&gt;</code> deploy symlink), <b>promote the context key to the logical
+    one</b> so a redeploy doesn't fork a new context every release. <span class="pill">This is a design call — see §Design.</span></p>
+    <p><b>Siblings.</b> Enumerate other runnable entry points under the context so they group:</p>
+    <pre>find "$AF" -maxdepth 3 -xdev \
+  \( -name .git -o -name node_modules -o -name .venv -o -name target \) -prune -o \
+  -type f \( -perm -u+x -o -name '*.sh' \) -print 2&gt;/dev/null | head -200</pre>
+    <p><code>-maxdepth 3</code>, <code>-xdev</code> (never cross into mounted data), prune dependency/build dirs
+    <em>before</em> matching (<code>node_modules</code> alone is thousands of executables), hard <code>head -200</code>
+    cap. Hitting the cap is a signal the hop <em>overshot</em> (landed on <code>/home/user</code>) → flag "too broad".
+    Classify each hit by first bytes: <code>#!</code> = script, <code>\x7fELF</code> = binary.</p>
+  </div>
+  </details>
+
+  <details><summary>Evidence — the 8 failure modes (what breaks the heuristic)</summary>
+  <div class="body">
+    <ul class="tight">
+      <li><b>Interpreter-launched</b> — <code>exe</code> is <code>python3</code>; without the interpreter-skip every Python app groups under <code>/usr/bin</code>. <code>-m</code>/<code>-c</code> have no file → cwd fallback; a systemd service with cwd <code>/</code> → recover via <code>systemctl show &lt;unit&gt; -p WorkingDirectory,ExecStart</code>.</li>
+      <li><b>Deleted/replaced files</b> — <code>exe → …(deleted)</code> after redeploy; strip + <code>realpath -m</code>, mark <code>stale=true</code>. Still the right grouping key.</li>
+      <li><b>Monorepos</b> — <code>backend/scripts/run.sh</code> double-hops to the repo root, merging frontend+backend. <em>By design</em> per the operator's <code>frontend/backend</code> rule; git-rooted monorepos group at the repo root — document it, don't call it a bug.</li>
+      <li><b><code>src</code>/<code>app</code> members</b> — riskiest of the wrapper set; the clamp covers top-level <code>/src</code>, <code>/app</code>. Drop these two first if false grouping shows up.</li>
+      <li><b>procfs permission-denied</b> — non-root can't <code>readlink</code> other users' <code>exe</code>/<code>cwd</code>; degrade to cmdline-only, emit <code>confidence=low, reason=procfs-denied</code> rather than guess.</li>
+      <li><b>Overlayfs host paths</b> — a container PID's <code>exe</code> resolves into <code>/var/lib/docker/overlay2/…</code>; detect the prefix and re-route to the Docker branch.</li>
+      <li><b>Busybox / multi-call / <code>bash -c</code></b> — no file path exists → cwd fallback; if cwd is <code>/</code>, an explicit <code>unknown/&lt;comm&gt;</code> bucket beats a wrong deterministic answer.</li>
+      <li><b>Vendor levels</b> (<code>/opt/acme/app1</code>) — handled: <code>acme</code> ∉ wrapper set, single hop lands correctly.</li>
+    </ul>
+  </div>
+  </details>
+
+  <!-- ============ 3 PROBING ============ -->
+  <h2 id="probing"><span class="n">3</span>Probing — disk, RAM, CPU, DB per context</h2>
+  <p>Each axis measures a different <em>kind</em> of thing, and conflating them is the classic mistake. Disk is
+  <b>per-context state</b> (no sampling, just cadence). RAM is <b>per-script instantaneous state</b>, summed to the
+  context. CPU is a <b>rate</b> — meaningless from one sample. DB (Docker only for now) is two independent numbers,
+  logical and physical.</p>
+
+  <div class="callout"><b>PSS, not RSS.</b> Summing <code>RSS</code> across 8 workers sharing 200&nbsp;MB of libraries
+  overstates by up to 7×200&nbsp;MB. <code>/proc/&lt;pid&gt;/smaps_rollup</code> → <code>Pss</code> divides each shared
+  page by its sharers, so PSS values <em>sum correctly</em>. RSS is the world-readable fallback only, labelled
+  "≤ upper bound" — never presented as the same metric. Pick one per script type: <b>native → Σ PSS, docker → cgroup /
+  <code>docker stats</code></b>, and never sum a container's cgroup number <em>and</em> the PSS of PIDs inside it
+  (same bytes twice).</div>
+
+  <div class="scroll"><table>
+    <thead><tr><th>Axis</th><th>Kind</th><th>Primary probe</th><th>What it really measures</th><th>Privilege</th></tr></thead>
+    <tbody>
+      <tr><td><b>Disk</b></td><td>state</td><td><code>du -sbx --exclude=&lt;binds&gt; &lt;app-folder&gt;</code> + <code>df</code></td><td>tree bytes on one filesystem; <code>df</code> = containing-fs headroom</td><td><span class="tag free">own tree</span> <span class="tag sudo">other-user dirs</span></td></tr>
+      <tr><td><b>RAM</b></td><td>instant</td><td><code>awk '/^Pss/{s+=$2}' /proc/{pids}/smaps_rollup</code></td><td>PSS — honest, sums correctly across PIDs</td><td><span class="tag free">own pids</span> <span class="tag sudo">others' pids</span></td></tr>
+      <tr><td><b>CPU</b></td><td>rate</td><td><code>/proc/&lt;pid&gt;/stat</code> fields 14+15, twice, Δt apart</td><td>Δticks ÷ CLK_TCK ÷ Δt; guard with starttime (field 22)</td><td><span class="tag free">world-readable</span></td></tr>
+      <tr><td><b>DB</b></td><td>state ×2</td><td><code>docker exec &lt;cid&gt; psql … pg_database_size()</code></td><td>logical engine size; measure physical volume separately</td><td><span class="tag docker">docker + engine creds</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <details><summary>Evidence — disk, and the double-counting rule</summary>
+  <div class="body">
+    <p>Run <code>du</code> under <code>timeout 120 nice -n19 ionice -c3</code> so a giant tree degrades the <em>probe</em>,
+    not the host. Because <code>du -s</code> prints only at the end, a plain timeout yields nothing — on timeout, fall
+    back to <code>du --max-depth=1</code> per child with per-child timeouts, summing what completes (a lower bound plus
+    which subtree blew the budget). Cache and re-measure on a slow cadence.</p>
+    <p><b>Docker disk</b> = writable layer + Σ named volumes + Σ bind paths (image size reported but <em>never summed</em>
+    across contexts — shared layers). Volume sizes: <code>docker system df -v</code>, or root <code>du</code> on
+    <code>/var/lib/docker/volumes/&lt;vol&gt;/_data</code>, or the no-root fallback
+    <code>docker run --rm -v &lt;vol&gt;:/v:ro alpine du -sb /v</code>.</p>
+    <p><b class="rec">Double-counting rule:</b> when a volume/bind lives <em>under</em> an app-folder (common:
+    <code>./data:/var/lib/postgresql/data</code>), naive <code>du</code>(folder) + per-volume counts those bytes twice.
+    Context disk = <code>du(app-folder, excluding every mount source under it)</code> + Σ(each mount counted once),
+    deduped by resolved realpath. Cross-check mounts the parser missed with
+    <code>findmnt -rn -o TARGET</code>.</p>
+  </div>
+  </details>
+
+  <details><summary>Evidence — CPU (the interval trap) &amp; the DB double-measure</summary>
+  <div class="body">
+    <p><b>CPU.</b> Take both samples inside <em>one</em> SSH exec: sample all PIDs+cgroups → <code>sleep 4</code> →
+    sample again → emit both with <code>date +%s.%N</code> stamps, and divide by the <em>measured</em> Δt (not the
+    nominal sleep). Two SSH round-trips would add seconds of jitter to Δt. Avoid <code>ps -o %cpu</code> — it's a
+    <em>lifetime average</em>: a worker that burned CPU for its first hour then idled for a week shows high forever.
+    Interval choice: 3–5&nbsp;s is responsive without aliasing against periodic workloads.</p>
+    <p><b>DB (docker only).</b> Report <em>both</em>: logical (<code>pg_database_size()</code> /
+    <code>information_schema</code> sum — MySQL 8 serves cached stats, prepend
+    <code>SET SESSION information_schema_stats_expiry=0</code> for fresh) and physical (the data volume's
+    <code>du</code>). They legitimately disagree — physical ≥ logical, and the gap <em>is</em> a signal (WAL/binlog/bloat).
+    Credentials come from the container env (<code>docker exec &lt;cid&gt; printenv POSTGRES_USER</code> /
+    <code>MYSQL_ROOT_PASSWORD</code>); if secrets were injected via file/mount, the probe needs a per-app credential hint.
+    Standalone-DB sizing is explicitly <b>out of scope for now</b> — same SQL, different transport later.</p>
+  </div>
+  </details>
+
+  <h3>Three cadence tiers, each one SSH exec per poll</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>Tier</th><th>Probes</th><th>Cadence</th><th>Wall / load</th></tr></thead>
+    <tbody>
+      <tr><td><b>Fast</b> — procfs/cgroupfs</td><td><code>stat</code>×2, <code>smaps_rollup</code>, <code>memory.current</code>, <code>cpu.stat</code>×2, <code>df</code></td><td>30–60 s</td><td>~5 s wall (incl. the sleep), negligible load</td></tr>
+      <tr><td><b>Medium</b> — docker daemon</td><td><code>docker stats --no-stream</code> (all cids at once), <code>ps -s</code></td><td>1–5 min</td><td>~2–3 s (docker's internal sampling)</td></tr>
+      <tr><td><b>Slow</b> — tree walks</td><td><code>du</code>, <code>docker system df -v</code>, DB SQL sizing</td><td>hourly → daily, + on deploy</td><td>minutes; <code>nice/ionice</code>, staggered, cached with timestamp</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:.85rem">A stale-but-timestamped disk number beats a fresh one that hammered the host. The fast tier must never block on the slow tier.</p>
+
+  <!-- ============ 4 DOCKER ============ -->
+  <h2 id="docker"><span class="n">4</span>Docker &amp; common-service extraction — no parser to build</h2>
+  <p>The operator's instinct ("maybe we need a Dockerfile parser") resolves cleanly: <b>don't parse source — inspect
+  the live engine.</b> The hosts already run Docker, so <code>docker inspect</code> / <code>docker compose config</code>
+  return <em>resolved</em> facts (real host paths for bind mounts, real published ports, effective env) that a source
+  parse only approximates. The one dependency we adopt is <b>the Docker CLI already on the target</b>, consumed as JSON.</p>
+
+  <div class="callout" style="border-left-color:var(--accent2)"><b style="color:var(--accent2)">Inspect live, parse source only for the not-running tail.</b>
+  A running container's <code>Mounts[]</code> beats parsing <code>VOLUME</code> + compose <code>volumes</code> — it's the
+  merged, resolved result including ad-hoc <code>-v</code> flags no file mentions. <code>docker image inspect</code>
+  already surfaces everything the Dockerfile baked in. Parse the <em>compose</em> file (via the engine's own
+  <code>docker compose config</code>) only for services <em>defined but not running</em>, or to diff declared-vs-live.
+  Raw-Dockerfile parsing is the narrow tail, served by building/pulling then inspecting the image.</div>
+
+  <details><summary>Evidence — extractor comparison &amp; why the archived Python libs are out</summary>
+  <div class="body">
+    <div class="scroll"><table>
+      <thead><tr><th>Candidate</th><th>Ecosystem</th><th>Verdict</th></tr></thead>
+      <tbody>
+        <tr><td><b><code>docker inspect</code></b> (container+image)</td><td>Docker CLI, on host</td><td class="rec">PRIMARY — resolved mounts, ports, env, labels, host PID; zero new deps</td></tr>
+        <tr><td><b><code>docker compose config --format json</code></b></td><td>Docker CLI (compose v2 = compose-go)</td><td class="rec">SECONDARY — canonicalized model for defined-but-not-running services</td></tr>
+        <tr><td>BuildKit dockerfile parser</td><td>Go library</td><td>Fallback only — needs a Go sidecar; reserve for raw-Dockerfile-with-no-image</td></tr>
+        <tr><td><code>dockerfile</code> (asottile)</td><td>Python (cgo)</td><td>❌ Archived (Jan 2025), wrong ecosystem for a JVM app</td></tr>
+        <tr><td><code>dockerfile-parse</code> (packit)</td><td>Python</td><td>❌ Inactive; regex-based, weaker on heredocs</td></tr>
+        <tr><td>compose-go (embed directly)</td><td>Go library</td><td>❌ Redundant — already reachable via <code>compose config</code> on every host</td></tr>
+      </tbody>
+    </table></div>
+    <p><b>Extracted field → consumer:</b> bind/volume <code>Source</code> → disk probing · <code>working_dir</code> label
+    → app-folder mapping · <code>EXPOSE</code>/published ports → discovery correlation · image tag → service
+    fingerprinting · <code>Config.Env</code> (<code>PGDATA</code>, <code>MYSQL_DATADIR</code>) → override catalog defaults
+    <em>before</em> trusting them · compose project name → groups N containers into one context.</p>
+  </div>
+  </details>
+
+  <details><summary>Evidence — common-service default-folder catalog (Debian/Ubuntu family)</summary>
+  <div class="body">
+    <p>Usage rule: <b>fingerprint → catalog → verify</b>. The image tag or process/unit selects the row; env overrides
+    are checked before the default; for dockerized rows, translate the container-side path through <code>Mounts[]</code>
+    to find where the bytes really live.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Service</th><th>Config</th><th>Data</th><th>Log</th><th>Port</th><th>Detect-by</th></tr></thead>
+      <tbody>
+        <tr><td><b>nginx</b></td><td><code>/etc/nginx/</code> + <code>sites-available/</code> ⇄ <code>sites-enabled/</code> (symlink = enabled)</td><td><code>/var/www/</code>; real roots from <code>nginx -T</code></td><td><code>/var/log/nginx/</code>; docker → <code>docker logs</code></td><td>80/443</td><td>proc <code>nginx: master</code>; image <code>nginx*</code></td></tr>
+        <tr><td><b>postgres</b></td><td>Debian <code>/etc/postgresql/&lt;v&gt;/…</code>; docker → in <code>$PGDATA</code></td><td><code>/var/lib/postgresql/&lt;v&gt;/</code>; docker <code>/var/lib/postgresql/data</code> (honor <code>PGDATA</code>)</td><td><code>/var/log/postgresql/</code></td><td>5432</td><td>unit <code>postgresql@…</code>; env <code>POSTGRES_*</code></td></tr>
+        <tr><td><b>mysql</b></td><td><code>/etc/mysql/</code></td><td><code>/var/lib/mysql/</code></td><td><code>/var/log/mysql/</code></td><td>3306</td><td>proc <code>mysqld</code>; image <code>mysql*</code></td></tr>
+        <tr><td><b>mariadb</b></td><td><code>/etc/mysql/mariadb.conf.d/</code></td><td><code>/var/lib/mysql/</code></td><td><code>/var/log/mysql/</code></td><td>3306</td><td>proc <code>mariadbd</code> (vs mysqld); image <code>mariadb*</code></td></tr>
+        <tr><td><b>mongodb</b> <span class="pill">near-future</span></td><td><code>/etc/mongod.conf</code></td><td><code>/var/lib/mongodb/</code>; docker <code>/data/db</code></td><td><code>/var/log/mongodb/</code></td><td>27017</td><td>proc <code>mongod</code>; template for redis etc.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Per the operator's rule: a <b>dockerized</b> DB shares its <em>compose project's</em> context; a
+    <b>standalone</b> DB is its own context.</p>
+  </div>
+  </details>
+
+  <!-- ============ DESIGN CALLS ============ -->
+  <h2 id="dec"><span class="n">◆</span>The calls you actually have to make</h2>
+  <p>Almost everything above is mechanism — determined by Linux, not by preference. These few are genuine choices the
+  model has to commit to. They are decisions, not facts, so they're carried into a companion
+  <a class="src" href="./lightweight-app-model-decide.html"><b>decision surface&nbsp;↗</b></a> where you can weigh the
+  evidence, pick, and emit an execution prompt; here they're only surfaced.</p>
+
+  <div class="decision"><details><summary>Symlink identity — key on the resolved path, or the logical one? <span class="rec">rec: logical for deploy-symlinks, physical otherwise</span></summary>
+  <div class="body"><p>Keying on the <em>resolved</em> path collapses aliases correctly but makes a
+  <code>current</code>→<code>releases/&lt;ts&gt;</code> deploy fork a brand-new context every release. Keying on the
+  <em>logical</em> path stays stable but won't dedup two links to the same file. The proposed split — dedup on physical,
+  display logical, and <em>promote</em> to logical when the physical matches <code>*/releases/*</code>
+  <code>*/versions/*</code> — is a real behavioural commitment, not a mechanism. This is the one token with the widest
+  downstream blast radius.</p></div></details></div>
+
+  <div class="decision"><details><summary>How far the wrapper rule hops — one, or bounded-two? <span class="rec">rec: one by default, two only gated on a marker file</span></summary>
+  <div class="body"><p>A single hop is safe but leaves <code>backend/scripts/run.sh</code> at <code>backend</code>,
+  not the repo root. The bounded double hop reaches the repo root but risks over-grouping independent deployables in a
+  monorepo. The operator's own <code>frontend/backend</code> instruction <em>wants</em> the merge — so the default is
+  chosen, but "monorepos group at their git root" must be documented as intended behaviour.</p></div></details></div>
+
+  <div class="decision"><details><summary>Privilege posture — require sudo, or degrade gracefully? <span class="rec">rec: degrade, and label every degraded number</span></summary>
+  <div class="body"><p>~80% of the map is unprivileged. The commitment is that a sudo-less deployment returns
+  <em>partial, labelled</em> data — RSS instead of PSS, cgroup instead of per-PID, <code>permission-denied</code> instead
+  of a fake <code>0</code>, <code>confidence=low</code> on procfs-denied mappings — rather than demanding root. "No PID"
+  must never be silently read as "no process".</p></div></details></div>
+
+  <div class="decision"><details><summary>Non-listening apps — in scope, or ports-and-docker only? <span class="rec">rec: in scope — the ps/systemd/cron sweep is mandatory</span></summary>
+  <div class="body"><p>If discovery is only ports+docker, every queue worker, cron job, and batch script is invisible.
+  The complementary <code>systemctl list-units --state=running</code> + cron enumeration + <code>ps -eo args</code>
+  interpreter scan is what makes the map complete; those apps emit the same record with an empty port list.</p></div></details></div>
+
+  <!-- ============ DEPS ============ -->
+  <h2 id="deps"><span class="n">◆</span>Dependencies — what this actually needs installed</h2>
+  <ul class="tight">
+    <li><b>On the target host:</b> nothing beyond a standard modern Linux — <code>ss</code>/iproute2, coreutils,
+    procps, cgroup v2. The raw-<code>/proc</code> fallbacks need only <code>sh</code>/<code>ls</code>/<code>grep</code>,
+    so even minimal/embedded hosts degrade rather than fail.</li>
+    <li><b>The Docker CLI already on the host</b> — the <em>only</em> "processor" adopted. Covers Dockerfile-derived
+    metadata (via <code>docker image inspect</code>) and compose canonicalization (via the embedded compose-go) with
+    zero code to maintain.</li>
+    <li><b>A JSON parser we already have</b> (Jackson) to consume inspect output — pin on the stable inspect fields, no
+    schema library.</li>
+    <li><b>Explicitly rejected:</b> <code>dockerfile</code> (archived), <code>dockerfile-parse</code> (inactive),
+    embedding compose-go directly (wrong ecosystem, already reachable via the CLI). Building our own Dockerfile parser
+    is unnecessary.</li>
+  </ul>
+
+  <hr>
+  <p class="footnote">Read-only synthesis of four Linux-systems investigations — discovery, mapping, resource
+  probing, and the Docker/common-service layer — deliberately scoped to a clean-slate model and independent of
+  compute-admin's current specs and code. Every command shown is a probe run over SSH; nothing here mutates a target.
+  Where a choice (not a fact) surfaced, it is flagged under <a class="src" href="#dec">Design calls</a> for a
+  <code>decide</code> pass, not settled here.</p>
+
+</main>
+<script>
+  function allDetails(open){ document.querySelectorAll('details').forEach(function(d){ d.open=open; }); }
+</script>
+</body></html>
