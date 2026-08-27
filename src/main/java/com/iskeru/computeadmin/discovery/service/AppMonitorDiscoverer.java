@@ -166,9 +166,10 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             return List.of();
         }
 
-        // Route each classified app into its family's pre-fill list. LinkedHashMap so
-        // the springboot/fastapi/generic recipes propose in a stable order.
-        Map<Family, List<AppPortItem>> byFamily = new LinkedHashMap<>();
+        // Classify each app and map it to its owning context (spec-055). Two passes: first
+        // resolve every listener, then group by contextKey so a context can enumerate the
+        // sibling app-scripts collapsing to it (grouping metadata only, spec-055 D4).
+        List<Resolved> resolved = new ArrayList<>();
         boolean prometheus = false;
         for (Listener listener : listeners) {
             String cmdline = cmdline(session, listener.pid());
@@ -182,11 +183,40 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 family = Family.HTTP;
             }
             String appName = appName(family, listener, cmdline, container, session);
-            byFamily.computeIfAbsent(family, f -> new ArrayList<>())
-                    .add(new AppPortItem(appName, listener.port(), runtime.label));
+            // cgroup-before-cwd guard (spec-055 / 054): a DOCKER PID's /proc/<pid>/cwd is an
+            // overlayfs path, not a host context — never map it. Docker contexts come from
+            // `docker inspect` (056). Only PROCESS/SYSTEMD runtimes feed ContextMapper.
+            ContextMapper.Context context = runtime == Runtime.DOCKER
+                    ? null : resolveContext(session, listener.pid());
+            resolved.add(new Resolved(family, appName, listener.port(), runtime.label, context));
             if (family == Family.FASTAPI && respondsToMetrics(session, listener.port())) {
                 prometheus = true;
             }
+        }
+
+        // Sibling enumeration (spec-055 D4): the app-scripts that resolve to one context,
+        // grouped under its identity key. Distinct, in first-seen order.
+        Map<String, List<String>> siblingsByContext = new LinkedHashMap<>();
+        for (Resolved r : resolved) {
+            if (r.context() != null) {
+                siblingsByContext.computeIfAbsent(r.context().key(), k -> new ArrayList<>());
+                List<String> group = siblingsByContext.get(r.context().key());
+                if (!group.contains(r.appName())) {
+                    group.add(r.appName());
+                }
+            }
+        }
+
+        // Route each mapped app into its family's pre-fill list. LinkedHashMap so
+        // the springboot/fastapi/generic recipes propose in a stable order.
+        Map<Family, List<AppPortItem>> byFamily = new LinkedHashMap<>();
+        for (Resolved r : resolved) {
+            AppPortItem item = r.context() == null
+                    ? new AppPortItem(r.appName(), r.port(), r.runtime())
+                    : new AppPortItem(r.appName(), r.port(), r.runtime(),
+                    r.context().scriptFolder(), r.context().key(), r.context().display(),
+                    siblingsByContext.getOrDefault(r.context().key(), List.of()));
+            byFamily.computeIfAbsent(r.family(), f -> new ArrayList<>()).add(item);
         }
 
         List<ProposedRecipe> proposals = new ArrayList<>();
@@ -405,16 +435,61 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         return jar.find() ? jar.group(1) : null;
     }
 
-    /** Basename of {@code /proc/<pid>/cwd} (the deploy dir), or null. */
+    /** Basename of {@code /proc/<pid>/cwd} (the deploy dir), or null. Name-derivation still
+     * reads the basename (spec-055 D5: basename is the identity seed); the full logical path
+     * feeds {@link ContextMapper}. */
     private String deployDirName(SshSession session, String pid) {
+        String path = cwdPath(session, pid);
+        if (path == null) {
+            return null;
+        }
+        int slash = path.lastIndexOf('/');
+        String base = slash >= 0 ? path.substring(slash + 1) : path;
+        return base.isEmpty() ? null : base;
+    }
+
+    // --- context mapping (spec-055) -----------------------------------------
+
+    /**
+     * Maps a PROCESS/SYSTEMD listener to its owning context via {@link ContextMapper}, using
+     * the app-script's <em>full logical</em> {@code cwd} and its resolved <em>physical</em>
+     * path. Both reads are fixed-argv, read-only, no-sudo ({@code readlink}); the marker-file
+     * probe for the second wrapper hop is supplied lazily so it only runs when a hop is
+     * actually being weighed. Returns {@code null} when the {@code cwd} is unreadable.
+     */
+    private ContextMapper.Context resolveContext(SshSession session, String pid) {
+        String logical = cwdPath(session, pid);
+        if (logical == null) {
+            return null;
+        }
+        String physical = realCwdPath(session, pid);
+        return ContextMapper.resolveContext(logical, physical, dir -> hasMarkerFile(session, dir));
+    }
+
+    /** The full logical {@code readlink /proc/<pid>/cwd}, or null. */
+    private String cwdPath(SshSession session, String pid) {
         List<String> out = Probes.lines(session, List.of("readlink", "/proc/" + pid + "/cwd"));
         if (out.isEmpty()) {
             return null;
         }
         String path = out.get(0).trim();
-        int slash = path.lastIndexOf('/');
-        String base = slash >= 0 ? path.substring(slash + 1) : path;
-        return base.isEmpty() ? null : base;
+        return path.isEmpty() ? null : path;
+    }
+
+    /** The resolved physical {@code readlink -f /proc/<pid>/cwd} (dedup key, D1), or null. */
+    private String realCwdPath(SshSession session, String pid) {
+        List<String> out = Probes.lines(session, List.of("readlink", "-f", "/proc/" + pid + "/cwd"));
+        if (out.isEmpty()) {
+            return null;
+        }
+        String path = out.get(0).trim();
+        return path.isEmpty() ? null : path;
+    }
+
+    /** Whether {@code dir} carries any {@link ContextMapper#markerFiles() marker file} ({@code ls -a}). */
+    private boolean hasMarkerFile(SshSession session, String dir) {
+        List<String> entries = Probes.lines(session, List.of("ls", "-a", dir));
+        return entries.stream().anyMatch(ContextMapper.markerFiles()::contains);
     }
 
     /**
@@ -569,5 +644,13 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
 
     /** One listening socket: its port, owning PID, and process name (login user only). */
     private record Listener(int port, String pid, String process) {
+    }
+
+    /**
+     * A classified listener with its resolved {@link ContextMapper.Context} (spec-055);
+     * {@code context} is {@code null} for a docker-overlayfs app (mapped by 056 instead).
+     */
+    private record Resolved(Family family, String appName, int port, String runtime,
+                            ContextMapper.Context context) {
     }
 }

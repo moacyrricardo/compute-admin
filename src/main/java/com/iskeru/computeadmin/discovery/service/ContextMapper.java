@@ -21,8 +21,8 @@ import java.util.function.Predicate;
  * <p><strong>D1 — the identity key.</strong> Two contexts are the same iff their resolved
  * <em>physical</em> path is equal, so the key defaults to the physical context path; the
  * <em>logical</em> path is what the UI displays. When the physical path is a
- * {@code */releases/*} | {@code */versions/*} deploy (an atomic-symlink redeploy), the key
- * is <strong>promoted to the logical path</strong> so {@code current → releases/<ts>} does
+ * {@code .../releases/...} or {@code .../versions/...} deploy (an atomic-symlink redeploy),
+ * the key is <strong>promoted to the logical path</strong> so {@code current -> releases/<ts>} does
  * not fork a new context on every redeploy (the spec-015 redeploy-stability rider).
  *
  * <p>The {@link Context#key()} is treated as <strong>S9-secret</strong>: it never crosses
