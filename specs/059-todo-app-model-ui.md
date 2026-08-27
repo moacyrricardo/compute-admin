@@ -102,7 +102,13 @@ render **below it** a context-grouped list built from the discovery result 056 p
   (whatever fields 055/056 land on the `app_port_list`/proposal JSON that
   `GET /machines/<id>/discovery` or the discover POST returns). Per-context footprint is **not** on
   this channel — it is a monitor-poll product (Surface 2), so it does not appear on discovery cards.
-  059 **only reads** these; it does not define them (055/056 own the shape).
+  059 **only reads** these; it does not define them (055/056 own the shape). **Action rows are sourced
+  separately, from the recipes channel — not the discovery channel:** the proposed recipes/actions
+  (carrying `rid`/`aid` and `approvalState:PENDING_APPROVAL`) already arrive on the existing recipe
+  channel (`data.groups`, rendered today by the recipe list), whereas `GET /machines/<id>/discovery`
+  returns only `{families}`. Surface 1 **re-groups `data.groups` by the 055/056 context fields** to
+  attach each action row to its context card — no new endpoint, and no action payload added to the
+  discovery channel.
 - **Context card.** One card per context, reusing `.card` + `.section` scaffolding. Header: the
   logical path via a mono label (reuse the mono/`.crumbs` idiom, `app.js` `crumbs` ~:276) and the
   source note as a dim sub-line (`.page-head .sub` styling). **No footprint badge row here** —
@@ -160,7 +166,7 @@ on the machine-detail screen, rather than the family-flat list. Reuse `.card`, `
 Every rule goes through existing tokens (`tokens.css`) and existing component classes
 (`app.css`): `.card`, `.section`, `.filter-chips`/`.tag--filter`, `.tag`, `.chip--{ok,warn,bad,info,neutral}`,
 `.meter`/`.axis-track`/`.axis-seg`/`.axis-seg--free`, `.legend*`, `.drawer`/`.drawer-backdrop`,
-`.app-cards`/`.app-card`, the spec-043 tablet breakpoint (`.shell` collapse ≤720px, `#nav-toggle`)
+`.app-cards`/`.app-card`, the spec-043 tablet breakpoint (`.shell` collapse ≤720px, `.nav-toggle`)
 and the ≤480px bottom-sheet drawer. New CSS is limited to context-card layout (path/source-note/
 badge-row/script-list); it must define no new colour outside the token set and add no inline styles
 beyond the dynamically-sized segment widths the monitor already uses. The mockup's `.dbadge`,
