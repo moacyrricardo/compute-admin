@@ -50,6 +50,24 @@ public class ParamBinder {
     public static final String PORT_COMPONENT = "port";
 
     /**
+     * The per-context <strong>app-folder</strong> component a footprint probe binds per item
+     * (spec-057): the resolved context path the disk {@code du} probe walks. Unlike
+     * {@code app-name}/{@code port} it is <strong>never supplied by the caller</strong> — the
+     * run path enriches it server-side from the recipe's un-audited {@code app_port_list}
+     * side-data (the S9-secret {@code contextKey}), so the path is never a LITERAL argToken,
+     * never in the action snapshot hash, and never crosses the MCP surface. It is still
+     * validated here so it can never widen the S4 surface even if the stored side-data were
+     * tampered: an <strong>absolute</strong> path over a fixed, shell-safe charset (no
+     * whitespace, quotes, {@code $}, backticks, {@code ;}, {@code &}, {@code |}, {@code *},
+     * {@code ~} …), so each element single-quotes cleanly into the one shell line {@code exec}
+     * runs.
+     */
+    public static final String APP_FOLDER_COMPONENT = "app-folder";
+
+    /** The anchored, shell-safe charset for an {@link #APP_FOLDER_COMPONENT} value (spec-057). */
+    public static final String APP_FOLDER_PATTERN = "/[A-Za-z0-9._/+@%:-]{0,511}";
+
+    /**
      * Validates {@code params} against the action's schema and returns the bound
      * argv (sudo-prefixed when required).
      *
@@ -122,9 +140,14 @@ public class ParamBinder {
         return false;
     }
 
-    /** Whether {@code name} is one of the two fan-out item component names (spec-022). */
+    /**
+     * Whether {@code name} is a fan-out item component a template may reference: the two
+     * scalar {@code app-name}/{@code port} components (spec-022) or the {@code app-folder}
+     * footprint component (spec-057). Each is validated against its own fixed rule.
+     */
     public static boolean isAppPortComponent(String name) {
-        return APP_NAME_COMPONENT.equals(name) || PORT_COMPONENT.equals(name);
+        return APP_NAME_COMPONENT.equals(name) || PORT_COMPONENT.equals(name)
+                || APP_FOLDER_COMPONENT.equals(name);
     }
 
     /**
@@ -182,6 +205,11 @@ public class ParamBinder {
             if (!Pattern.matches(APP_NAME_PATTERN, value)) {
                 throw new ParamValidationException(
                         "app-name '" + value + "' is not a valid app identifier");
+            }
+        } else if (APP_FOLDER_COMPONENT.equals(component)) {
+            if (!Pattern.matches(APP_FOLDER_PATTERN, value)) {
+                throw new ParamValidationException(
+                        "app-folder '" + value + "' is not a valid absolute path");
             }
         } else if (PORT_COMPONENT.equals(component)) {
             int parsed;
