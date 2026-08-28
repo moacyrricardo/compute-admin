@@ -350,6 +350,41 @@ class AppMonitorDiscovererTest {
     }
 
     @Test
+    void discover_CpuRateProbe_SamplesTwiceInOneExecAndParsesPastTheComm() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction cpu = action(springboot, "cpu");
+
+        String script = scriptOf(cpu);
+        // Decision 3: the RATE is Δ(utime+stime) sampled TWICE inside ONE ssh exec, a measured
+        // Δt apart — two sample blocks (## s0 / ## s1) bracketing a single sleep, with t0/t1
+        // timestamps so the client divides by the REAL Δt (not the nominal sleep).
+        assertThat(script).contains("## s0").contains("## s1").contains("sleep 4")
+                .contains("t0=").contains("t1=");
+        // Fields 14+15 (utime+stime) and 22 (starttime) are read AFTER the last ") ", so a comm
+        // containing spaces/parens never shifts the columns (the awk index($0,") ") split).
+        assertThat(script).contains("index($0,\") \")").contains("starttime=");
+    }
+
+    @Test
+    void discover_DiskProbe_ExcludesUnderMountsAndDegradesToLowerBoundOnTimeout() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction disk = action(springboot, "disk");
+
+        String script = scriptOf(disk);
+        // Decision 1 double-count rule: every mount source UNDER the app-folder is enumerated
+        // from findmnt TARGETs and added as an explicit --exclude, so an under-mount's bytes are
+        // counted at most once (and -x already keeps the walk on the app-folder's own fs).
+        assertThat(script).contains("findmnt -rno TARGET").contains("\"^$dir/\"")
+                .contains("--exclude=");
+        // Decision 6 degrade-and-label for disk: on a du timeout it emits a low-confidence marker
+        // and falls back to a per-child --max-depth=1 sum (a labelled LOWER bound), never failing.
+        assertThat(script).contains("disk_confidence=low").contains("du-timeout")
+                .contains("--max-depth=1");
+    }
+
+    @Test
     void discover_SudoReprobes_AreSudoGatedVariantsOfTheRamAndDiskProbes() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
         ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
