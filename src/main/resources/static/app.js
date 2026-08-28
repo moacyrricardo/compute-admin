@@ -2511,12 +2511,55 @@
     return h("div", { class: "legend" }, consumers.map(function (c) {
       var dot = h("span", { class: "legend-dot" });
       dot.style.background = consumerColorVar(c);
+      // spec-059: a legend chip whose RAM or Disk axis is a bounded estimate carries a
+      // small "est." tag, so the confidence caveat rides the labelled legend too (WCAG AA).
+      var lowMark = (axisLow(c, "ram") || axisLow(c, "disk"))
+        ? h("span", { class: "tag tag--low lg-low", title: "One or more axes are a bounded estimate (spec-057).", text: "est." })
+        : null;
       return h("button", { type: "button", class: "legend-chip", "data-cid": c.id,
         title: "Open " + c.name, onclick: function () { onOpen(c.id); } },
         dot,
         h("span", { text: c.name }),
-        h("span", { class: "lg-pct", text: pctText(c.ram) + " · " + pctText(c.cpu) + " · " + pctText(c.disk) }));
+        h("span", { class: "lg-pct", text: pctText(c.ram) + " · " + pctText(c.cpu) + " · " + pctText(c.disk) }),
+        lowMark);
     }));
+  }
+
+  /**
+   * spec-059 degrade-and-label: a footprint axis whose spec-057 probe fell back to a
+   * bounded estimate carries a low-confidence flag on the consumer — RAM's `_ramLow`
+   * (VmRSS upper bound when procfs denied a PSS read) and Disk's `_diskLow` (a
+   * `du --max-depth=1` lower bound when the full walk timed out). CPU has no fallback
+   * kind, so no low flag. Returns true only for a KNOWN axis value that is bounded.
+   */
+  function axisLow(consumer, key) {
+    return (key === "ram" && consumer._ramLow === true)
+      || (key === "disk" && consumer._diskLow === true);
+  }
+
+  /** The human note for a bounded axis — a label, never colour alone (WCAG AA). */
+  function axisConfText(key) {
+    return key === "ram"
+      ? "≈ RSS upper bound — procfs denied a PSS read"
+      : "≈ du lower bound — the disk walk timed out";
+  }
+
+  /**
+   * spec-059: a consumer axis rendered as the reused .meter, with the spec-057
+   * degrade-and-label confidence note appended when the axis value is a bounded
+   * estimate (`_ramLow`/`_diskLow`). The note is text — so the caveat is never
+   * signalled by colour alone. A precise (un-flagged) reading renders the bare meter.
+   */
+  function confMeter(label, consumer, sub) {
+    var key = label.toLowerCase();
+    var el = meter(label, consumer[key], sub);
+    if (consumer[key] != null && axisLow(consumer, key)) {
+      el.appendChild(h("div", { class: "meter-conf",
+        title: "Degrade-and-label (spec-057): a bounded fallback reading, not an exact figure." },
+        h("span", { class: "tag tag--low", text: "low confidence" }),
+        h("span", { class: "meter-conf-note", text: axisConfText(key) })));
+    }
+    return el;
   }
 
   /**
@@ -2524,7 +2567,7 @@
    * (RAM carries its RSS as the sub-line); a null value renders — with an honest
    * note: an axis with no approved monitor says so, everything else is simply
    * "no data" yet. (spec-057 fills the native disk axis via the du probe, so it is
-   * no longer permanently "n/a"; its rich confidence surface is spec-059's.)
+   * no longer permanently "n/a"; spec-059 renders its degrade-and-label confidence.)
    */
   function consumerAxis(label, consumer) {
     var key = label.toLowerCase();
@@ -2538,7 +2581,7 @@
         h("div", { class: "meter-sub mono", text: note }));
     }
     var sub = (key === "ram" && consumer._rssMb != null) ? (mibText(consumer._rssMb) + " RSS") : null;
-    return meter(label, pct, sub);
+    return confMeter(label, consumer, sub);
   }
 
   /**
@@ -2930,7 +2973,7 @@
             h("span", { class: "meter-val mono", text: "—" })),
           h("div", { class: "meter-sub mono",
             text: c.source === "DOCKER" ? "n/a" : "native process — no attributable disk footprint" }))
-      : meter("Disk", c.disk);
+      : confMeter("Disk", c);
     var owner = c.role === "DATABASE"
       ? (c.dedication === "SHARED"
           ? h("dl", { class: "kv mt-2" }, h("dt", { text: "used by" }),
@@ -2965,7 +3008,9 @@
         h("button", { class: "btn btn--sm", onclick: closeDrawer }, "Close")),
       h("div", { class: "row mt-2" }, badges),
       h("p", { class: "small dim mt-2", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
-      h("div", { class: "d-axes mt-4" }, meter("RAM", c.ram), meter("CPU", c.cpu), diskMeter),
+      h("div", { class: "d-axes mt-4" },
+        confMeter("RAM", c, (c._rssMb != null ? mibText(c._rssMb) + " RSS" : null)),
+        meter("CPU", c.cpu), diskMeter),
       otherNote, owner, services, probes, compose);
     var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
       if (e.target === backdrop) closeDrawer();

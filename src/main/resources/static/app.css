@@ -538,6 +538,14 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 .meter-fill--red   { background: var(--s-bad); }
 .meter-fill--none  { background: var(--s-neutral); }
 .meter-sub { margin-top: var(--sp-1); font-size: var(--fs-xs); color: var(--text-faint); }
+
+/* spec-059 degrade-and-label: a bounded (spec-057 fallback) footprint reading carries a
+   text caveat under its axis meter — never colour alone (WCAG AA). Reuses the amber warn
+   token; no new colour outside the token set. */
+.meter-conf { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-1); }
+.meter-conf-note { font-size: var(--fs-xs); color: var(--text-faint); }
+.tag--low { color: var(--s-warn); border-color: var(--s-warn); }
+.lg-low { margin-left: var(--sp-1); }
 @media (prefers-reduced-motion: no-preference) {
   .meter-fill { transition: width 0.3s ease; }
 }
