@@ -63,7 +63,16 @@ class DockerComposeDiscovererTest {
 
         ProposedRecipe orders = recipe(recipes, "orders");
         assertThat(orders.type()).isEqualTo(RecipeType.MONITOR);
-        assertThat(orders.appPortList()).isEmpty();
+        // spec-061: a docker recipe now also carries an appPortList. These PS rows carry no `ID`,
+        // so `docker inspect` never fires — each member degrades to one portless sentinel item
+        // keyed to the project's synthetic context (no ports/scriptFolder to claim).
+        assertThat(orders.appPortList()).extracting(AppPortItem::appName)
+                .containsExactly("orders-web-1", "orders-db-1");
+        assertThat(orders.appPortList()).allSatisfy(item -> {
+            assertThat(item.port()).isZero();
+            assertThat(item.runtime()).isEqualTo("docker");
+            assertThat(item.contextKey()).isEqualTo("compose:orders");
+        });
         assertThat(orders.actions()).extracting(ProposedAction::name)
                 .containsExactly("docker stats", "docker disk", "docker volumes");
 
