@@ -1,6 +1,6 @@
 # 062 — Native /proc/net/tcp port fallback + fd-inode PID join
 
-**Status:** todo · Linear [BOL-891](https://linear.app/iskeru/issue/BOL-891) · build branch `moacyrricardo/bol-891-cpt-062-proc-net-port-fallback`. **Blocked by 056 (BOL-885).**
+**Status:** done · Linear [BOL-891](https://linear.app/iskeru/issue/BOL-891) · Branch `moacyrricardo/bol-891-cpt-062-proc-net-port-fallback`. **Blocked by 056 (BOL-885).**
 
 ## Context
 
@@ -230,3 +230,38 @@ Changes around it:
   (not a boundary root) still maps from cwd; widening the heuristic waits for field evidence.
 - **Interpreter PATH resolution** (`node server` where `server` resolves via `$PATH`, `python -c`
   inline code) is out; only cwd-relative file arguments are recovered.
+
+## Implementation Notes
+
+Built on branch `moacyrricardo/bol-891-cpt-062-proc-net-port-fallback` (stacked on the 061/062
+planning branch #82). All code lands in `discovery/service/AppMonitorDiscoverer.java` plus a pure
+helper in `ServiceCatalog.java`; no migration, no MCP-surface change. Five focused commits (fallback
+core, `exe` signal, nginx `-T`, relative interpreter scripts, then the 13 regression tests). Full
+suite 328 green.
+
+How the implementation differed from / sharpened the spec:
+
+- **`Listener` gained an `addr` field.** The record was `(port, pid, process)`; reconciliation
+  keys on `(local_address, port)`, so it is now `(addr, port, pid, process)` with `pid`/`process`
+  nullable and a `key()` = `addr + "|" + port`. `parseSs`/`parseNetstat` extract the local address
+  (via `localEndpoint` + `canonAddr`, which folds `*`/`[::]` to the any-bind form so `ss` and the
+  `/proc/net` hex decode compare equal).
+- **Cross-channel suppression is realised through PID attribution, not a port-0 claim.** systemd/
+  interpreter/cron records carry the sentinel port 0, so they cannot own a real `(addr, port)`. The
+  spec's "a systemd-found root service is never doubled" is honoured the only cheaply-knowable way:
+  the fallback join upgrades the listener to *attributed*, it fingerprints, and the existing
+  PID-dedup drops the unit. A root service whose PID stays unrecoverable remains a single
+  low-confidence card — exactly the "Unclaimed loopback daemons" Known Gap. The classify-stage
+  `claimedKeys` `(addr, port)` check is retained as defensive belt-and-suspenders, since
+  `mergeFallback` already enforces `(addr, port)` uniqueness with attributed-wins.
+- **A fallback-attributed listener has no process name** (the fallback yields only a PID), so a
+  GENERIC record recovered purely from `/proc/net` is named `app-<port>`; classification and
+  fingerprinting still run off its cmdline. Named apps come from `ss`/`netstat` attribution.
+- **The nginx `-T` parse (`modalNginxRoot`) lives in `ServiceCatalog`** as a pure static helper
+  (quote strip + `$`-variable/stock-default filtering + modal pick), invoked from
+  `verifiedDataDir`; `ServiceCatalog.Service` itself is untouched, as the spec required.
+- **IPv6 decode** byte-reverses each 32-bit `/proc/net/tcp6` word and `::`-compresses, matching the
+  `ss` `[::]` canonicalisation for the any-bind case; non-loopback IPv6 recovery is best-effort
+  (TCP-only remains a stated gap).
+- **Note for the merge with spec 061:** 061 (the sibling off #82) also touches `ServiceCatalog`; a
+  small reconciliation is expected when both land.
