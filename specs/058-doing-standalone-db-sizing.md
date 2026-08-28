@@ -1,6 +1,6 @@
 # 058 — Standalone database sizing
 
-**Status:** todo · Linear [BOL-887](https://linear.app/iskeru/issue/BOL-887) · build branch `moacyrricardo/bol-887-cpt-058-standalone-database-sizing`. **Blocked by 057 (BOL-886).**
+**Status:** doing · Linear [BOL-887](https://linear.app/iskeru/issue/BOL-887) · build branch `moacyrricardo/bol-887-cpt-058-standalone-database-sizing`. **Blocked by 057 (BOL-886)** — satisfied (built on the 057+061+062 integration branch).
 
 ## Context
 
