@@ -1,6 +1,6 @@
 # 061 — Docker-branch discovery enrichment
 
-**Status:** todo · Linear [BOL-890](https://linear.app/iskeru/issue/BOL-890) · build branch `moacyrricardo/bol-890-cpt-061-docker-discovery-enrichment`. **Blocked by 056 (BOL-885).**
+**Status:** doing · Linear [BOL-890](https://linear.app/iskeru/issue/BOL-890) · Branch `moacyrricardo/bol-890-cpt-061-docker-discovery-enrichment`. **Blocked by 056 (BOL-885).**
 
 ## Context
 
