@@ -1,6 +1,6 @@
 # 062 — Native /proc/net/tcp port fallback + fd-inode PID join
 
-**Status:** todo · Linear [BOL-891](https://linear.app/iskeru/issue/BOL-891) · build branch `moacyrricardo/bol-891-cpt-062-proc-net-port-fallback`. **Blocked by 056 (BOL-885).**
+**Status:** doing · Linear [BOL-891](https://linear.app/iskeru/issue/BOL-891) · Branch `moacyrricardo/bol-891-cpt-062-proc-net-port-fallback`. **Blocked by 056 (BOL-885).**
 
 ## Context
 
