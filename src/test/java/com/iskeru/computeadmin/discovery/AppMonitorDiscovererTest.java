@@ -311,7 +311,7 @@ class AppMonitorDiscovererTest {
     @Test
     void discover_RamProbe_IsPssSumWithLabelledRssFallback() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         ProposedAction ram = action(springboot, "ram");
 
         // Read-only, login-user, fans out over the port like the other native probes.
@@ -329,7 +329,7 @@ class AppMonitorDiscovererTest {
     @Test
     void discover_DiskProbe_DuOnAppFolder_RootFsBytes_BindsFolderNotPort() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         ProposedAction disk = action(springboot, "disk");
 
         assertThat(disk.sudo()).isFalse();
@@ -352,7 +352,7 @@ class AppMonitorDiscovererTest {
     @Test
     void discover_CpuRateProbe_SamplesTwiceInOneExecAndParsesPastTheComm() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         ProposedAction cpu = action(springboot, "cpu");
 
         String script = scriptOf(cpu);
@@ -369,7 +369,7 @@ class AppMonitorDiscovererTest {
     @Test
     void discover_DiskProbe_ExcludesUnderMountsAndDegradesToLowerBoundOnTimeout() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         ProposedAction disk = action(springboot, "disk");
 
         String script = scriptOf(disk);
@@ -387,7 +387,7 @@ class AppMonitorDiscovererTest {
     @Test
     void discover_SudoReprobes_AreSudoGatedVariantsOfTheRamAndDiskProbes() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         ProposedAction ramSudo = action(springboot, "ram (sudo re-probe)");
         ProposedAction diskSudo = action(springboot, "disk (sudo re-probe)");
 

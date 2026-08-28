@@ -115,7 +115,7 @@ class DockerComposeDiscovererTest {
     @Test
     void discover_DbSizeProbes_ReportLogicalAndPhysicalBytes_ParamFreeReadOnly() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
-        ProposedRecipe orders = recipe(discoverer().discover(machine(), ssh), "orders");
+        ProposedRecipe orders = recipe(discoverer().discover(machine(), ssh.session()), "orders");
         ProposedAction logical = actionOf(orders, "db logical size");
         ProposedAction physical = actionOf(orders, "db physical size");
 
