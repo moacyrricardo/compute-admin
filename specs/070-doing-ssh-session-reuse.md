@@ -1,6 +1,8 @@
 # 070 — SSH session reuse for the discovery probe path
 
-Status: todo
+Status: doing
+Branch: moacyrricardo/bol-899-ssh-session-reuse
+Issue:  BOL-899
 
 ## Context
 
