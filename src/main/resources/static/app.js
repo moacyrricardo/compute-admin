@@ -2733,13 +2733,15 @@
    * %CPU (summed → ÷ the host core count, spec-039) gives the CPU axis, mirroring the
    * docker path's `sumCpu / denom.cores`; liveness/process rolls up to UP/DOWN; each
    * check keeps its responded state (na = did not respond, so it is omitted from the
-   * drawer's probe list — probe honesty, spec-034 §6). Disk stays at its server value
-   * (null against 032 — a native process has no attributable disk). An absent cpu
-   * reading or an unknown `cores` leaves CPU null → — (honesty rule, never a silent 0).
+   * drawer's probe list — probe honesty, spec-034 §6). Disk is the native `du` footprint
+   * (spec-057) over the root-FS denominator — a du-timeout lower bound still fills it but
+   * flags `_diskLow`, mirroring the RAM RSS-fallback's `_ramLow` (059's confidence badge).
+   * An absent cpu reading or an unknown `cores` leaves CPU null → — (honesty rule, never a
+   * silent 0).
    */
   function applyConsumerReading(c, outputs, hostTotal, cores, diskBytes) {
     var livenessUp = null, processUp = null, rssMb = null, pssMb = null, ramLow = false;
-    var cpuRaw = null, duBytes = null, rows = [];
+    var cpuRaw = null, duBytes = null, diskLow = false, rows = [];
     (c.checks || []).forEach(function (chk) {
       var res = outputs && outputs[chk.id] && outputs[chk.id][c.name];
       var kind = checkKind(chk);
@@ -2773,6 +2775,9 @@
           // root-FS denominator docker uses, so it subtracts cleanly from OTHER (spec-041).
           var b = parseDuBytes(res.stdout);
           if (b != null) duBytes = (duBytes == null ? 0 : duBytes) + b;
+          // du-timeout degrade (spec-057 Decision 6): the value is a labelled LOWER bound, so
+          // flag it — the axis still fills, but 059 badges it low, as RAM's RSS fallback is.
+          if (res.stdout && res.stdout.indexOf("disk_confidence=low") >= 0) diskLow = true;
           state = b != null ? "up" : "na";
         } else if (kind === "liveness") {
           livenessUp = res.exit === 0;
@@ -2800,6 +2805,7 @@
     // leave the axis null (—), never a silent 0 that would wrongly shrink OTHER.
     c.cpu = (cpuRaw != null && cores) ? clampPct(Math.round(cpuRaw / cores)) : c.cpu;
     c.disk = (duBytes != null && diskBytes) ? clampPct(Math.round(duBytes / diskBytes * 100)) : c.disk;
+    c._diskLow = diskLow;
   }
 
   // ---- docker consumer poll (spec-037) -------------------------------------

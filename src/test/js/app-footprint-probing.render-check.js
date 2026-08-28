@@ -107,6 +107,13 @@ const dc = ca.buildConsumers(diskMachine)[0];
 const DENOM = 100 * 1024 * 1024 * 1024; // 100 GiB root FS
 ca.applyConsumerReading(dc, { disk1: { orders: { stdout: "du_bytes=" + (20 * 1024 * 1024 * 1024) + "\n", exit: 0 } } }, 8000, 4, DENOM);
 assert(dc.disk === 20, "native disk = 20 GiB / 100 GiB = 20%, got " + dc.disk);
+assert(dc._diskLow === false, "a full du reading is not flagged low");
+// A du-timeout degrade fills the axis from the lower bound AND flags _diskLow (parity with the
+// RAM RSS-fallback's _ramLow) so 059 can badge it — Decision 6 degrade-and-label for disk.
+const dcLow = ca.buildConsumers(diskMachine)[0];
+ca.applyConsumerReading(dcLow, { disk1: { orders: { stdout: "disk_confidence=low reason=du-timeout\ndu_bytes=" + (10 * 1024 * 1024 * 1024) + "\n", exit: 0 } } }, 8000, 4, DENOM);
+assert(dcLow.disk === 10, "du-timeout lower bound still fills disk (10 GiB / 100 GiB = 10%), got " + dcLow.disk);
+assert(dcLow._diskLow === true, "a du-timeout lower bound must be flagged _diskLow for the 059 badge");
 const other = ca.computeOther("m2", { ram: null, cpu: null, disk: 70 }, [dc]);
 assert(other.disk === 50, "OTHER disk must be host 70% − native 20% = 50% (auto-subtract), got " + other.disk);
 
