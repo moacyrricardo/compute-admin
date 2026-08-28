@@ -68,6 +68,58 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
     private static final String PROJECT_LABEL = "com.docker.compose.project";
     private static final String SERVICE_LABEL = "com.docker.compose.service";
 
+    /**
+     * The fixed <strong>docker DB logical-size</strong> probe (spec-057 Decision 4, medium
+     * tier): for every running datastore container emit {@code logicalBytes} — the served size.
+     * Postgres via {@code pg_database_size()} summed over databases; MySQL via the {@code
+     * information_schema} sum with {@code information_schema_stats_expiry=0} so it is served
+     * fresh, not cached. Credentials come from the container's own environment ({@code printenv
+     * POSTGRES_USER} / {@code MYSQL_ROOT_PASSWORD} carried via {@code MYSQL_PWD} so no password
+     * reaches an argv). A <strong>constant, param-free</strong> {@code sh -c} string with no
+     * bound input (trivially S4-safe), read-only queries only. Paired with the physical probe
+     * below; the {@code logical}↔{@code physical} gap is signal (WAL/bloat). Docker-hosted
+     * engines only — the standalone (host-side) case is spec-058.
+     */
+    static final String DB_LOGICAL_SIZE_SCRIPT = String.join("\n",
+            "x(){ docker exec \"$cid\" \"$@\"; }",
+            "for cid in $(docker ps -q 2>/dev/null); do",
+            "  img=$(docker inspect -f '{{.Config.Image}}' \"$cid\" 2>/dev/null)",
+            "  nm=$(docker inspect -f '{{.Name}}' \"$cid\" 2>/dev/null | sed 's#^/##')",
+            "  case \"$img\" in",
+            "    *postgres*|*postgresql*)",
+            "      u=$(x printenv POSTGRES_USER 2>/dev/null); [ -z \"$u\" ] && u=postgres",
+            "      lb=$(x psql -U \"$u\" -tAc"
+                    + " 'SELECT COALESCE(sum(pg_database_size(datname)),0) FROM pg_database'"
+                    + " 2>/dev/null | tr -d ' \\n') ;;",
+            "    *mysql*|*mariadb*|*percona*)",
+            "      pw=$(x printenv MYSQL_ROOT_PASSWORD 2>/dev/null)",
+            "      lb=$(x sh -c"
+                    + " \"MYSQL_PWD='$pw' mysql -uroot -N -e 'SET SESSION information_schema_stats_expiry=0;"
+                    + "SELECT COALESCE(sum(data_length+index_length),0) FROM information_schema.tables'\""
+                    + " 2>/dev/null | tr -d ' \\n') ;;",
+            "    *) continue ;;",
+            "  esac",
+            "  [ -n \"$lb\" ] && echo \"container=$nm logicalBytes=$lb\"",
+            "done");
+
+    /**
+     * The fixed <strong>docker DB physical-size</strong> probe (spec-057 Decision 4, slow
+     * tier): for every running datastore container emit {@code physicalBytes} — {@code du -sb}
+     * on the engine's data volume inside the container. Constant, param-free, read-only.
+     */
+    static final String DB_PHYSICAL_SIZE_SCRIPT = String.join("\n",
+            "for cid in $(docker ps -q 2>/dev/null); do",
+            "  img=$(docker inspect -f '{{.Config.Image}}' \"$cid\" 2>/dev/null)",
+            "  nm=$(docker inspect -f '{{.Name}}' \"$cid\" 2>/dev/null | sed 's#^/##')",
+            "  case \"$img\" in",
+            "    *postgres*|*postgresql*) d=/var/lib/postgresql/data ;;",
+            "    *mysql*|*mariadb*|*percona*) d=/var/lib/mysql ;;",
+            "    *) continue ;;",
+            "  esac",
+            "  pb=$(docker exec \"$cid\" du -sb \"$d\" 2>/dev/null | awk '{print $1}')",
+            "  [ -n \"$pb\" ] && echo \"container=$nm physicalBytes=$pb\"",
+            "done");
+
     private final ObjectMapper json;
 
     public DockerComposeDiscoverer(ObjectMapper json) {
@@ -159,7 +211,7 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
                     List.of(), null, List.of());
         }
         return ProposedRecipe.ofDocker(project,
-                "Discovered docker compose project '" + project + "'.", dockerChecks(), List.of(consumer));
+                "Discovered docker compose project '" + project + "'.", checksFor(hasDb), List.of(consumer));
     }
 
     /** A standalone datastore container ({@code docker run redis}) → a SHARED consumer. */
@@ -169,7 +221,7 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
                 List.of(new DockerService(c.name(), c.image(), ConsumerRole.DATABASE)));
         return ProposedRecipe.ofDocker(c.name(),
                 "Discovered standalone datastore container '" + c.name() + "'.",
-                dockerChecks(), List.of(consumer));
+                checksFor(true), List.of(consumer));
     }
 
     /** The DOCKER remainder: containers neither compose-labelled nor a datastore (spec-032 §5). */
@@ -204,6 +256,30 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
                         "Named-volume sizes from 'docker system df -v'. Read-only.", false,
                         List.of(literal("docker"), literal("system"), literal("df"), literal("-v")),
                         List.of()));
+    }
+
+    /**
+     * The checks a recipe carries: always the fixed docker RAM/CPU/disk reads, plus the
+     * {@code db size} probe (spec-057) when the recipe holds a datastore. The DB probe reports
+     * the {@code {logicalBytes, physicalBytes}} pair for every datastore container — held
+     * client-side, presentation is spec-059's.
+     */
+    private List<ProposedAction> checksFor(boolean hasDb) {
+        if (!hasDb) {
+            return dockerChecks();
+        }
+        List<ProposedAction> actions = new ArrayList<>(dockerChecks());
+        actions.add(new ProposedAction("db logical size",
+                "Served (logical) size per datastore container — pg_database_size /"
+                        + " information_schema. Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(DB_LOGICAL_SIZE_SCRIPT)),
+                List.of()));
+        actions.add(new ProposedAction("db physical size",
+                "On-disk (physical) size per datastore container — du on the data volume."
+                        + " Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(DB_PHYSICAL_SIZE_SCRIPT)),
+                List.of()));
+        return actions;
     }
 
     // --- probing / parsing --------------------------------------------------
