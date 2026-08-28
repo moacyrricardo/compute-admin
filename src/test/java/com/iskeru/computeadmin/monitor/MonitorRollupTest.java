@@ -124,6 +124,37 @@ class MonitorRollupTest {
     }
 
     @Test
+    void of_CopiesRichContextFields_OntoAppProbeAppPortView() {
+        Machine machine = machine("m1");
+        Recipe probeRecipe = recipe("generic app monitor", RecipeType.MONITOR);
+        Action health = appProbe(probeRecipe, "health");
+
+        AppPort pg = new AppPort("postgres", 5432, "process", "/var/lib/postgresql",
+                "/var/lib/postgresql", List.of("postgres"), "common service · postgres",
+                "high", "/var/lib/postgresql/bin");
+        MachineMonitors monitors = new MachineMonitors(machine,
+                List.of(new MonitorRecipe(probeRecipe, List.of(health), List.of(pg))),
+                List.of());
+
+        MonitorMachineView view = MonitorMachineView.of(monitors);
+
+        // The app probe's appPortList carries the rich side-data (spec-063), copied from AppPort.
+        var item = view.appActions().get(0).appPortList().get(0);
+        assertThat(item.appName()).isEqualTo("postgres");
+        assertThat(item.contextDisplay()).isEqualTo("/var/lib/postgresql");
+        assertThat(item.scriptFolder()).isEqualTo("/var/lib/postgresql/bin");
+        assertThat(item.confidence()).isEqualTo("high");
+        assertThat(item.sourceNote()).isEqualTo("common service · postgres");
+        assertThat(item.contextScripts()).containsExactly("postgres");
+
+        // The native channel classifies the fingerprinted datastore as a DATABASE consumer.
+        MonitorConsumerView consumer = view.consumers().get(0);
+        assertThat(consumer.role()).isEqualTo(ConsumerRole.DATABASE);
+        assertThat(consumer.source()).isEqualTo(ConsumerSource.NATIVE);
+        assertThat(consumer.name()).isEqualTo("/var/lib/postgresql");
+    }
+
+    @Test
     void of_HostOnlyMachine_HasNoApps() {
         Machine machine = machine("m2");
         Recipe hostRecipe = recipe("monitor machine", RecipeType.MONITOR);
