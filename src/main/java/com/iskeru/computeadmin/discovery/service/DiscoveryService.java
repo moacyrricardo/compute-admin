@@ -102,12 +102,16 @@ public class DiscoveryService {
     /**
      * The result of a discovery pass (spec-070): the reconciled recipes, whether the run
      * was <strong>partial</strong> (a transport failure skipped one or more families or
-     * the session could not be opened at all), and the {@link DiscovererFamily} families
-     * whose probes were skipped. A clean run is {@code partial == false} with an empty
-     * {@code failedFamilies}.
+     * the session could not be opened at all), {@code connectionLost} is set when the
+     * shared SSH session could not be opened <em>or died mid-pass</em> (so the families
+     * after the failure went unprobed — distinct from an honest per-family failure), and
+     * {@code failedFamilies} names every {@link DiscovererFamily} that did not get a clean
+     * probe (the one that failed plus, on a mid-pass session loss, every enabled family
+     * after it). A clean run is {@code partial == false}, {@code connectionLost == false},
+     * with an empty {@code failedFamilies}.
      */
     public record DiscoveryOutcome(List<DiscoveredRecipe> recipes, boolean partial,
-                                   List<DiscovererFamily> failedFamilies) {
+                                   boolean connectionLost, List<DiscovererFamily> failedFamilies) {
     }
 
     private final MachineService machineService;
@@ -175,24 +179,36 @@ public class DiscoveryService {
         // A boxed flag the session lambda can set: at least one discoverer completed a
         // probe pass, so the box was actually reached (not a connect-then-drop).
         boolean[] reached = {false};
-        boolean connectionLost = false;
+        // Boxed: the shared session died mid-pass (a transport failure on some family), so
+        // every enabled family after it went unprobed — reported distinctly from an honest
+        // per-family failure (070 follow-up, BOL-900).
+        boolean[] sessionLost = {false};
+        boolean connectionFailedToOpen = false;
         try {
             ssh.withSession(target, session -> {
                 for (RecipeDiscoverer discoverer : discoverers) {
                     if (!enabled.contains(discoverer.family())) {
+                        continue;                                   // enablement gate is upstream of the fold below
+                    }
+                    if (sessionLost[0]) {
+                        // The shared session already died on an earlier family; this enabled
+                        // family never got probed. Record it as failed rather than let a
+                        // caller read its absence as "probed and empty".
+                        failed.add(discoverer.family());
                         continue;
                     }
                     try {
                         proposals.addAll(discoverer.discover(machine, session));   // L1: one open session
                         reached[0] = true;
                     } catch (SshExecutionException e) {                            // L0: degrade — transport only
-                        // A transport failure mid-pass usually means the one shared session
-                        // died; stop iterating and report connection-lost rather than
-                        // emitting a misleading "family failed" for every remaining family.
-                        log.warn("discovery: family {} could not probe {} — connection lost mid-discovery",
-                                discoverer.family(), machineId, e);
+                        // A transport failure mid-pass means the one shared session died.
+                        // Flag connection-lost and record this family; the loop then folds
+                        // every remaining enabled family into failedFamilies too, so nothing
+                        // skipped is silently reported as "probed and empty".
+                        log.warn("discovery: session to {} lost mid-pass at family {} — remaining families unprobed",
+                                machineId, discoverer.family(), e);
+                        sessionLost[0] = true;
                         failed.add(discoverer.family());
-                        break;
                     }
                     // NB: a non-SshExecutionException (e.g. a discoverer NPE) is NOT caught
                     // here — it aborts loudly, as it should. Only transport failures degrade.
@@ -202,9 +218,10 @@ public class DiscoveryService {
         } catch (SshExecutionException e) {
             // connect/auth failed BEFORE any probe ran → real outage; degrade, don't abort.
             log.warn("discovery: could not open a session to {}", machineId, e);
-            connectionLost = true;
+            connectionFailedToOpen = true;
         }
 
+        boolean connectionLost = connectionFailedToOpen || sessionLost[0];
         boolean partial = connectionLost || !failed.isEmpty();
         // Only announce ONLINE when a probe actually succeeded — never off a run that
         // connected then dropped. A listener refreshes the machine to ONLINE
@@ -214,7 +231,7 @@ public class DiscoveryService {
         }
         // Persist phase — one short transaction.
         List<DiscoveredRecipe> persisted = tx.execute(status -> persist(machineId, proposals));
-        return new DiscoveryOutcome(persisted, partial, List.copyOf(failed));
+        return new DiscoveryOutcome(persisted, partial, connectionLost, List.copyOf(failed));
     }
 
     private List<DiscoveredRecipe> persist(String machineId, List<ProposedRecipe> proposals) {

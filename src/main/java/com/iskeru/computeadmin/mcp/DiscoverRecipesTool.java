@@ -65,6 +65,7 @@ public class DiscoverRecipesTool implements McpTool {
             Map<String, Object> result = Map.of(
                     "proposals", proposals,
                     "partial", outcome.partial(),
+                    "connectionLost", outcome.connectionLost(),
                     "failedFamilies", outcome.failedFamilies().stream().map(DiscovererFamily::name).toList());
             return McpSchema.CallToolResult.builder()
                     .addTextContent(objectMapper.writeValueAsString(result))

@@ -124,6 +124,7 @@ class DiscoveryConnectionLostTest {
             DiscoveryOutcome outcome = discoveryService.discover(machine.getId());
 
             assertThat(outcome.partial()).isTrue();
+            assertThat(outcome.connectionLost()).isTrue(); // the session never opened — flagged distinctly
             assertThat(outcome.recipes()).isEmpty();       // nothing probed, nothing persisted
             assertThat(outcome.failedFamilies()).isEmpty(); // no single family — the whole session failed
             return null;
