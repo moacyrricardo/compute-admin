@@ -1,6 +1,6 @@
 # 063 — Native-consumer channel & discovery-context DTO exposure
 
-**Status:** todo · Linear [BOL-892](https://linear.app/iskeru/issue/BOL-892) · build branch `moacyrricardo/bol-892-cpt-063-native-consumer-context-dto`. **Stacks on the integration branch (055–062).**
+**Status:** doing · Linear [BOL-892](https://linear.app/iskeru/issue/BOL-892) · build branch `moacyrricardo/bol-892-cpt-063-native-consumer-context-dto`. **Stacks on the integration branch (055–062).**
 
 ## Context
 
