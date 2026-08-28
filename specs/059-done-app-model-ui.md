@@ -1,6 +1,6 @@
 # 059 — App-model UI (new surfaces)
 
-**Status:** todo · Linear [BOL-888](https://linear.app/iskeru/issue/BOL-888) · build branch `moacyrricardo/bol-888-cpt-059-app-model-ui-new-surfaces`. **Blocked by 057 (BOL-886).**
+**Status:** done · Linear [BOL-888](https://linear.app/iskeru/issue/BOL-888) · build branch `moacyrricardo/bol-888-cpt-059-app-model-ui-new-surfaces`. **Blocked by 057 (BOL-886).**
 
 ## Context
 
@@ -203,3 +203,37 @@ display strings, rendered via `textContent`; the internal `contextKey` is never 
   machine-detail discovery section and the footprint dashboard extends the existing Monitor route; a
   standalone nav entry is added only if review calls for it (one `<nav>` link + one `ROUTES` entry +
   one `screenX` fn, per the router contract).
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-888-cpt-059-app-model-ui-new-surfaces`, stacked on the local
+integration branch `moacyrricardo/integration-057-061-062` (merge of 056+057+061+062). PR #86.
+
+**How it differed from the spec — a data-exposure gap narrowed the client-only deliverable.**
+The spec assumes ("reading the DTOs 055–057 already extend") that the 055/056 context model —
+`contextDisplay`, `scriptFolder`, `contextKey`, `contextScripts`, `sourceNote`, `confidence` —
+reaches the browser. It does not: those fields are persisted on the recipe's `app_port_list`
+**entity JSON** but are stripped at every client-facing DTO. `RecipeDtos.RecipeView` (the recipe
+/ discovery-proposal channel) carries no `appPortList` at all; `MonitorService.AppPort` parses
+only `(appName, port, runtime)`, and `MonitorDtos.AppPortView` / `MonitorConsumerView` (the
+monitor channel) carry no context or confidence field. Because 059 is presentation-only and
+explicitly forbids server-side DTO changes ("if a field this spec draws is absent, the fix lands
+in the owning sibling, not here"), the context-grouped discovery cards (Surface 1 Decision 1),
+their source notes, and the sibling-script list could **not** be rendered client-only, and the
+Surface-2 *context grouping* is likewise blocked. Deferred to a sibling read-only exposure spec;
+tracked on Linear BOL-888 (S9 note: only `contextDisplay`/display data may cross the wire,
+never the internal `contextKey`).
+
+**Delivered (client-only, tested, non-regressive):**
+- **Surface 2 degrade-and-label confidence.** spec-057 already fills the native RAM/disk axes and
+  sets `_ramLow` (VmRSS upper bound on a procfs denial) / `_diskLow` (`du --max-depth=1` lower
+  bound on a walk timeout) "for the 059 badge"; this spec renders them as a **text** low-confidence
+  caveat on the axis meter (`confMeter`), the consumer drawer, and the legend chip — never colour
+  alone (WCAG AA). `computeOther` untouched; no new colour outside the token set. Covered by the new
+  `src/test/js/app-model-ui.render-check.js`.
+
+**Already satisfied by prior specs (no net-new):** Surface 1 Decision 2 (approve-to-add) is
+spec-044's `approvalSplit` routing every `PENDING_APPROVAL` proposal into the existing UI approval
+flow; Surface 3 (add-machine) already lands post-test on the machine-detail screen that hosts the
+discovery section. No new endpoint, no gate change (`GateArchTest` / `McpPathLeakArchTest` green);
+no version bump.
