@@ -171,20 +171,34 @@ public class MonitorService {
         try {
             JsonNode root = json.readTree(rawJson);
             if (root.isArray()) {
-                for (JsonNode node : root) {
-                    JsonNode appName = node.get("appName");
-                    JsonNode port = node.get("port");
-                    JsonNode runtime = node.get("runtime");
-                    if (appName != null && port != null) {
-                        items.add(new AppPort(appName.asText(), port.asInt(),
-                                runtime == null || runtime.isNull() ? null : runtime.asText()));
-                    }
+                // Native recipe: the bare item array (spec-025).
+                addAppPorts(root, items);
+            } else if (root.isObject()) {
+                // Docker recipe (spec-061): the combined {dockerConsumers,appPortList} object.
+                // A pre-061 row is a bare {dockerConsumers} object with no appPortList member ⇒
+                // the empty list, never an error.
+                JsonNode array = root.get("appPortList");
+                if (array != null && array.isArray()) {
+                    addAppPorts(array, items);
                 }
             }
         } catch (JsonProcessingException e) {
             return List.of();
         }
         return items;
+    }
+
+    /** Appends every {@code {"appName","port","runtime"}} entry of {@code array} to {@code items}. */
+    private void addAppPorts(JsonNode array, List<AppPort> items) {
+        for (JsonNode node : array) {
+            JsonNode appName = node.get("appName");
+            JsonNode port = node.get("port");
+            JsonNode runtime = node.get("runtime");
+            if (appName != null && port != null) {
+                items.add(new AppPort(appName.asText(), port.asInt(),
+                        runtime == null || runtime.isNull() ? null : runtime.asText()));
+            }
+        }
     }
 
     /**
