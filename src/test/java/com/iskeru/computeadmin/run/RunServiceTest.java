@@ -485,6 +485,49 @@ class RunServiceTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_DiskFanOut_BindsContextFolderFromSideData_ServerAuthoritative() {
+        AppUser user = saveUser();
+        // The recipe's app_port_list side-data carries each item's S9-secret contextKey; a
+        // bogus client-supplied "app-folder"/"contextKey" in the run items is IGNORED — the
+        // folder is enriched server-side from the stored side-data (never caller-supplied).
+        String sideData = "[{\"appName\":\"orders\",\"port\":8080,\"contextKey\":\"/opt/orders\"},"
+                + "{\"appName\":\"billing\",\"port\":9090,\"contextKey\":\"/srv/billing\"}]";
+        Seed seed = asUser(user, () -> seedDiskProbeAction(sideData));
+        String items = "[{\"appName\":\"orders\",\"port\":8080,\"contextKey\":\"/etc/passwd\"},"
+                + "{\"appName\":\"billing\",\"port\":9090}]";
+
+        Run parent = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("apps", items)));
+        awaitTerminal(parent.getId());
+
+        // Two children, each du'ing the folder from SIDE-DATA (not the client's /etc/passwd).
+        List<String> duArgvs = ssh.argvCalls.stream()
+                .filter(a -> !a.isEmpty() && "du".equals(a.get(0)))
+                .map(a -> a.get(a.size() - 1)).toList();
+        assertThat(duArgvs).containsExactlyInAnyOrder("/opt/orders", "/srv/billing");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_DiskFanOut_DropsItemsWithNoResolvedContext() {
+        AppUser user = saveUser();
+        // Only 'orders' has a resolved context; 'web' (docker overlayfs / non-listening) has
+        // none, so it has no attributable disk and is dropped from the fan-out — honest
+        // absence, never a fabricated 0.
+        String sideData = "[{\"appName\":\"orders\",\"port\":8080,\"contextKey\":\"/opt/orders\"},"
+                + "{\"appName\":\"web\",\"port\":8000}]";
+        Seed seed = asUser(user, () -> seedDiskProbeAction(sideData));
+        String items = "[{\"appName\":\"orders\",\"port\":8080},{\"appName\":\"web\",\"port\":8000}]";
+
+        Run parent = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("apps", items)));
+        awaitTerminal(parent.getId());
+
+        List<Run> children = runs.findByParentRunId(parent.getId());
+        assertThat(children).hasSize(1);
+        assertThat(children).extracting(Run::getAppLabel).containsExactly("orders");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void childRuns_ListsFanOutChildrenByAppLabel_ScalarHasNone() {
         AppUser user = saveUser();
         Seed fanOut = asUser(user, () -> seedFanOutAction(true));
@@ -741,6 +784,28 @@ class RunServiceTest {
             approvalService.submitForApproval(action.getId());
             approvalService.approve(action.getId());
         }
+        return new Seed(machine.getId(), action.getId());
+    }
+
+    /**
+     * A footprint disk-probe MONITOR action (spec-057): a fixed {@code du -sbx <app-folder>}
+     * template whose only bound value is the per-context {@code app-folder}. The recipe's
+     * {@code app_port_list} side-data ({@code sideData}) supplies each item's contextKey, from
+     * which the run path enriches the folder server-side. Always approved.
+     */
+    private Seed seedDiskProbeAction(String sideData) {
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
+        Recipe recipe = recipeService.create(new CreateRecipeInput(
+                machine.getId(), "footprint", "app footprint", RecipeType.MONITOR));
+        Action action = actionService.addAction(new AddActionInput(
+                recipe.getId(), "disk", "per-context disk footprint", false,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, "du"),
+                        new ArgTokenInput(TokenKind.LITERAL, "-sbx"),
+                        new ArgTokenInput(TokenKind.PARAM, "app-folder")),
+                List.of(new ParamDefInput("apps", ParamKind.APP_PORT_LIST, null, null, null, null))));
+        recipeService.refreshDiscoveredAppPortList(recipe.getId(), sideData);
+        approvalService.submitForApproval(action.getId());
+        approvalService.approve(action.getId());
         return new Seed(machine.getId(), action.getId());
     }
 

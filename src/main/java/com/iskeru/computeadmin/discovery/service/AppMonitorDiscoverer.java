@@ -60,11 +60,14 @@ import static com.iskeru.computeadmin.discovery.Proposals.param;
  * ({@link DockerDiscoverer}) under one app card. {@code runtime = systemd} for a unit,
  * else {@code process}.
  *
- * <p>Every app-monitor family also gains an app-level {@code cpu} check (spec-032): a
- * bounded, read-only process-tree CPU probe ({@link #CPU_PROBE_SCRIPT}), the first-class
- * CPU metric-kind the redesigned fleet UI reads alongside the process probe's RSS.
+ * <p>Every app-monitor family also carries the four <strong>footprint</strong> axes
+ * (spec-057): a PSS {@code ram} probe ({@link #PSS_RAM_PROBE_SCRIPT}), a CPU-<em>rate</em>
+ * {@code cpu} probe ({@link #CPU_RATE_PROBE_SCRIPT}, replacing spec-032's lifetime-average
+ * {@code ps %cpu}), a per-context {@code disk} probe ({@link #DISK_PROBE_SCRIPT}), and the
+ * on-demand {@code sudo} re-probe variants that upgrade a permission-denied reading. Each is a
+ * bounded, read-only {@link RecipeType#MONITOR} action, gated like any other.
  *
- * <p>spec-025; the app-level CPU check added in spec-032.
+ * <p>spec-025; the app-level CPU check added in spec-032; the footprint axes in spec-057.
  */
 @Component
 public class AppMonitorDiscoverer implements RecipeDiscoverer {
@@ -125,26 +128,100 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             "done");
 
     /**
-     * The fixed process-tree CPU probe (spec-032): from the listener port {@code $1}
-     * resolve the owning PID(s) via {@code ss}, then read each PID's <em>and its direct
-     * children's</em> {@code %cpu} via {@code ps} — the app's process tree (its PID plus
-     * children), which covers gunicorn/uvicorn worker fan-out and a Spring Boot app's
-     * helper processes. Bounded (a single {@code ps} level, no recursion), read-only, and
-     * run as the login user (no {@code sudo}); the port is the sole positional argument,
-     * never interpolated at authoring time (S4). Sampling is one-shot — {@code ps}'
-     * {@code %cpu} is lifetime-average, and the shared-memory/backend double-count for a
-     * multi-process app is summed naïvely; both caveats are documented, not solved, in v1
-     * (spec-032 Known Gaps, spec-023 gap).
+     * The fixed process-tree <strong>CPU-rate</strong> probe (spec-057, replacing the
+     * lifetime-average {@code ps %cpu} of spec-032): from the listener port {@code $1} resolve
+     * the owning PID(s) via {@code ss}, expand each to its process tree (its PID plus direct
+     * children, covering gunicorn/uvicorn workers and Spring Boot helpers), then sample
+     * {@code utime+stime} (fields 14+15 of {@code /proc/<pid>/stat}) <em>twice inside one
+     * exec</em>, {@code sleep 4} apart, stamping {@code date +%s.%N} on both. Field 22
+     * ({@code starttime}) is emitted so the client can guard against PID churn between the two
+     * samples. The client divides Δticks by {@code CLK_TCK} and the <em>measured</em> Δt to get
+     * a cross-core {@code %cpu} (Σ per-process core-fractions × 100; may exceed 100), matching
+     * {@code denom.cores}. Read-only, login-user, no {@code sudo}; the port is the sole bound
+     * positional argument, never interpolated at authoring time (S4). This measures what the
+     * app is doing <em>now</em>, unlike the lifetime average that is meaningless for a worker
+     * that burned CPU once then idled.
      */
-    private static final String CPU_PROBE_SCRIPT = String.join("\n",
+    private static final String CPU_RATE_PROBE_SCRIPT = String.join("\n",
+            "port=\"$1\"",
+            "pids=$(ss -ltnpH 2>/dev/null | grep -E \":$port \" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)",
+            "[ -z \"$pids\" ] && { echo \"no listener on port $port\"; exit 0; }",
+            "tree=\"\"",
+            "for pid in $pids; do",
+            "  tree=\"$tree $pid $(ps -o pid= --ppid \"$pid\" 2>/dev/null | tr '\\n' ' ')\"",
+            "done",
+            "echo \"clk_tck=$(getconf CLK_TCK 2>/dev/null || echo 100)\"",
+            // Read fields 14 (utime), 15 (stime) and 22 (starttime) after the last ')', so a
+            // comm containing spaces/parens never shifts the columns.
+            "sample() {",
+            "  for p in $tree; do",
+            "    awk -v p=\"$p\" '{i=index($0,\") \"); r=substr($0,i+2); n=split(r,b,\" \");"
+                    + " print \"pid=\" p \" ticks=\" (b[12]+b[13]) \" starttime=\" b[20]}'"
+                    + " \"/proc/$p/stat\" 2>/dev/null",
+            "  done",
+            "}",
+            "echo \"t0=$(date +%s.%N)\"",
+            "echo \"## s0\"; sample",
+            "sleep 4",
+            "echo \"t1=$(date +%s.%N)\"",
+            "echo \"## s1\"; sample");
+
+    /**
+     * The fixed <strong>PSS RAM</strong> probe (spec-057): from the listener port {@code $1}
+     * resolve the owning PID(s) via {@code ss}, then for each PID sum {@code Pss:} from
+     * {@code /proc/<pid>/smaps_rollup} — the instantaneous proportional set size, the honest
+     * RAM figure. It is emitted per PID so the client sums to the context. <strong>Never a
+     * sum of RSS:</strong> summing {@code VmRSS} across N workers sharing libraries overstates
+     * by up to (N−1)×shared. When {@code smaps_rollup} is denied (an unprivileged read of
+     * another user's process), it degrades to {@code VmRSS} from {@code /proc/<pid>/status} and
+     * stamps {@code ram_confidence=low reason=procfs-denied}, so the fallback is presented as a
+     * labelled ≤ upper bound, never as the same metric. Read-only, login-user, no {@code sudo}
+     * (the on-demand sudo re-probe upgrades a degraded reading); the port is the sole bound
+     * positional argument (S4).
+     */
+    private static final String PSS_RAM_PROBE_SCRIPT = String.join("\n",
             "port=\"$1\"",
             "pids=$(ss -ltnpH 2>/dev/null | grep -E \":$port \" | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)",
             "[ -z \"$pids\" ] && { echo \"no listener on port $port\"; exit 0; }",
             "for pid in $pids; do",
             "  echo \"## pid $pid\"",
-            "  ps -o pid=,ppid=,pcpu=,comm= -p \"$pid\" 2>/dev/null",
-            "  ps -o pid=,ppid=,pcpu=,comm= --ppid \"$pid\" 2>/dev/null",
+            "  v=$(awk '/^Pss:/{s+=$2} END{if(s>0)print s}' \"/proc/$pid/smaps_rollup\" 2>/dev/null)",
+            "  if [ -n \"$v\" ]; then",
+            "    echo \"Pss: $v kB\"",
+            "  else",
+            "    grep -E '^VmRSS:' \"/proc/$pid/status\" 2>/dev/null",
+            "    echo \"ram_confidence=low reason=procfs-denied\"",
+            "  fi",
             "done");
+
+    /**
+     * The fixed per-context <strong>disk</strong> probe (spec-057): {@code du -sbx} on the
+     * resolved app-folder ({@code $1}, bound server-side from the S9-secret contextKey, never
+     * caller-supplied). {@code -x} keeps the walk on the app-folder's own filesystem so an
+     * under-mount on another device is not crossed; {@code findmnt} cross-checks and adds an
+     * explicit {@code --exclude} per under-mount (belt-and-suspenders against a bind-mount that
+     * loops back onto the same fs — the <strong>double-counting rule</strong>). The numerator
+     * is therefore <strong>bytes on the root/data-root filesystem</strong> — the exact fs
+     * {@code parseDfTotal} anchors {@code denom.diskBytes} to, so it subtracts cleanly from
+     * OTHER. Bounded with {@code timeout}/{@code nice}/{@code ionice} so it never hammers the
+     * host; on timeout it degrades to a per-child {@code --max-depth=1} sum (a labelled lower
+     * bound) rather than failing. Read-only, login-user, no {@code sudo}.
+     */
+    private static final String DISK_PROBE_SCRIPT = String.join("\n",
+            "dir=\"$1\"",
+            "[ -d \"$dir\" ] || { echo \"no dir $dir\"; exit 0; }",
+            "echo \"app_folder=$dir\"",
+            "excl=\"\"",
+            "for m in $(findmnt -rno TARGET 2>/dev/null | grep \"^$dir/\" | sort -u); do",
+            "  excl=\"$excl --exclude=$m\"",
+            "done",
+            "if out=$(timeout 120 nice -n19 ionice -c3 du -sbx $excl \"$dir\" 2>/dev/null) && [ -n \"$out\" ]; then",
+            "  echo \"$out\" | awk '{print \"du_bytes=\" $1}'",
+            "else",
+            "  echo \"disk_confidence=low reason=du-timeout\"",
+            "  timeout 120 nice -n19 ionice -c3 du -sbx --max-depth=1 $excl \"$dir\" 2>/dev/null"
+                    + " | awk '{s+=$1} END{if(s>0)print \"du_bytes=\" s}'",
+            "fi");
 
     /** ss line's owning process spec: {@code (("java",pid=1234,fd=10))}. */
     private static final Pattern SS_PROC = Pattern.compile("\\(\"([^\"]+)\",pid=(\\d+)");
@@ -841,31 +918,35 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     // --- recipe assembly ----------------------------------------------------
 
     private ProposedRecipe recipeFor(Family family, List<AppPortItem> apps, boolean prometheus) {
-        List<ProposedAction> actions = switch (family) {
-            case SPRINGBOOT -> List.of(
-                    endpointProbe("health", "Spring Boot liveness/readiness (/actuator/health).", "/actuator/health"),
-                    endpointProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"),
-                    endpointProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"),
-                    endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"),
-                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."),
-                    cpuProbe());
-            case FASTAPI -> fastApiActions(prometheus);
-            case HTTP -> List.of(
-                    endpointProbe("liveness", "HTTP liveness (GET / — no Actuator present).", "/"),
-                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe supplement)."),
-                    cpuProbe());
-            case GENERIC -> List.of(
-                    processProbe("process", "RSS/CPU/threads/fds from /proc (process-probe only)."),
-                    cpuProbe());
-        };
+        List<ProposedAction> actions = new ArrayList<>();
+        switch (family) {
+            case SPRINGBOOT -> {
+                actions.add(endpointProbe("health", "Spring Boot liveness/readiness (/actuator/health).", "/actuator/health"));
+                actions.add(endpointProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"));
+                actions.add(endpointProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"));
+                actions.add(endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"));
+                actions.add(processProbe("process", "Threads/fds/liveness from /proc (process-probe supplement)."));
+                actions.addAll(footprintProbes());
+            }
+            case FASTAPI -> actions.addAll(fastApiActions(prometheus));
+            case HTTP -> {
+                actions.add(endpointProbe("liveness", "HTTP liveness (GET / — no Actuator present).", "/"));
+                actions.add(processProbe("process", "Threads/fds/liveness from /proc (process-probe supplement)."));
+                actions.addAll(footprintProbes());
+            }
+            case GENERIC -> {
+                actions.add(processProbe("process", "Threads/fds/liveness from /proc (process-probe)."));
+                actions.addAll(footprintProbes());
+            }
+        }
         return new ProposedRecipe(RecipeType.MONITOR, family.recipeName, family.recipeDescription,
                 actions, apps);
     }
 
     private List<ProposedAction> fastApiActions(boolean prometheus) {
         List<ProposedAction> actions = new ArrayList<>();
-        actions.add(processProbe("process", "RSS/CPU/threads/fds from /proc across worker PIDs (always probed)."));
-        actions.add(cpuProbe());
+        actions.add(processProbe("process", "Threads/fds/liveness from /proc across worker PIDs (always probed)."));
+        actions.addAll(footprintProbes());
         actions.add(endpointProbe("health",
                 "FastAPI liveness (default /openapi.json — is this app answering).", "/openapi.json"));
         if (prometheus) {
@@ -897,18 +978,83 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     /**
-     * The app-level CPU check (spec-032): a fixed process-tree CPU probe driven by
-     * {@link #CPU_PROBE_SCRIPT}, port as {@code $1}. Named {@code cpu} so it is the
-     * first-class app CPU metric-kind the fleet UI reads (the host CPU vitals probe of
-     * spec-023 is the host-level counterpart). Read-only, login-user, no {@code sudo} —
-     * gated like every action.
+     * The app-level CPU check (spec-032, upgraded to a rate in spec-057): a fixed process-tree
+     * CPU-<em>rate</em> probe driven by {@link #CPU_RATE_PROBE_SCRIPT}, port as {@code $1}.
+     * Named {@code cpu} so it is the first-class app CPU metric-kind the fleet UI reads (the
+     * host CPU vitals probe of spec-023 is the host-level counterpart). Read-only, login-user,
+     * no {@code sudo} — gated like every action.
      */
     private ProposedAction cpuProbe() {
         return new ProposedAction("cpu",
-                "Process-tree CPU% (the app's PID plus children) via ps. Read-only.", false,
-                List.of(literal("sh"), literal("-c"), literal(CPU_PROBE_SCRIPT),
+                "Process-tree CPU-rate (Δ jiffies over a measured interval, the app's PID plus"
+                        + " children). Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(CPU_RATE_PROBE_SCRIPT),
                         literal("sh"), param(ParamBinder.PORT_COMPONENT)),
                 List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * The app-level RAM check (spec-057): a fixed PSS probe driven by
+     * {@link #PSS_RAM_PROBE_SCRIPT}, port as {@code $1}. Named {@code ram} so the fleet UI reads
+     * it as the RAM metric-kind (honest PSS, RSS-labelled fallback). Read-only, login-user, no
+     * {@code sudo} — the on-demand sudo re-probe below upgrades a degraded reading.
+     */
+    private ProposedAction ramProbe() {
+        return new ProposedAction("ram",
+                "Per-context RAM (Σ PSS across the app's PIDs; RSS upper-bound when procfs is"
+                        + " denied). Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(PSS_RAM_PROBE_SCRIPT),
+                        literal("sh"), param(ParamBinder.PORT_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * The app-level disk check (spec-057): a fixed {@code du -sbx} probe driven by
+     * {@link #DISK_PROBE_SCRIPT}. Its bound value is the per-context {@code app-folder}, which
+     * the run path enriches server-side from the recipe's app_port_list side-data (never a
+     * caller-supplied path, S9). Named {@code disk} so the fleet UI reads it as the disk
+     * metric-kind. This finally fills the native disk axis spec-049 left null. Read-only,
+     * login-user, no {@code sudo}.
+     */
+    private ProposedAction diskProbe() {
+        return new ProposedAction("disk",
+                "Per-context disk (du -sbx on the app-folder, root-FS bytes, under-mounts"
+                        + " excluded). Read-only.", false,
+                List.of(literal("sh"), literal("-c"), literal(DISK_PROBE_SCRIPT),
+                        literal("sh"), param(ParamBinder.APP_FOLDER_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * The on-demand <strong>sudo re-probe</strong> actions (spec-057 Decision 6): {@code sudo}
+     * variants of the PSS RAM and disk probes that upgrade a degraded (permission-denied)
+     * reading to full fidelity — per-PID {@code smaps_rollup} of other users' processes, and
+     * {@code du} into other-user directories. They are ordinary {@link RecipeType#MONITOR}
+     * actions {@code sudo=true} (S5: passwordless sudo assumed), approved and run through the
+     * ordinary gate; they never auto-run — the client offers them as an explicit control
+     * (spec-059). The template is the same fixed script; {@code ParamBinder} prepends
+     * {@code sudo -n} at bind time.
+     */
+    private ProposedAction ramSudoReprobe() {
+        return new ProposedAction("ram (sudo re-probe)",
+                "Re-probe RAM with sudo — per-PID PSS incl. other users' processes. Read-only.", true,
+                List.of(literal("sh"), literal("-c"), literal(PSS_RAM_PROBE_SCRIPT),
+                        literal("sh"), param(ParamBinder.PORT_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    private ProposedAction diskSudoReprobe() {
+        return new ProposedAction("disk (sudo re-probe)",
+                "Re-probe disk with sudo — du into other-user directories under the context."
+                        + " Read-only.", true,
+                List.of(literal("sh"), literal("-c"), literal(DISK_PROBE_SCRIPT),
+                        literal("sh"), param(ParamBinder.APP_FOLDER_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /** The four footprint axes (spec-057) every app-monitor family carries, in axis order. */
+    private List<ProposedAction> footprintProbes() {
+        return List.of(ramProbe(), cpuProbe(), diskProbe(), ramSudoReprobe(), diskSudoReprobe());
     }
 
     /**
