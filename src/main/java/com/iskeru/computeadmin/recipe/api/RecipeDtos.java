@@ -54,14 +54,64 @@ public final class RecipeDtos {
                                          List<ParamDefInput> paramDefs, boolean sudo) {
     }
 
-    /** A recipe, including its description and blueprint provenance (spec 010). */
+    /**
+     * A recipe, including its description and blueprint provenance (spec 010) and — for a
+     * discovery-pre-filled app-monitor recipe — its {@code appPortList} of per-context
+     * records (spec-063). {@code appPortList} is empty for a recipe with no pre-fill and
+     * for callers that assemble a {@code RecipeView} without a parsed list (the plain
+     * {@link #of(Recipe)} path); the discovery/recipe read path that has the parsed items
+     * uses {@link #of(Recipe, List)} to carry them.
+     */
     public record RecipeView(String id, String machineId, String name, String description,
                              RecipeType type, String sourceBlueprintId, Integer sourceBlueprintVersion,
-                             Instant createdAt) {
+                             Instant createdAt, List<AppPortView> appPortList) {
         public static RecipeView of(Recipe recipe) {
+            return of(recipe, List.of());
+        }
+
+        public static RecipeView of(Recipe recipe, List<AppPortView> appPortList) {
             return new RecipeView(recipe.getId(), recipe.getMachine().getId(), recipe.getName(),
                     recipe.getDescription(), recipe.getType(), recipe.getSourceBlueprintId(),
-                    recipe.getSourceBlueprintVersion(), recipe.getCreatedAt());
+                    recipe.getSourceBlueprintVersion(), recipe.getCreatedAt(), List.copyOf(appPortList));
+        }
+    }
+
+    /**
+     * One discovery-pre-filled {@code (app-name, port)} item a fan-out probe action runs
+     * over (spec-025), with the optional {@code runtime} label (spec-022) the UI uses for
+     * the docker/systemd/process affordance and the double-detection link.
+     *
+     * <p><strong>Discovery-context fields (spec-063).</strong> {@code contextDisplay} (the
+     * logical context path the UI shows), {@code contextScripts} (the sibling app-scripts
+     * that collapse to the same context), {@code sourceNote} (the human-readable discovery
+     * provenance), {@code confidence} (the fingerprint confidence, {@code high}/{@code low}/
+     * {@code null}), and the logical {@code scriptFolder} are the rich {@code AppPortItem}
+     * side-data (055/056/061), now carried through to the authenticated admin UI. The
+     * physical/synthetic {@code contextKey} is deliberately <strong>not</strong> exposed — it
+     * is an internal identity key (S9-secret), never user-facing. These are real paths the UI
+     * is entitled to (028 precedent); S9 forbids paths only on the MCP surface, which this
+     * record never reaches.
+     *
+     * <p>Lives in the {@code recipe} module (the lower module) so both the {@code recipe} and
+     * {@code monitor} read surfaces can reference one shared record without inverting the
+     * {@code monitor → recipe} dependency direction (the same reason {@code ArgTokenView}/
+     * {@code ParamDefView} live here). The mapping from a {@code MonitorService.AppPort} lives
+     * in {@code MonitorDtos}, not here — it would otherwise pull {@code monitor} types into
+     * {@code recipe}.
+     *
+     * <p>spec-004; moved here and widened with the context fields in spec-063.
+     */
+    public record AppPortView(String appName, int port, String runtime,
+                              String contextDisplay, List<String> contextScripts,
+                              String sourceNote, String confidence, String scriptFolder) {
+
+        public AppPortView {
+            contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
+        }
+
+        /** The bare three-field item (no resolved context) — old rows and docker-object items. */
+        public AppPortView(String appName, int port, String runtime) {
+            this(appName, port, runtime, null, List.of(), null, null, null);
         }
     }
 

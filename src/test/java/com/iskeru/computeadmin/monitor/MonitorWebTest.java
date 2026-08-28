@@ -1,14 +1,19 @@
 package com.iskeru.computeadmin.monitor;
 
 import com.iskeru.computeadmin.auth.api.AuthDtos;
+import com.iskeru.computeadmin.common.AuthContext;
+import com.iskeru.computeadmin.common.CurrentUser;
 import com.iskeru.computeadmin.machine.api.MachineDtos;
 import com.iskeru.computeadmin.monitor.api.MonitorDtos;
+import com.iskeru.computeadmin.monitor.model.ConsumerRole;
+import com.iskeru.computeadmin.monitor.model.ConsumerSource;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos;
 import com.iskeru.computeadmin.recipe.model.ParamKind;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.model.TokenKind;
 import com.iskeru.computeadmin.recipe.service.ActionService.ArgTokenInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.ParamDefInput;
+import com.iskeru.computeadmin.recipe.service.RecipeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,6 +42,9 @@ class MonitorWebTest {
 
     @Autowired
     private TestRestTemplate rest;
+
+    @Autowired
+    private RecipeService recipeService;
 
     @Test
     void dashboard_EnumeratesOnlyMonitorActions_SplitHostVsApp() {
@@ -142,6 +150,50 @@ class MonitorWebTest {
         assertThat(MonitorDtos.opsForApp(machine, "billing"))
                 .extracting(MonitorDtos.AppOpView::id).containsExactly(approvedOp);
         assertThat(MonitorDtos.opsForApp(machine, "web")).isEmpty();
+    }
+
+    @Test
+    void dashboard_CarriesDiscoveryContextAndNativeConsumer_EndToEnd() {
+        AuthDtos.Session owner = login("context-read@example.com");
+        String machineId = registerMachine(owner);
+
+        // A MONITOR recipe with an app probe; discovery pre-fills a fingerprinted standalone
+        // postgres carrying the rich spec-055/056 context side-data on its app_port_list.
+        String recipeId = createRecipe(owner, machineId, "generic app monitor", RecipeType.MONITOR);
+        addAppAction(owner, recipeId);
+        String appPortListJson =
+                "[{\"appName\":\"postgres\",\"port\":5432,\"runtime\":\"process\","
+                        + "\"contextKey\":\"/var/lib/postgresql\","
+                        + "\"contextDisplay\":\"/var/lib/postgresql\","
+                        + "\"contextScripts\":[\"postgres\"],"
+                        + "\"sourceNote\":\"common service · postgres\","
+                        + "\"confidence\":\"high\","
+                        + "\"scriptFolder\":\"/var/lib/postgresql\"}]";
+        CurrentUser.runWhere(AuthContext.ui(owner.user().id(), owner.user().email()),
+                () -> recipeService.refreshDiscoveredAppPortList(recipeId, appPortListJson));
+
+        MonitorDtos.Dashboard dashboard = getDashboard(owner);
+        MonitorDtos.MonitorMachineView machine = machineFor(dashboard, machineId);
+
+        // The rich context/confidence side-data reaches the client on the app-probe's appPortList.
+        RecipeDtos.AppPortView item = machine.appActions().get(0).appPortList().get(0);
+        assertThat(item.appName()).isEqualTo("postgres");
+        assertThat(item.contextDisplay()).isEqualTo("/var/lib/postgresql");   // a real path — UI is entitled (S9)
+        assertThat(item.scriptFolder()).isEqualTo("/var/lib/postgresql");
+        assertThat(item.confidence()).isEqualTo("high");
+        assertThat(item.sourceNote()).isEqualTo("common service · postgres");
+        assertThat(item.contextScripts()).containsExactly("postgres");
+
+        // The native-consumer channel surfaces exactly one DATABASE consumer, source NATIVE.
+        assertThat(machine.consumers()).hasSize(1);
+        MonitorDtos.MonitorConsumerView consumer = machine.consumers().get(0);
+        assertThat(consumer.name()).isEqualTo("/var/lib/postgresql");
+        assertThat(consumer.role()).isEqualTo(ConsumerRole.DATABASE);
+        assertThat(consumer.source()).isEqualTo(ConsumerSource.NATIVE);
+        // No server sampler — the axes stay null for the client to fill.
+        assertThat(consumer.ram()).isNull();
+        assertThat(consumer.cpu()).isNull();
+        assertThat(consumer.disk()).isNull();
     }
 
     // --- setup helpers ------------------------------------------------------

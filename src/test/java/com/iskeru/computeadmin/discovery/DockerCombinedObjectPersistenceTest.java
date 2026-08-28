@@ -131,9 +131,18 @@ class DockerCombinedObjectPersistenceTest {
                 .filter(r -> r.recipe().getName().equals("orders")).findFirst().orElseThrow();
         // parseDockerConsumers still reads the consumers off the combined object.
         assertThat(orders.dockerConsumers()).extracting(DockerConsumerData::name).containsExactly("orders");
-        // parseAppPortList now reads the appPortList member off the same object.
-        assertThat(orders.appPortList())
-                .contains(new AppPort("orders-db-1", 5432, "docker"));
+        // parseAppPortList now reads the appPortList member off the same object — and, since
+        // spec-063, surfaces the 061-enriched context side-data (contextDisplay/confidence/
+        // scriptFolder) the docker inspect enrichment persists alongside the base item.
+        AppPort dbItem = orders.appPortList().stream()
+                .filter(a -> a.appName().equals("orders-db-1")).findFirst().orElseThrow();
+        assertThat(dbItem.port()).isEqualTo(5432);
+        assertThat(dbItem.runtime()).isEqualTo("docker");
+        assertThat(dbItem.contextDisplay()).isEqualTo("orders");
+        assertThat(dbItem.confidence()).isEqualTo("high");
+        assertThat(dbItem.scriptFolder()).isEqualTo("/var/lib/docker/volumes/orders_db/_data");
+        // A docker-runtime item routes to the docker channel — it is never a native consumer.
+        assertThat(orders.nativeConsumers()).isEmpty();
     }
 
     @Test
