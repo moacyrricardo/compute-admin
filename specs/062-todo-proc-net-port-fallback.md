@@ -47,23 +47,48 @@ no MCP-surface change (ARCH.md gate points 1–5, S4/S9 rows).
    `/proc/net/tcp` + `/proc/net/tcp6`, filters `st == 0A` (LISTEN), and prints each socket's
    hex `local_address` and **inode**, and (b) scans `/proc/<pid>/fd` symlinks for
    `socket:[<inode>]` targets. Java decodes the hex port and joins inode → PID. The merge fills
-   PIDs where the join succeeds, adds ports `ss` never saw (no-`ss` hosts), and de-duplicates by
-   port. A port whose join still fails is **emitted anyway**: null PID, family GENERIC, appName
-   `app-<port>`, `runtime = process`, `confidence = low`, a path-free `sourceNote` naming the
-   degraded attribution — the 056 D1/054-D3 degrade-and-label posture. The probe stays S4-safe:
+   PIDs where the join succeeds, adds ports `ss` never saw (no-`ss` hosts), and **de-duplicates by
+   `(local_address, port)`** — a distinct `127.0.0.1:8080` and `0.0.0.0:8080` both survive (a
+   port-only key would drop one). An **`ss`-attributed** listener always wins over a fallback
+   attribution for the same `(addr, port)`; a shared listening inode held by several preforked PIDs
+   resolves to the **lowest PID** (the master), which drives context derivation. A port whose join
+   still fails is emitted as a degraded record — null PID, family GENERIC, appName `app-<port>`,
+   `runtime = process`, `confidence = low`, path-free `sourceNote` — **but only if no other channel
+   already owns that `(addr, port)`**: an unattributed port is **suppressed** when a
+   listening/systemd/fingerprint record (this sweep or 056's non-listening sweeps) already claims
+   it, so a root-owned service the systemd sweep found as a unit is never doubled as an `app-<port>`
+   card and daemon noise (`sshd`, `resolved`, CUPS…) never floods the map. The residual — a
+   genuinely unclaimed port, typically a loopback-only daemon no channel identified — stays one
+   low-confidence record (see Known Gaps + the 059 note). This is the 056 D1 / 054-D3
+   degrade-and-label posture, reconciled across channels. The probe stays S4-safe:
    the script body is a source-controlled constant with **zero bound inputs**, run no-sudo.
-2. **Honest reach.** Unprivileged, `/proc/<pid>/fd` of another user's process is unreadable —
-   the same kernel check that blanks `ss`'s column. So the join recovers PIDs (i) for the login
-   user's own sockets when `ss`/`netstat` are absent, and (ii) after any partial `ss` output;
-   foreign sockets are recovered **as ports** (null PID, `confidence = low`), never dropped. The
-   sudo re-probe that would attribute them is 054 D3 / 057 scope, not here.
+2. **Honest reach — a port-recovery path, run every sweep.** Unprivileged, `/proc/<pid>/fd` of
+   another user's process is unreadable — the same kernel check that blanks `ss`'s column. So the
+   join recovers **PIDs** only in a narrow population: a port-listing tool that showed **no**
+   process column at all (e.g. **busybox `netstat`**, or an `ss` without `-p` support) — a normal
+   `ss -ltnp` already attributes the login user's own sockets, and a *foreign* socket's fd dir is
+   unreadable to the fallback for the very same reason its `ss` column was blank. On a normal host
+   the fallback is therefore not primarily a PID-recovery path but a **port-recovery** path: it
+   guarantees an unattributed listener is emitted as a *port* (null PID, `confidence = low`), never
+   dropped. **Cadence & cost (accepted):** because virtually every host runs at least one
+   root-owned listener (sshd), an unattributed listener almost always exists, so the fallback probe
+   runs on **essentially every discovery** — two extra forks per sweep, cheap beside the per-PID
+   `/proc` reads already done, and Decision 1's cross-channel reconciliation keeps its output from
+   becoming noise. The sudo re-probe that would attribute foreign sockets is 054 D3 / 057 scope,
+   not here.
 3. **`exe` is a fallback context signal, not a new primary.** For a `PROCESS`/`SYSTEMD` PID whose
-   `cwd` is unreadable or is a boundary root (`/` or a member of `ContextMapper.boundaryRoots()`),
-   read `readlink /proc/<pid>/exe`; when the exe lives **outside** the fixed packaged-binary
-   prefixes `{/usr, /bin, /sbin, /lib, /snap}`, resolve the context from the exe's parent
-   directory through the existing `ContextMapper` seam (the wrapper rule collapses
-   `/opt/app/bin/server` → `/opt/app`). cwd stays primary (055's decision stands); appName
-   derivation is untouched (D5 basename seed).
+   `cwd` **resolves to a boundary root** (`/` or a member of `ContextMapper.boundaryRoots()` — the
+   systemd `WorkingDirectory`-unset case), read `readlink /proc/<pid>/exe`. The *cwd-unreadable*
+   case is deliberately **not** a trigger: `/proc/<pid>/cwd` and `/proc/<pid>/exe` sit behind the
+   **same** ptrace-mode access check, so a PID with an unreadable cwd has an equally unreadable
+   exe — that arm would be dead; only the boundary-root arm can fire. The link target is
+   **normalised** first: a trailing `" (deleted)"` suffix (a binary replaced since start — exactly
+   the redeploy case this targets) is stripped and the real path used, and any target still not
+   absolute is rejected (the PID falls back to cwd/none). When the normalised exe lives **outside**
+   the fixed packaged-binary prefixes `{/usr, /bin, /sbin, /lib, /lib64, /snap}`
+   (`PACKAGED_BINARY_ROOTS`), resolve the context from the exe's parent directory through the
+   existing `ContextMapper` seam (the wrapper rule collapses `/opt/app/bin/server` → `/opt/app`).
+   cwd stays primary (055's decision stands); appName derivation is untouched (D5 basename seed).
 4. **nginx real root via `nginx -T`.** The Decision-5 verify step for the nginx fingerprint runs
    fixed-argv `nginx -T` (read-only config dump), parses `root <path>;` directives, and takes the
    most frequent root as the verified data dir fed to context resolution. Denied or absent
@@ -102,8 +127,10 @@ private static final String PORT_FALLBACK_SCRIPT = String.join("\n",
 - `L <hexAddr:hexPort> <inode>` lines: decode the port as `Integer.parseInt(hex, 16)` from the
   token after the last `:` of field 2 (works for tcp and tcp6 rows; the header row's `$4` is
   `st`, never `0A`, so no header guard is needed).
-- `F <pid> socket:[<inode>]` lines: one `ls -l` invocation over all fd dirs (two forks total on
-  the target); unreadable dirs vanish into `2>/dev/null` — precisely the foreign-PID case.
+- `F <pid> socket:[<inode>]` lines: one `ls -l` invocation over all fd dirs (the whole fallback is
+  a single `sh -c` — an `awk` over the two `/proc/net` files, then `ls` piped to a second `awk`: a
+  handful of forks, all on the target); unreadable dirs vanish into `2>/dev/null` — precisely the
+  foreign-PID case.
 - Join in Java: `Map<inode, port>` × `Map<inode, pid>` → attributed listeners; leftover L-rows →
   unattributed listeners.
 
@@ -118,36 +145,48 @@ Changes around it:
 - The classify loop (:201–244) short-circuits a null-PID listener before any `/proc/<pid>` read:
   no `cmdline`/`runtimeOf`/`resolveContext` call, family `GENERIC`,
   `appName = sanitize(null, port)` (→ `app-<port>`), `runtime = process`, `confidence = "low"`,
-  `sourceNote = "unattributed listener · discovered via port :<port> · owner unreadable"`.
-  The `isDockerProxy` skip (:206) only applies to attributed listeners; an unattributed port that
-  is really a docker-proxy publish stays a low-confidence record until the Docker-branch spec
+  `sourceNote = "unattributed listener · discovered via port :<port> · owner unreadable"` — **but
+  first reconciled (Decision 1): the record is dropped when some other channel (an attributed
+  listener this sweep, or a 056 systemd/interpreter/cron record) already owns the same
+  `(addr, port)`**. The union's final emit therefore keys on `(addr, port)`, an `ss`-attributed
+  record beating an unattributed one, so only genuinely-unclaimed ports surface an `app-<port>`
+  card. The `isDockerProxy` skip (:206) only applies to attributed listeners; an unattributed port
+  that is really a docker-proxy publish stays a low-confidence record until the Docker-branch spec
   (056 deferral item 1) supplies published-port truth.
 
 ### The `exe` signal
 
 - New `exePath(ssh, target, pid)`: fixed argv `readlink /proc/<pid>/exe` (validated integer PID,
-  the :532 pattern).
-- `resolveContext` (:522): when `cwdPath` is null, `/`, or in `ContextMapper.boundaryRoots()`
-  (`ContextMapper.java:53`-adjacent constant sets), and `exePath` is non-null and not under
-  `{/usr, /bin, /sbin, /lib, /snap}` (new fixed set `PACKAGED_BINARY_ROOTS`), resolve via the
-  existing `resolveContextForDir(ssh, target, parentDir(exe))` (:736) — logical + `readlink -f`
-  physical + lazy marker predicate all reused, zero new mapper logic.
+  the :532 pattern). Its result is **normalised** — strip a trailing `" (deleted)"`, then require
+  an absolute path or return null.
+- `resolveContext` (:522): when `cwdPath` resolves to `/` or a member of
+  `ContextMapper.boundaryRoots()` (`ContextMapper.java:53`-adjacent constant sets) — **not** the
+  unreadable-cwd case (R1: the same ptrace check ⇒ exe equally unreadable) — and the normalised
+  `exePath` is non-null and not under `{/usr, /bin, /sbin, /lib, /lib64, /snap}` (new fixed set
+  `PACKAGED_BINARY_ROOTS`), resolve via the existing
+  `resolveContextForDir(ssh, target, parentDir(exe))` (:736) — logical + `readlink -f` physical +
+  lazy marker predicate all reused, zero new mapper logic.
 
 ### nginx real root
 
 - `ServiceCatalog.Service` (`ServiceCatalog.java:36`) is untouched; the nginx-specific verify
   lives beside `verifiedDataDir` (:711): when the fingerprinted row is nginx and
   `Probes.commandExists(ssh, target, "nginx")`, run fixed argv `List.of("nginx", "-T")`, collect
-  every `root <path>;` directive (regex `^\s*root\s+([^;\s]+)\s*;`), and return the modal root;
-  empty/denied output → `service.dataDir()` as today.
+  every `root <path>;` directive (regex `^\s*root\s+"?([^;"\s]+)"?\s*;` — surrounding quotes
+  stripped), **discard** any capture containing `$` (a variable root like `root $app_root;` is not
+  a literal path) and any stock default-server root (`/usr/share/nginx/html`, `/var/www/html`), and
+  return the **modal** root of what remains; empty/denied/all-filtered output → `service.dataDir()`
+  as today.
 
 ### Relative interpreter-script resolution
 
 - `interpreterScript` (:652) returns the first non-flag token unconditionally; acceptance moves
   to the caller (`interpreterApps` :620): absolute → accept; else read the PID's cwd (`cwdPath`),
-  build `<cwd>/<token>`, validate against `[A-Za-z0-9._/-]+`, and accept iff fixed argv
-  `List.of("ls", candidate)` yields output (existence check; the :745 `readlink -f` precedent for
-  passing a discovered path as one argv element). Unreadable cwd → apply the old
+  build `<cwd>/<token>`, validate against `[A-Za-z0-9._/-]+`, and accept iff a fixed-argv **file**
+  test passes — `List.of("ls", "-ld", candidate)` returns a single line whose mode column does not
+  begin with `d` (a directory hit like `python3 somedir` is **rejected**, not taken as an
+  app-script; the :745 `readlink -f` precedent covers passing a discovered path as one argv
+  element). Unreadable cwd → apply the old
   absolute-or-`SCRIPT_ARG` rule (:662) so behaviour never regresses. The resolved absolute path
   feeds `baseName` for the appName (:639) exactly as before.
 
@@ -158,13 +197,28 @@ Changes around it:
   plain JUnit in `discovery/AppMonitorDiscovererTest` (module-level package per CONTRIBUTING §6);
   end-to-end sweeps via the existing `FakeSshExecutor` keyed on `PORT_FALLBACK_SCRIPT` and the
   new fixed argvs, including: blank-users `ss` line ⇒ low-confidence record (not dropped),
-  no-`ss` host ⇒ inventory from the fallback, foreign socket ⇒ null-PID port survives.
+  no-`ss` host ⇒ inventory from the fallback, foreign socket ⇒ null-PID port survives,
+  **`(addr,port)` reconciliation** (a systemd/fingerprint record for `:80` suppresses the `app-80`
+  unattributed card; `127.0.0.1:8080` and `0.0.0.0:8080` both survive; an `ss`-attributed record
+  beats a fallback one; a shared inode across preforked PIDs picks the lowest), **exe
+  normalisation** (a `… (deleted)` target is stripped then resolved; a non-absolute target is
+  rejected; the unreadable-cwd arm never triggers), **nginx `-T`** (quoted root unquoted; a
+  `$`-variable and a stock `/usr/share/nginx/html` root filtered; modal root chosen), and
+  **directory rejection** (`python3 somedir` is not accepted as a script).
 
 ## Known Gaps
 
 - **Foreign-socket PID attribution stays unresolved** — the fd join cannot cross the user
   boundary without privilege; the on-demand sudo re-probe is 054 D3, owned by 057. This spec
   only guarantees the *port* is never silently lost.
+- **Unclaimed loopback daemons stay a low-confidence card.** After Decision 1's cross-channel
+  reconciliation, a port no channel could identify (typically a loopback-only daemon) still surfaces
+  as a single `app-<port>` `confidence=low` record — never doubled, but not resolved to a name
+  either. **059 note:** the UI should render these de-emphasised (a low-confidence tail), not as
+  peers of identified apps.
+- **A venv interpreter resolves to `…/venv`.** For `/opt/app/venv/bin/python` (exe outside the
+  packaged roots), the wrapper rule collapses `…/venv/bin` → `…/venv`, one hop short of the app
+  root — an accepted degrade; cwd (when usable) still yields the true app folder.
 - **TCP only.** `/proc/net/udp{,6}` and unix sockets are out, mirroring today's `ss -ltnp`
   scope; a UDP service is still invisible to the listening sweep.
 - **Docker published ports remain the Docker branch's** (056 deferral item 1, a separate spec):
