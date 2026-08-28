@@ -2085,7 +2085,9 @@
                   diskBytes: hostDiskTotal[m.machineId]
                 };
                 return Promise.all([
-                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores),
+                  // spec-057: thread the root-FS denominator so the native disk axis divides
+                  // by the SAME denom.diskBytes applyDockerReading uses (OTHER subtracts cleanly).
+                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores, denom.diskBytes),
                   pollDockerConsumers(m, selectedNamed(m), denom)
                 ]);
               }).then(paint);
@@ -2280,6 +2282,10 @@
   function checkKind(action) {
     var n = (action.name || "").toLowerCase();
     if (n.indexOf("process") >= 0 || n.indexOf("proc") >= 0) return "process";
+    // spec-057 footprint axes: ram (PSS) and disk (du) are first-class metric-kinds
+    // alongside the cpu-rate probe, each folded onto its own host denominator below.
+    if (n.indexOf("ram") >= 0 || n.indexOf("mem") >= 0) return "ram";
+    if (n.indexOf("disk") >= 0) return "disk";
     if (n.indexOf("cpu") >= 0 || n.indexOf("load") >= 0) return "cpu";
     if (n.indexOf("health") >= 0 || n.indexOf("live") >= 0 || n.indexOf("ping") >= 0
         || n.indexOf("readiness") >= 0) return "liveness";
@@ -2298,24 +2304,69 @@
   }
 
   /**
-   * Sum the process-tree %CPU from a native cpu-probe stdout (spec-032/039). The probe
-   * emits a `## pid N` header per tree, then `ps -o pid=,ppid=,pcpu=,comm=` rows whose
-   * 3rd whitespace field is that PID's lifetime %cpu (per-core, can exceed 100). Header
-   * lines and the `no listener on port …` sentinel carry no numeric 3rd field and are
-   * skipped. null if nothing parses, so the axis degrades to — (never a silent 0). The
-   * summation caveats (single ps level, naïve backend double-count) are spec-032's.
+   * Sum PSS (kB) from a spec-057 ram-probe stdout into whole MB, or null if absent. PSS
+   * (proportional set size) is the honest per-context RAM figure — summing it across N
+   * workers that share libraries does NOT overcount, unlike summing RSS. Each `## pid N`
+   * block emits `Pss: <kB> kB`; on a procfs denial the probe emits VmRSS + a
+   * `ram_confidence=low` marker instead (parsed by parseRssMb / ramConfidenceLow).
    */
-  function parseAppCpu(text) {
+  function parsePss(text) {
     if (!text) return null;
     var total = 0, seen = false;
     text.split(/\r?\n/).forEach(function (ln) {
-      var t = ln.trim();
-      if (!t || t.indexOf("##") === 0) return;   // blanks + "## pid N" headers
-      var cols = t.split(/\s+/);                  // pid ppid pcpu comm…
-      if (cols.length < 3 || !/^\d+(\.\d+)?$/.test(cols[2])) return;
-      total += parseFloat(cols[2]); seen = true;
+      var m = ln.match(/Pss:\s+(\d+)\s*kB/i);
+      if (m) { total += parseInt(m[1], 10); seen = true; }
     });
-    return seen ? total : null;
+    return seen ? Math.round(total / 1024) : null;
+  }
+
+  /** Whether a ram-probe degraded to the RSS upper-bound (procfs denied) — a label, spec-057. */
+  function ramConfidenceLow(text) {
+    return !!(text && /ram_confidence=low/.test(text));
+  }
+
+  /**
+   * Compute a cross-core %CPU from a spec-057 cpu-RATE probe stdout: two /proc/<pid>/stat
+   * samples (`## s0` / `## s1`) a MEASURED Δt apart (`t0=`/`t1=` epoch seconds), each line
+   * `pid=P ticks=(utime+stime) starttime=S`. Per pid present in both samples with an
+   * UNCHANGED starttime (guarding PID reuse), Δticks = s1−s0; the sum ÷ CLK_TCK ÷ Δt × 100 is
+   * the cross-core percent (Σ per-process core-fractions × 100; may exceed 100, matching
+   * denom.cores). null when the interval or samples are missing — the axis then degrades to —.
+   */
+  function parseStatTicks(text) {
+    if (!text) return null;
+    var clk = 100, t0 = null, t1 = null, seg = null, s0 = {}, s1 = {};
+    text.split(/\r?\n/).forEach(function (ln) {
+      var t = ln.trim(), m;
+      if ((m = t.match(/^clk_tck=(\d+)/))) { clk = parseInt(m[1], 10) || 100; return; }
+      if ((m = t.match(/^t0=([\d.]+)/))) { t0 = parseFloat(m[1]); return; }
+      if ((m = t.match(/^t1=([\d.]+)/))) { t1 = parseFloat(m[1]); return; }
+      if (t === "## s0") { seg = s0; return; }
+      if (t === "## s1") { seg = s1; return; }
+      if (seg && (m = t.match(/^pid=(\d+)\s+ticks=(\d+)\s+starttime=(\d+)/))) {
+        seg[m[1]] = { ticks: parseInt(m[2], 10), st: m[3] };
+      }
+    });
+    if (t0 == null || t1 == null) return null;
+    var dt = t1 - t0;
+    if (!(dt > 0)) return null;
+    var sum = 0, seen = false;
+    Object.keys(s1).forEach(function (pid) {
+      var a = s0[pid], b = s1[pid];
+      if (a && b && a.st === b.st) {
+        var d = b.ticks - a.ticks;
+        if (d >= 0) { sum += d; seen = true; }
+      }
+    });
+    if (!seen) return null;
+    return (sum / clk) / dt * 100;
+  }
+
+  /** Bytes from a spec-057 disk-probe stdout (`du_bytes=<n>`, already bytes), or null. */
+  function parseDuBytes(text) {
+    if (!text) return null;
+    var m = text && text.match(/du_bytes=(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
   }
 
   /**
@@ -2471,16 +2522,15 @@
   /**
    * One axis meter on a consumer card. A known value renders the reused .meter
    * (RAM carries its RSS as the sub-line); a null value renders — with an honest
-   * note: a native process has no attributable disk, an axis with no approved
-   * monitor says so, everything else is simply "no data" yet.
+   * note: an axis with no approved monitor says so, everything else is simply
+   * "no data" yet. (spec-057 fills the native disk axis via the du probe, so it is
+   * no longer permanently "n/a"; its rich confidence surface is spec-059's.)
    */
   function consumerAxis(label, consumer) {
     var key = label.toLowerCase();
     var pct = consumer[key];
     if (pct == null) {
-      var note = (key === "disk")
-        ? (consumer.source === "DOCKER" ? "n/a" : "native — n/a")
-        : (consumer._anyApproved === false ? "approve to see" : "no data");
+      var note = (consumer._anyApproved === false) ? "approve to see" : "no data";
       return h("div", { class: "meter" },
         h("div", { class: "meter-head" },
           h("span", { class: "meter-label", text: label }),
@@ -2648,13 +2698,16 @@
   // fill each consumer's RAM axis (RSS / host total) and CPU axis (process-tree
   // %cpu ÷ host cores, spec-039) + UP/DOWN + probe states.
 
-  function pollConsumers(machineId, consumers, hostTotal, cores) {
+  function pollConsumers(machineId, consumers, hostTotal, cores, diskBytes) {
     var pollable = consumers.filter(function (c) { return (c.checks || []).length && c.port != null; });
     if (!pollable.length) return Promise.resolve();
     var groups = {};
     pollable.forEach(function (c) {
       (c.checks || []).forEach(function (chk) {
         if (chk.approvalState !== "APPROVED" || chk.changedSinceApproval) return;
+        // The sudo re-probe variants (spec-057 Decision 6) are on-demand controls, never
+        // auto-run in the poll loop — they run only when the operator triggers them (spec-059).
+        if (chk.sudo) return;
         if (!appPortListParamName(chk)) return;
         var g = groups[chk.id] || (groups[chk.id] = { action: chk, apps: [], seen: {} });
         if (!g.seen[c.name]) { g.seen[c.name] = true; g.apps.push({ appName: c.name, port: c.port }); }
@@ -2662,7 +2715,7 @@
     });
     var ids = Object.keys(groups);
     if (!ids.length) {
-      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal, cores); });
+      pollable.forEach(function (c) { applyConsumerReading(c, null, hostTotal, cores, diskBytes); });
       return Promise.resolve();
     }
     var outputs = {}; // checkId → (appName → { stdout, exit })
@@ -2670,7 +2723,7 @@
       return runProbeForApps(machineId, groups[id].action, groups[id].apps)
         .then(function (byApp) { outputs[id] = byApp; });
     })).then(function () {
-      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal, cores); });
+      pollable.forEach(function (c) { applyConsumerReading(c, outputs, hostTotal, cores, diskBytes); });
     });
   }
 
@@ -2684,8 +2737,9 @@
    * (null against 032 — a native process has no attributable disk). An absent cpu
    * reading or an unknown `cores` leaves CPU null → — (honesty rule, never a silent 0).
    */
-  function applyConsumerReading(c, outputs, hostTotal, cores) {
-    var livenessUp = null, processUp = null, rssMb = null, cpuRaw = null, rows = [];
+  function applyConsumerReading(c, outputs, hostTotal, cores, diskBytes) {
+    var livenessUp = null, processUp = null, rssMb = null, pssMb = null, ramLow = false;
+    var cpuRaw = null, duBytes = null, rows = [];
     (c.checks || []).forEach(function (chk) {
       var res = outputs && outputs[chk.id] && outputs[chk.id][c.name];
       var kind = checkKind(chk);
@@ -2697,10 +2751,29 @@
           var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
           processUp = listener;
           state = listener ? "up" : "down";
-        } else if (kind === "cpu") {
-          var pcpu = parseAppCpu(res.stdout);
-          if (pcpu != null) cpuRaw = (cpuRaw == null ? 0 : cpuRaw) + pcpu;
+        } else if (kind === "ram") {
+          // Honest RAM: PSS summed to the context (spec-057). On procfs denial the probe
+          // falls back to VmRSS + a low-confidence label — a ≤ upper bound, never the same
+          // metric — so parsePss is null and we take the RSS value, flagged.
+          var pss = parsePss(res.stdout);
+          if (pss != null) { pssMb = (pssMb == null ? 0 : pssMb) + pss; }
+          else {
+            var rrss = parseRssMb(res.stdout);
+            if (rrss != null) { pssMb = (pssMb == null ? 0 : pssMb) + rrss; ramLow = true; }
+          }
+          if (ramConfidenceLow(res.stdout)) ramLow = true;
           state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
+        } else if (kind === "cpu") {
+          // A RATE now (spec-057), not the lifetime average: Δ jiffies over the measured Δt.
+          var pct = parseStatTicks(res.stdout);
+          if (pct != null) cpuRaw = (cpuRaw == null ? 0 : cpuRaw) + pct;
+          state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
+        } else if (kind === "disk") {
+          // Native disk footprint (spec-057), finally attributed: root-FS bytes / the same
+          // root-FS denominator docker uses, so it subtracts cleanly from OTHER (spec-041).
+          var b = parseDuBytes(res.stdout);
+          if (b != null) duBytes = (duBytes == null ? 0 : duBytes) + b;
+          state = b != null ? "up" : "na";
         } else if (kind === "liveness") {
           livenessUp = res.exit === 0;
           state = livenessUp ? "up" : "down";
@@ -2715,11 +2788,18 @@
     c._anyApproved = (c.checks || []).some(function (x) {
       return x.approvalState === "APPROVED" && !x.changedSinceApproval;
     });
+    // RAM axis prefers the honest PSS figure; falls back to the process probe's RSS when no
+    // ram probe is present. _rssMb still carries RSS for the card's sub-line; _ramLow marks a
+    // degraded (RSS upper-bound) reading for 059's confidence badge.
     c._rssMb = rssMb;
-    c.ram = clientMemPct(rssMb, hostTotal);
-    // % of host = summed process-tree %cpu ÷ logical cores (spec-039), the same
-    // `denom.cores` docker uses. Absent reading / unknown cores → leave null (—).
+    c._ramLow = ramLow;
+    var ramMb = pssMb != null ? pssMb : rssMb;
+    c.ram = clientMemPct(ramMb, hostTotal);
+    // % of host: cross-core cpu-rate ÷ logical cores (the same denom.cores docker uses);
+    // native disk: du bytes ÷ the root-FS denominator. Absent reading / unknown denominator →
+    // leave the axis null (—), never a silent 0 that would wrongly shrink OTHER.
     c.cpu = (cpuRaw != null && cores) ? clampPct(Math.round(cpuRaw / cores)) : c.cpu;
+    c.disk = (duBytes != null && diskBytes) ? clampPct(Math.round(duBytes / diskBytes * 100)) : c.disk;
   }
 
   // ---- docker consumer poll (spec-037) -------------------------------------
