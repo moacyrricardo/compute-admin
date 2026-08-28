@@ -1,6 +1,6 @@
 # 070 — SSH session reuse for the discovery probe path
 
-Status: doing
+Status: done
 Branch: moacyrricardo/bol-899-ssh-session-reuse
 Issue:  BOL-899
 
@@ -194,3 +194,32 @@ even complete `connect()` — see `MinaSshExecutorTest`):
 - **`command -v ss` non-interactive PATH.** Whether `ss` (often `/usr/sbin`) resolves in
   the login user's non-interactive shell is a **separate** probe-robustness question from
   connection reuse; not addressed here.
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-899-ssh-session-reuse` (BOL-899), PR #90. The build follows the
+Decision; how it differed from the spec sketch:
+
+- **`withSession` / `SshSession` / `SessionWork` are top-level types in the `ssh` package**,
+  not nested inside `SshExecutor` as the sketch showed. Semantics are identical (a `default`
+  `withSession` bridges to per-call `exec` via `SshSession.of`; only `MinaSshExecutor`
+  overrides it to reuse one authenticated `ClientSession`). Top-level keeps the imports clean
+  across the wide discoverer blast radius.
+- **Result wrapper = `DiscoveryService.DiscoveryOutcome(recipes, partial, failedFamilies)`**;
+  `DiscoveryDtos.DiscoveryResult` gained `partial` + `failedFamilies` (family enum names).
+  `DiscoveryRS` needed no edit — its `DiscoveryResult.of(...)` factory absorbed the new type.
+  The MCP `DiscoverRecipesTool` now returns `{proposals, partial, failedFamilies}`; `app.js`
+  toasts "some families could not be probed" on a partial run.
+- **Total-outage path.** When the one session can't even be opened, discovery degrades to an
+  empty `partial` result rather than a 502 — exactly the spec's `connectionLost` pseudo-code.
+  Covered by `DiscoveryConnectionLostTest`.
+- **`MachineFactsProbe`** was also scoped to a single session (best-effort catch preserved).
+- **Existing discoverer/service tests were migrated to the `SshSession` signature in the same
+  commit as the production signature change** (not the tests commit) so the tree compiles at
+  every commit (CONTRIBUTING §3). The tests commit adds only genuinely new tests.
+- **Deferred (out of scope, for a follow-up spec):** the bare single-shot `exec()` path
+  (`ConnectivityCheckJob` / `ConnectionTestService` / `ScriptPinService`) still wraps only
+  checked `IOException`, not MINA's unchecked `RuntimeSshException`, so a rate-limit refusal
+  there can still surface as a raw 500. The spec scopes the wrapping contract to `withSession`
+  / `SshSession.exec` and says to leave the streaming `run()`/cancel path exactly as is, so
+  hardening bare `exec()` was left for its own decision.
