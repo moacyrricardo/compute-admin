@@ -21,8 +21,8 @@ Specs dir:     specs/          # index is specs/catalog.md (lowercase)
 - Commit subjects: `BOL-<n> Short description` (the Linear issue id); use `spec-NNN …` only for a spec that has no issue yet.
 - `CONTRIBUTING.md` is authoritative for commit/PR division and code style.
 - API modules: **None** (see `## API Modules`) — finish-branch skips the API Diff.
-- Version-bump policy: **none**. The app is unversioned (`0.0.1-SNAPSHOT` in `pom.xml`);
-  shipping a spec never bumps it.
+- Version-bump policy: **none**. The app's version (`0.1.0-SNAPSHOT` in `pom.xml`) is bumped
+  only by a deliberate manual decision; shipping a spec never bumps it.
 
 ## Running (dev)
 
