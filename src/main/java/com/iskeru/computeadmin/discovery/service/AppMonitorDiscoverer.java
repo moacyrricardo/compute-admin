@@ -13,6 +13,7 @@ import com.iskeru.computeadmin.ssh.SshTarget;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -147,6 +148,31 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             "  ps -o pid=,ppid=,pcpu=,comm= --ppid \"$pid\" 2>/dev/null",
             "done");
 
+    /**
+     * The fixed {@code /proc/net/tcp{,6}} port-recovery fallback (spec-062 Decision 1): when a
+     * LISTEN socket's owner is unreadable (an {@code ss}/{@code netstat} blank process column, or
+     * neither tool present), read the LISTEN rows ({@code st == 0A}) of {@code /proc/net/tcp} +
+     * {@code /proc/net/tcp6} — printing each socket's hex {@code local_address} ({@code $2}) and
+     * {@code inode} ({@code $10}) — then scan every {@code /proc/<pid>/fd} for {@code socket:[<inode>]}
+     * targets so Java can join {@code inode → PID}. The body is a source-controlled constant with
+     * <strong>zero bound inputs</strong>, run no-sudo (S4/S9-safe); unreadable dirs vanish into
+     * {@code 2>/dev/null} — exactly the foreign-PID case that cannot be attributed.
+     */
+    private static final String PORT_FALLBACK_SCRIPT = String.join("\n",
+            "awk '$4==\"0A\" {print \"L\", $2, $10}' /proc/net/tcp /proc/net/tcp6 2>/dev/null",
+            "ls -l /proc/[0-9]*/fd 2>/dev/null | awk '/^\\/proc\\// {sub(/:$/,\"\"); split($0,a,\"/\"); pid=a[3]}"
+                    + " /socket:\\[/ {print \"F\", pid, $NF}'");
+
+    /** The fixed packaged-binary prefixes an {@code exe} target under is <em>not</em> a deploy folder (spec-062 D3). */
+    private static final Set<String> PACKAGED_BINARY_ROOTS = Set.of(
+            "/usr", "/bin", "/sbin", "/lib", "/lib64", "/snap");
+
+    /** An nginx {@code root <path>;} directive (surrounding quotes stripped by the capture group). */
+    private static final Pattern NGINX_ROOT = Pattern.compile("^\\s*root\\s+\"?([^;\"\\s]+)\"?\\s*;");
+
+    /** nginx stock default-server document roots to discard when picking the modal real root (spec-062 D4). */
+    private static final Set<String> NGINX_DEFAULT_ROOTS = Set.of("/usr/share/nginx/html", "/var/www/html");
+
     /** ss line's owning process spec: {@code (("java",pid=1234,fd=10))}. */
     private static final Pattern SS_PROC = Pattern.compile("\\(\"([^\"]+)\",pid=(\\d+)");
 
@@ -197,8 +223,17 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         // sibling app-scripts collapsing to it (grouping metadata only, spec-055 D4).
         List<Resolved> resolved = new ArrayList<>();
         Set<String> listeningPids = new HashSet<>();
+        Set<String> claimedKeys = new HashSet<>();
+        List<Listener> unattributed = new ArrayList<>();
         boolean prometheus = false;
         for (Listener listener : listeners) {
+            // spec-062 Decision 1: a genuinely unattributed listener (no owner the login user
+            // could read) carries no PID, so it can drive no /proc read. Defer it until every
+            // channel has claimed its ports, then reconcile (below) — never read /proc/<null>.
+            if (!listener.attributed()) {
+                unattributed.add(listener);
+                continue;
+            }
             // Decision 4: a published container port may be owned on the host by
             // `docker-proxy` (iptables DNAT). Its /proc path is never a native app-folder —
             // published-port truth belongs to the Docker branch (docker inspect), so the
@@ -207,6 +242,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 continue;
             }
             listeningPids.add(listener.pid());
+            claimedKeys.add(listener.key());
             String cmdline = cmdline(ssh, target, listener.pid());
             Runtime runtime = runtimeOf(ssh, target, listener.pid());
             String container = runtime == Runtime.DOCKER ? containerName(ssh, target, listener.pid()) : null;
@@ -250,6 +286,22 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         // against the listening set.
         resolved.addAll(nonListeningApps(ssh, target, listeningPids));
 
+        // spec-062 Decision 1 reconciliation: a listener no channel could attribute becomes a
+        // single degraded `app-<port>` record — null owner, GENERIC, runtime process, confidence
+        // low, a path-free sourceNote — but only when no attributed/fingerprinted record already
+        // owns its (addr, port) (a systemd/fingerprint-owned port is never doubled as an app card),
+        // and de-duplicated by (addr, port) so 127.0.0.1:8080 and 0.0.0.0:8080 both survive.
+        Set<String> emittedUnattributed = new HashSet<>();
+        for (Listener u : unattributed) {
+            if (claimedKeys.contains(u.key()) || !emittedUnattributed.add(u.key())) {
+                continue;
+            }
+            resolved.add(new Resolved(Family.GENERIC, sanitize(null, u.port()), u.port(),
+                    Runtime.PROCESS.label, null,
+                    "unattributed listener · discovered via port :" + u.port() + " · owner unreadable",
+                    "low"));
+        }
+
         if (resolved.isEmpty()) {
             return List.of();
         }
@@ -290,13 +342,197 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
 
     // --- probes -------------------------------------------------------------
 
-    /** Listening TCP sockets owned by the login user, via {@code ss} (netstat fallback). */
+    /**
+     * The listening TCP inventory (spec-062 Decision 1): {@code ss -ltnp} (or {@code netstat}
+     * fallback) parsed into {@link Listener}s — attributed where the tool named the owner,
+     * <strong>unattributed</strong> (null pid) where it left the process column blank. Whenever
+     * any unattributed listener survives — or neither tool produced output — the constant
+     * {@code /proc/net/tcp{,6}} + fd-inode fallback runs <em>once</em> and is merged in by
+     * {@code (addr, port)}: an {@code ss}-attributed listener always wins, an unattributed one is
+     * filled with a joined PID, and a port no tool saw is added. The inventory is therefore never
+     * silently short a listening port.
+     */
     private List<Listener> listeners(SshExecutor ssh, SshTarget target) {
         List<String> ss = Probes.lines(ssh, target, List.of("ss", "-ltnp"));
-        if (!ss.isEmpty()) {
-            return parseSs(ss);
+        List<Listener> base = !ss.isEmpty() ? parseSs(ss)
+                : parseNetstat(Probes.lines(ssh, target, List.of("netstat", "-ltnp")));
+        boolean anyUnattributed = base.stream().anyMatch(l -> !l.attributed());
+        if (!base.isEmpty() && !anyUnattributed) {
+            return base;
         }
-        return parseNetstat(Probes.lines(ssh, target, List.of("netstat", "-ltnp")));
+        return mergeFallback(base, fallbackListeners(ssh, target));
+    }
+
+    /**
+     * Merges the {@code /proc/net/tcp{,6}} fallback into the {@code ss}/{@code netstat} base,
+     * keyed on {@code (addr, port)} (spec-062 Decision 1): an already-attributed base listener
+     * wins over any fallback attribution for the same key; an unattributed base listener is
+     * upgraded when the fallback join recovered its PID; a key the base never held is added
+     * (a no-{@code ss} host, or a foreign socket whose PID stayed unrecoverable — a null-PID port
+     * that still survives). {@code LinkedHashMap} keeps a stable, first-seen order.
+     */
+    private List<Listener> mergeFallback(List<Listener> base, List<Listener> fallback) {
+        Map<String, Listener> byKey = new LinkedHashMap<>();
+        for (Listener l : base) {
+            byKey.putIfAbsent(l.key(), l);
+        }
+        for (Listener f : fallback) {
+            Listener existing = byKey.get(f.key());
+            if (existing == null) {
+                byKey.put(f.key(), f);
+            } else if (!existing.attributed() && f.attributed()) {
+                byKey.put(f.key(), new Listener(existing.addr(), existing.port(), f.pid(), f.process()));
+            }
+        }
+        return new ArrayList<>(byKey.values());
+    }
+
+    /**
+     * The fallback listeners recovered from {@link #PORT_FALLBACK_SCRIPT}: each {@code L} row is a
+     * LISTEN socket ({@code hexAddr:hexPort inode}) decoded to an {@code (addr, port)}; each
+     * {@code F} row joins a {@code socket:[inode]} to a PID. A socket held by several preforked
+     * PIDs (a shared listening inode) resolves to the <strong>lowest</strong> PID — the master,
+     * which drives context derivation. A row whose inode never joins a PID stays an unattributed
+     * port (null PID), never dropped.
+     */
+    private List<Listener> fallbackListeners(SshExecutor ssh, SshTarget target) {
+        List<String> lines = Probes.lines(ssh, target, List.of("sh", "-c", PORT_FALLBACK_SCRIPT));
+        Map<String, String[]> inodeToEndpoint = new LinkedHashMap<>();
+        Map<String, String> inodeToPid = new HashMap<>();
+        for (String line : lines) {
+            String[] t = line.trim().split("\\s+");
+            if (t.length != 3) {
+                continue;
+            }
+            if (t[0].equals("L")) {
+                String[] endpoint = decodeHexEndpoint(t[1]);
+                if (endpoint != null) {
+                    inodeToEndpoint.putIfAbsent(t[2], endpoint);
+                }
+            } else if (t[0].equals("F")) {
+                String inode = extractInode(t[2]);
+                if (inode != null && t[1].matches("\\d+")) {
+                    String current = inodeToPid.get(inode);
+                    if (current == null || Long.parseLong(t[1]) < Long.parseLong(current)) {
+                        inodeToPid.put(inode, t[1]);
+                    }
+                }
+            }
+        }
+        List<Listener> out = new ArrayList<>();
+        for (Map.Entry<String, String[]> e : inodeToEndpoint.entrySet()) {
+            String[] endpoint = e.getValue();
+            out.add(new Listener(endpoint[0], Integer.parseInt(endpoint[1]), inodeToPid.get(e.getKey()), null));
+        }
+        return out;
+    }
+
+    /** The inode from a {@code socket:[12345]} fd target, or null when it is not a socket link. */
+    private String extractInode(String target) {
+        if (target.startsWith("socket:[") && target.endsWith("]")) {
+            return target.substring("socket:[".length(), target.length() - 1);
+        }
+        return null;
+    }
+
+    /**
+     * Decodes a {@code /proc/net/tcp{,6}} {@code local_address} token ({@code hexAddr:hexPort})
+     * into {@code {addr, port}} (spec-062 Decision 1). The hex address is little-endian per
+     * 32-bit word: an 8-hex IPv4 or a 32-hex IPv6; the port is a plain base-16 integer. Null when
+     * the token is malformed or the port is not positive.
+     */
+    private String[] decodeHexEndpoint(String token) {
+        int colon = token.lastIndexOf(':');
+        if (colon < 0) {
+            return null;
+        }
+        String hexAddr = token.substring(0, colon);
+        int port;
+        try {
+            port = Integer.parseInt(token.substring(colon + 1), 16);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (port <= 0) {
+            return null;
+        }
+        String addr = hexAddr.length() == 8 ? decodeHexIpv4(hexAddr)
+                : hexAddr.length() == 32 ? decodeHexIpv6(hexAddr) : null;
+        return addr == null ? null : new String[]{addr, Integer.toString(port)};
+    }
+
+    /** {@code 0100007F} (little-endian) → {@code 127.0.0.1}. */
+    private String decodeHexIpv4(String hex) {
+        try {
+            int b0 = Integer.parseInt(hex.substring(0, 2), 16);
+            int b1 = Integer.parseInt(hex.substring(2, 4), 16);
+            int b2 = Integer.parseInt(hex.substring(4, 6), 16);
+            int b3 = Integer.parseInt(hex.substring(6, 8), 16);
+            return b3 + "." + b2 + "." + b1 + "." + b0;
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * A 32-hex {@code /proc/net/tcp6} address → its canonical {@code ::}-compressed form (each
+     * 32-bit word is byte-reversed before formatting). All-zero → {@code ::} (the {@code [::]}
+     * any-interface bind), matching the {@code ss} {@code [::]} canonicalisation. Null on a parse
+     * error.
+     */
+    private String decodeHexIpv6(String hex) {
+        int[] groups = new int[8];
+        try {
+            byte[] b = new byte[16];
+            for (int w = 0; w < 4; w++) {
+                for (int i = 0; i < 4; i++) {
+                    int src = w * 8 + (3 - i) * 2;
+                    b[w * 4 + i] = (byte) Integer.parseInt(hex.substring(src, src + 2), 16);
+                }
+            }
+            for (int g = 0; g < 8; g++) {
+                groups[g] = ((b[g * 2] & 0xff) << 8) | (b[g * 2 + 1] & 0xff);
+            }
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return compressIpv6(groups);
+    }
+
+    /** Formats 8 16-bit groups as a lowercase IPv6 string, compressing the longest zero run to {@code ::}. */
+    private String compressIpv6(int[] groups) {
+        int bestStart = -1;
+        int bestLen = 0;
+        int runStart = -1;
+        int runLen = 0;
+        for (int i = 0; i < 8; i++) {
+            if (groups[i] == 0) {
+                if (runStart < 0) {
+                    runStart = i;
+                    runLen = 0;
+                }
+                runLen++;
+                if (runLen > bestLen) {
+                    bestLen = runLen;
+                    bestStart = runStart;
+                }
+            } else {
+                runStart = -1;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 8; i++) {
+            if (bestLen > 1 && i == bestStart) {
+                sb.append(i == 0 ? "::" : ":");
+                i += bestLen - 1;
+                continue;
+            }
+            if (sb.length() > 0 && sb.charAt(sb.length() - 1) != ':') {
+                sb.append(':');
+            }
+            sb.append(Integer.toHexString(groups[i]));
+        }
+        return sb.length() == 0 ? "::" : sb.toString();
     }
 
     /** The whitespace-normalised {@code /proc/<pid>/cmdline} (NUL-separated on disk). */
@@ -355,13 +591,28 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private List<Listener> parseSs(List<String> lines) {
         List<Listener> out = new ArrayList<>();
         for (String line : lines) {
-            if (!line.contains("LISTEN") || !line.contains("users:((")) {
+            if (!line.contains("LISTEN")) {
                 continue;
             }
-            Integer port = localPort(line);
+            String endpoint = localEndpoint(line);
+            if (endpoint == null) {
+                continue;
+            }
+            Integer port = portAfterColon(endpoint);
+            if (port == null) {
+                continue;
+            }
+            String addr = canonAddr(endpoint.substring(0, endpoint.lastIndexOf(':')));
             Matcher m = SS_PROC.matcher(line);
-            if (port != null && m.find()) {
-                out.add(new Listener(port, m.group(2), m.group(1)));
+            if (line.contains("users:((") && m.find()) {
+                out.add(new Listener(addr, port, m.group(2), m.group(1)));
+            } else {
+                // spec-062 Decision 1: an unprivileged `ss` prints the process column only for the
+                // login user's own sockets; a foreign-owned LISTEN renders with a BLANK users
+                // column. Keep it as an unattributed port (never read a blank column as "no
+                // process") — the /proc/net fallback then tries to recover a PID or, failing that,
+                // it survives as a low-confidence port.
+                out.add(new Listener(addr, port, null, null));
             }
         }
         return out;
@@ -370,43 +621,65 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private List<Listener> parseNetstat(List<String> lines) {
         List<Listener> out = new ArrayList<>();
         for (String line : lines) {
-            if (!line.contains("LISTEN") || !line.contains("/")) {
+            if (!line.contains("LISTEN")) {
                 continue;
             }
             String[] tokens = line.trim().split("\\s+");
-            Integer port = null;
+            String endpoint = null;
             String pidProg = null;
             for (String token : tokens) {
-                if (token.contains(":") && !token.contains("*")) {
-                    port = portAfterColon(token);
+                if (token.contains(":") && !token.contains("*") && portAfterColon(token) != null) {
+                    endpoint = token;
                 }
                 if (token.matches("\\d+/.+")) {
                     pidProg = token;
                 }
             }
-            if (port != null && pidProg != null) {
+            if (endpoint == null) {
+                continue;
+            }
+            int port = portAfterColon(endpoint);
+            String addr = canonAddr(endpoint.substring(0, endpoint.lastIndexOf(':')));
+            if (pidProg != null) {
                 int slash = pidProg.indexOf('/');
-                out.add(new Listener(port, pidProg.substring(0, slash), pidProg.substring(slash + 1)));
+                out.add(new Listener(addr, port, pidProg.substring(0, slash), pidProg.substring(slash + 1)));
+            } else {
+                // spec-062 Decision 1: busybox `netstat` (and an `ss` with no `-p` support) omit the
+                // process column entirely — keep every LISTEN line as an unattributed port so the
+                // fallback can recover it.
+                out.add(new Listener(addr, port, null, null));
             }
         }
         return out;
     }
 
-    /** The local port from an ss data line's "Local Address:Port" column. */
-    private Integer localPort(String line) {
+    /** The local endpoint token ({@code addr:port}) of an ss data line, or null. */
+    private String localEndpoint(String line) {
         for (String token : line.trim().split("\\s+")) {
-            // Skip only the process column (users:((...))). Do NOT skip a "*:PORT"
-            // token: an all-interfaces bind — the default for a JVM (Tomcat/Netty) —
-            // renders the LOCAL address as "*:8080" in ss. The peer column "*:*" is
-            // harmless here because portAfterColon returns null for a non-numeric tail.
-            if (token.contains(":") && !token.startsWith("users:")) {
-                Integer port = portAfterColon(token);
-                if (port != null) {
-                    return port;
-                }
+            // Skip only the process column (users:((...))). Do NOT skip a "*:PORT" token: an
+            // all-interfaces bind — the default for a JVM (Tomcat/Netty) — renders the LOCAL
+            // address as "*:8080" in ss. The peer column "*:*" is harmless: portAfterColon
+            // returns null for a non-numeric tail, so the local column (first numeric-tail hit)
+            // wins.
+            if (token.contains(":") && !token.startsWith("users:") && portAfterColon(token) != null) {
+                return token;
             }
         }
         return null;
+    }
+
+    /** Canonicalise an ss local-address so it matches the {@code /proc/net} decode: {@code *}/{@code [::]} → any-bind. */
+    private String canonAddr(String addr) {
+        if (addr.equals("*")) {
+            return "0.0.0.0";
+        }
+        if (addr.equals("[::]") || addr.equals("::")) {
+            return "::";
+        }
+        if (addr.startsWith("[") && addr.endsWith("]")) {
+            return addr.substring(1, addr.length() - 1);
+        }
+        return addr;
     }
 
     private Integer portAfterColon(String addr) {
@@ -932,8 +1205,23 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         return "docker-proxy".equals(process);
     }
 
-    /** One listening socket: its port, owning PID, and process name (login user only). */
-    private record Listener(int port, String pid, String process) {
+    /**
+     * One listening socket: its local {@code addr}, {@code port}, owning {@code pid} and
+     * {@code process} name. {@code pid}/{@code process} are {@code null} for an
+     * <strong>unattributed</strong> listener (spec-062 Decision 1): a LISTEN line whose
+     * process column {@code ss}/{@code netstat} left blank — an owner the login user cannot
+     * read — kept as a port with no owner rather than dropped. The {@code (addr, port)}
+     * {@link #key()} is the cross-channel de-duplication key: {@code 127.0.0.1:8080} and
+     * {@code 0.0.0.0:8080} are distinct listeners.
+     */
+    private record Listener(String addr, int port, String pid, String process) {
+        boolean attributed() {
+            return pid != null;
+        }
+
+        String key() {
+            return addr + "|" + port;
+        }
     }
 
     /**
