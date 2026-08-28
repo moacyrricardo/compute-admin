@@ -7,6 +7,7 @@ import org.apache.sshd.client.channel.ChannelExec;
 import org.apache.sshd.client.channel.ClientChannelEvent;
 import org.apache.sshd.client.keyverifier.AcceptAllServerKeyVerifier;
 import org.apache.sshd.client.session.ClientSession;
+import org.apache.sshd.common.RuntimeSshException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -118,6 +119,52 @@ public class MinaSshExecutor implements SshExecutor {
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         int exit = run(target, argv, sudo, out, err);
         return new ExecResult(exit, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Reuses <strong>one</strong> authenticated {@link ClientSession} across the whole
+     * scope (spec-070): connect + {@code auth().verify()} happen once, then every
+     * {@link SshSession#exec} opens its own {@link ChannelExec} on that live session.
+     * The session is closed in {@code finally} (try-with-resources). Only the buffered
+     * {@code exec} path is scoped here; {@code run(..., cancelKey)} (streaming/cancel,
+     * spec-026) is untouched and keeps its own per-call connect. Every transport
+     * failure — {@link IOException} or MINA's unchecked {@link RuntimeSshException} from
+     * the connect/auth/channel paths — is wrapped into {@link SshExecutionException} so a
+     * rate-limit refusal never escapes as a raw 500.
+     */
+    @Override
+    public <T> T withSession(SshTarget target, SessionWork<T> work) {
+        try (ClientSession session = client()
+                .connect(target.loginUser(), target.host(), target.port())
+                .verify(connectTimeout)
+                .getSession()) {
+            session.addPublicKeyIdentity(keyService.keyPair());
+            session.auth().verify(connectTimeout);
+            // A per-exec channel on the single live session; execOn wraps its own
+            // transport failures, so a mid-pass failure surfaces as SshExecutionException
+            // to the caller without being re-wrapped by the catch below.
+            return work.run((argv, sudo) -> execOn(session, target, argv, sudo));
+        } catch (IOException | RuntimeSshException e) {
+            throw new SshExecutionException(target, e);
+        }
+    }
+
+    /** Runs one command as a fresh {@link ChannelExec} on an already-open session. */
+    private ExecResult execOn(ClientSession session, SshTarget target, List<String> argv, boolean sudo) {
+        String command = assembleCommand(argv, sudo);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        try (ChannelExec channel = session.createExecChannel(command)) {
+            channel.setOut(out);
+            channel.setErr(err);
+            channel.open().verify(connectTimeout);
+            channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), execTimeout);
+            Integer exit = channel.getExitStatus();
+            int code = exit == null ? -1 : exit;
+            return new ExecResult(code, out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeSshException e) {
+            throw new SshExecutionException(target, e);
+        }
     }
 
     @Override

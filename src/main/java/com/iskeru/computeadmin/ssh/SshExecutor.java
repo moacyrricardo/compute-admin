@@ -26,6 +26,24 @@ public interface SshExecutor {
     /** Runs {@code argv} on {@code target} and returns the captured result. */
     ExecResult exec(SshTarget target, List<String> argv, boolean sudo);
 
+    /**
+     * Opens one scope over {@code target} and runs {@code work} against it, so a burst of
+     * probes in one operation costs <strong>one</strong> handshake instead of one per
+     * {@code exec} (spec-070). The <strong>default</strong> bridges to a per-call
+     * {@link #exec} (a session that reconnects each call), so dev/canned/test adapters
+     * need no change; {@code MinaSshExecutor} overrides it to reuse a single
+     * authenticated connection across the whole scope. Every transport failure — checked
+     * or MINA's unchecked {@code RuntimeSshException} — surfaces as
+     * {@link SshExecutionException}.
+     *
+     * <p>Only the buffered {@link #exec} path is scoped; the streaming
+     * {@link #execStreaming} / {@link #cancel} run path (spec-026) is single-shot by
+     * design and keeps its own connect.
+     */
+    default <T> T withSession(SshTarget target, SessionWork<T> work) {
+        return work.run(SshSession.of(this, target));
+    }
+
     /** Runs {@code argv} on {@code target}, streaming output to {@code sink} (spec 005). */
     void execStreaming(SshTarget target, List<String> argv, boolean sudo, OutputSink sink);
 
