@@ -409,6 +409,206 @@ class AppMonitorDiscovererTest {
         assertThat(ssh.commands).contains(List.of("cat", "/proc/1000/cmdline"));
     }
 
+    // --- spec-062: /proc/net/tcp fallback, exe signal, nginx -T, relative scripts ----
+
+    @Test
+    void discover_NoSsHost_BuildsInventoryFromProcNetFallbackAndJoinsPid() {
+        // spec-062 Decision 1: a host with neither ss nor netstat yields an empty base, so the
+        // /proc/net/tcp{,6} fallback runs and IS the inventory. The hex local_address is decoded
+        // (00000000:1538 → 0.0.0.0:5432) and the socket inode is joined to its PID via /proc/<pid>/fd,
+        // so the port is discovered AND attributed — here it fingerprints as postgres.
+        FakeSshExecutor ssh = new FakeSshExecutor(noSsFallbackInventory());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem pg = generic.appPortList().stream()
+                .filter(i -> i.port() == 5432).findFirst().orElseThrow();
+
+        assertThat(pg.runtime()).isEqualTo("systemd");
+        assertThat(pg.confidence()).isEqualTo("high");
+        assertThat(pg.contextKey()).isEqualTo("/var/lib/postgresql");
+        assertThat(pg.sourceNote()).isEqualTo("app folder · discovered via port :5432");
+        // The inode→PID join drove the /proc read of the recovered PID 1500.
+        assertThat(ssh.commands).contains(List.of("cat", "/proc/1500/cmdline"));
+    }
+
+    @Test
+    void discover_BlankUsersSsLine_KeptAsLowConfidencePort() {
+        // spec-062 Decision 1: an unprivileged `ss` blanks the process column for a foreign-owned
+        // LISTEN. That line must NOT be dropped ("never read a blank users column as no process");
+        // with no PID recoverable it survives as a single low-confidence app-<port> record.
+        FakeSshExecutor ssh = new FakeSshExecutor(blankUsersSs());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem item = generic.appPortList().stream()
+                .filter(i -> i.port() == 8080).findFirst().orElseThrow();
+
+        assertThat(item.appName()).isEqualTo("app-8080");
+        assertThat(item.confidence()).isEqualTo("low");
+        assertThat(item.runtime()).isEqualTo("process");
+        assertThat(item.sourceNote())
+                .isEqualTo("unattributed listener · discovered via port :8080 · owner unreadable");
+    }
+
+    @Test
+    void discover_ForeignFallbackSocket_SurvivesAsNullPidPort() {
+        // spec-062 Decision 1/2: a fallback L-row whose inode never joins a PID (a foreign socket
+        // whose /proc/<pid>/fd is unreadable) still surfaces the PORT — a null-PID low-confidence
+        // record — rather than being lost.
+        FakeSshExecutor ssh = new FakeSshExecutor(foreignFallbackSocket());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+
+        assertThat(generic.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::confidence)
+                .containsExactly(tuple("app-5432", 5432, "low"));
+    }
+
+    @Test
+    void discover_BothLoopbackAndAnyBind_SurviveAsDistinctAddrPortRecords() {
+        // spec-062 Decision 1: de-duplication is by (local_address, port), so 127.0.0.1:8080 and
+        // 0.0.0.0:8080 are distinct listeners — a port-only key would wrongly drop one.
+        FakeSshExecutor ssh = new FakeSshExecutor(bothAddrsSamePort());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+
+        assertThat(generic.appPortList())
+                .filteredOn(i -> i.port() == 8080)
+                .hasSize(2)
+                .allSatisfy(i -> assertThat(i.confidence()).isEqualTo("low"));
+    }
+
+    @Test
+    void discover_SsAttributedListener_BeatsFallbackForSameAddrPort() {
+        // spec-062 Decision 1: an ss-attributed listener always wins over a fallback attribution for
+        // the same (addr, port). The fallback's competing PID for :8080 is ignored — its /proc is
+        // never read — and :8080 stays the ss-attributed springboot app.
+        FakeSshExecutor ssh = new FakeSshExecutor(ssBeatsFallback());
+
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        ProposedRecipe springboot = recipe(recipes, "springboot monitor");
+
+        assertThat(springboot.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port)
+                .containsExactly(tuple("orders", 8080));
+        // The fallback's competing PID 7777 is never read (ss won the (addr, port)).
+        assertThat(ssh.commands).doesNotContain(List.of("cat", "/proc/7777/cmdline"));
+        // The genuinely unattributed :9999 (which triggered the fallback) still surfaces.
+        assertThat(recipe(recipes, "generic app monitor").appPortList())
+                .extracting(AppPortItem::port).contains(9999);
+    }
+
+    @Test
+    void discover_SharedListeningInode_ResolvesToLowestPid() {
+        // spec-062 Decision 1: a listening inode held by several preforked PIDs resolves to the
+        // LOWEST PID (the master), which drives context/classification. PID 650 is read, 700 is not.
+        FakeSshExecutor ssh = new FakeSshExecutor(sharedInodeLowestPid());
+
+        discoverer.discover(machine(), ssh);
+
+        assertThat(ssh.commands).contains(List.of("cat", "/proc/650/cmdline"));
+        assertThat(ssh.commands).doesNotContain(List.of("cat", "/proc/700/cmdline"));
+    }
+
+    @Test
+    void discover_SystemdOwnedPortViaFallbackJoin_NotDoubledAsAppCard() {
+        // spec-062 Decision 1 reconciliation: busybox netstat shows :80 with no process column
+        // (unattributed); the fallback join recovers its PID 500, which fingerprints as nginx and
+        // is the systemd unit's MainPID. The port is therefore attributed (a single high-confidence
+        // nginx record), NOT doubled as a low-confidence app-80 card, and nginx.service is deduped.
+        FakeSshExecutor ssh = new FakeSshExecutor(systemdOwnedPortViaFallback());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+
+        assertThat(generic.appPortList()).filteredOn(i -> i.port() == 80)
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.confidence()).isEqualTo("high");
+                    assertThat(i.contextKey()).isEqualTo("/var/www/site");
+                });
+        // No second, low-confidence unattributed app-80 card.
+        assertThat(generic.appPortList()).noneMatch(i -> "low".equals(i.confidence()));
+    }
+
+    @Test
+    void discover_NginxFingerprint_VerifiesRealRootViaNginxT() {
+        // spec-062 Decision 4: nginx has no data-dir env var, so its context is verified from a
+        // read-only `nginx -T` dump — the MODAL root directive after stripping quotes and discarding
+        // a $-variable root and the stock /usr/share/nginx/html default. /var/www/site is chosen.
+        FakeSshExecutor ssh = new FakeSshExecutor(nginxRealRoot());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem nginx = generic.appPortList().stream()
+                .filter(i -> i.appName().equals("nginx")).findFirst().orElseThrow();
+
+        assertThat(nginx.confidence()).isEqualTo("high");
+        assertThat(nginx.contextKey()).isEqualTo("/var/www/site");
+    }
+
+    @Test
+    void discover_BoundaryRootCwd_FallsBackToExeContext_StrippingDeletedSuffix() {
+        // spec-062 Decision 3: a compiled binary whose cwd is the boundary root "/" (systemd
+        // WorkingDirectory unset) maps its context from readlink /proc/<pid>/exe instead. A
+        // redeployed binary's " (deleted)" suffix is stripped before the deploy folder is derived.
+        FakeSshExecutor ssh = new FakeSshExecutor(exeDeletedSuffix());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem item = generic.appPortList().get(0);
+
+        assertThat(item.appName()).isEqualTo("server");
+        assertThat(item.contextKey()).isEqualTo("/opt/deploy");
+        assertThat(item.contextDisplay()).isEqualTo("/opt/deploy");
+    }
+
+    @Test
+    void discover_ExeNonAbsolute_IsRejected_FallsBackToCwd() {
+        // spec-062 Decision 3: a normalised exe target that is still not absolute is rejected, and
+        // the PID falls back to its (boundary-root) cwd mapping — never a bogus relative context.
+        FakeSshExecutor ssh = new FakeSshExecutor(exeNonAbsolute());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        AppPortItem item = generic.appPortList().get(0);
+
+        assertThat(item.contextKey()).isEqualTo("/");
+    }
+
+    @Test
+    void discover_UnreadableCwd_NeverReadsExe() {
+        // spec-062 Decision 3 (R1): /proc/<pid>/cwd and /proc/<pid>/exe share the same ptrace access
+        // check, so an unreadable cwd means an equally unreadable exe — the exe arm must never fire.
+        FakeSshExecutor ssh = new FakeSshExecutor(unreadableCwd());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+
+        assertThat(generic.appPortList().get(0).contextKey()).isNull();
+        assertThat(ssh.commands).doesNotContain(List.of("readlink", "/proc/1000/exe"));
+    }
+
+    @Test
+    void discover_RelativeInterpreterScript_ResolvedAgainstCwdAsFile() {
+        // spec-062 Decision 5: a relative interpreter argument (`python3 run`) is anchored against
+        // the process cwd and accepted only when an ls -ld existence probe confirms it is a FILE.
+        FakeSshExecutor ssh = new FakeSshExecutor(relativeInterpreterFile());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+
+        assertThat(generic.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::contextKey)
+                .contains(tuple("run", 0, "/opt/app"));
+    }
+
+    @Test
+    void discover_InterpreterDirectoryArg_IsRejected() {
+        // spec-062 Decision 5: a relative token that resolves to a DIRECTORY (`python3 somedir`) is
+        // rejected — it is not an app-script — so nothing is proposed for it.
+        FakeSshExecutor ssh = new FakeSshExecutor(interpreterDirectoryArg());
+
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+
+        assertThat(recipes).isEmpty();
+        // The ls -ld file test really ran and returned a directory.
+        assertThat(ssh.commands).contains(List.of("ls", "-ld", "/opt/proj/somedir"));
+    }
+
     // --- canned boxes -------------------------------------------------------
 
     private Function<List<String>, ExecResult> mixedBox() {
@@ -625,6 +825,12 @@ class AppMonitorDiscovererTest {
                 && argv.get(2).contains("crontab -l");
     }
 
+    /** True when argv is the fixed {@code sh -c <PORT_FALLBACK_SCRIPT>} probe (spec-062). */
+    private static boolean isPortFallback(List<String> argv) {
+        return argv.size() == 3 && argv.get(0).equals("sh") && argv.get(1).equals("-c")
+                && argv.get(2).contains("/proc/net/tcp");
+    }
+
     private Function<List<String>, ExecResult> nonListeningBox() {
         String ss = String.join("\n",
                 "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
@@ -689,6 +895,266 @@ class AppMonitorDiscovererTest {
                 case "systemctl show -p MainPID --value worker.service" -> ok("2500");
                 // The unit's MainPID lives in a docker cgroup → Decision 2 drops it.
                 case "cat /proc/2500/cgroup" -> ok("0::/docker/worker-ctr");
+                default -> notFound();
+            };
+        };
+    }
+
+    // A busybox-style host: no ss AND no netstat, so the /proc/net fallback is the whole inventory.
+    // L row 00000000:1538 → 0.0.0.0:5432 (inode 77701); F row joins PID 1500; PID fingerprints
+    // postgres.
+    private Function<List<String>, ExecResult> noSsFallbackInventory() {
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            if (isPortFallback(argv)) {
+                return ok("L 00000000:1538 77701\nF 1500 socket:[77701]");
+            }
+            return switch (String.join(" ", argv)) {
+                case "cat /proc/1500/cmdline" ->
+                        ok("/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main");
+                case "cat /proc/1500/cgroup" -> ok("0::/system.slice/postgresql.service");
+                case "cat /proc/1500/environ" -> notFound();
+                case "readlink -f /var/lib/postgresql" -> ok("/var/lib/postgresql");
+                default -> notFound(); // ss, netstat, systemctl, ps all absent
+            };
+        };
+    }
+
+    // ss shows a LISTEN with a BLANK users column (foreign owner); the fallback recovers nothing.
+    private Function<List<String>, ExecResult> blankUsersSs() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*");
+        return argv -> {
+            if (isCronProbe(argv) || isPortFallback(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                default -> notFound();
+            };
+        };
+    }
+
+    // No ss/netstat; the fallback reports a LISTEN L-row whose inode never joins a PID (foreign fd).
+    private Function<List<String>, ExecResult> foreignFallbackSocket() {
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            if (isPortFallback(argv)) {
+                return ok("L 00000000:1538 88801"); // 0.0.0.0:5432, no F row
+            }
+            return notFound();
+        };
+    }
+
+    // No ss/netstat; the fallback reports two LISTEN rows on the same port, different addresses.
+    private Function<List<String>, ExecResult> bothAddrsSamePort() {
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            if (isPortFallback(argv)) {
+                return ok("L 0100007F:1F90 91001\nL 00000000:1F90 91002"); // 127.0.0.1:8080 + 0.0.0.0:8080
+            }
+            return notFound();
+        };
+    }
+
+    // ss attributes java on 0.0.0.0:8080 and leaves a blank :9999 (which triggers the fallback);
+    // the fallback then also claims 0.0.0.0:8080 with a DIFFERENT pid — ss must win.
+    private Function<List<String>, ExecResult> ssBeatsFallback() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"java\",pid=1000,fd=10))",
+                "LISTEN 0      128          0.0.0.0:9999       0.0.0.0:*");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            if (isPortFallback(argv)) {
+                return ok("L 00000000:1F90 95001\nF 7777 socket:[95001]"); // competes for 0.0.0.0:8080
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+                case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+                case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+                default -> notFound();
+            };
+        };
+    }
+
+    // No ss/netstat; the fallback reports one LISTEN inode held by two preforked PIDs (700, 650).
+    private Function<List<String>, ExecResult> sharedInodeLowestPid() {
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            if (isPortFallback(argv)) {
+                return ok("L 00000000:238C 96001\nF 700 socket:[96001]\nF 650 socket:[96001]"); // :9100
+            }
+            return switch (String.join(" ", argv)) {
+                case "cat /proc/650/cmdline" -> ok("/usr/local/bin/mydaemon --serve");
+                case "cat /proc/650/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+                default -> notFound();
+            };
+        };
+    }
+
+    // Busybox netstat shows :80 LISTEN with no process column; the fallback join recovers PID 500,
+    // which fingerprints as nginx and is nginx.service's MainPID.
+    private Function<List<String>, ExecResult> systemdOwnedPortViaFallback() {
+        String netstat = String.join("\n",
+                "Active Internet connections (only servers)",
+                "tcp        0      0 0.0.0.0:80              0.0.0.0:*               LISTEN");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            if (isPortFallback(argv)) {
+                return ok("L 00000000:0050 97001\nF 500 socket:[97001]"); // 0.0.0.0:80 → PID 500
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> notFound();
+                case "netstat -ltnp" -> ok(netstat);
+                case "cat /proc/500/cmdline" -> ok("nginx: master process /usr/sbin/nginx");
+                case "cat /proc/500/cgroup" -> ok("0::/system.slice/nginx.service");
+                case "cat /proc/500/environ" -> notFound();
+                case "command -v nginx" -> ok("/usr/sbin/nginx");
+                case "nginx -T" -> ok(String.join("\n",
+                        "http {",
+                        "    root /var/www/site;",
+                        "    root /var/www/site;",
+                        "}"));
+                case "readlink -f /var/www/site" -> ok("/var/www/site");
+                case "systemctl list-units --type=service --state=running --no-legend --plain" ->
+                        ok("nginx.service loaded active running Nginx");
+                case "systemctl show -p MainPID --value nginx.service" -> ok("500");
+                default -> notFound();
+            };
+        };
+    }
+
+    // ss attributes nginx (login user) on :80; nginx -T carries a quoted root, a $-variable root, a
+    // stock default root, and the modal /var/www/site.
+    private Function<List<String>, ExecResult> nginxRealRoot() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:80         0.0.0.0:*     users:((\"nginx\",pid=1700,fd=6))");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1700/cmdline" -> ok("nginx: master process /usr/sbin/nginx -g daemon on;");
+                case "cat /proc/1700/cgroup" -> ok("0::/system.slice/nginx.service");
+                case "cat /proc/1700/environ" -> notFound();
+                case "command -v nginx" -> ok("/usr/sbin/nginx");
+                case "nginx -T" -> ok(String.join("\n",
+                        "# configuration file /etc/nginx/nginx.conf:",
+                        "    root \"/var/www/site\";",
+                        "    root /var/www/site;",
+                        "    root $app_root;",
+                        "    root /usr/share/nginx/html;"));
+                case "readlink -f /var/www/site" -> ok("/var/www/site");
+                default -> notFound();
+            };
+        };
+    }
+
+    // A compiled binary whose cwd is the boundary root "/"; its exe reads back with a " (deleted)"
+    // suffix pointing at the real deploy folder.
+    private Function<List<String>, ExecResult> exeDeletedSuffix() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"server\",pid=1000,fd=10))");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1000/cmdline" -> ok("/opt/deploy/server --serve");
+                case "cat /proc/1000/cgroup" -> ok("0::/system.slice/myapp.service");
+                case "readlink /proc/1000/cwd" -> ok("/");
+                case "readlink /proc/1000/exe" -> ok("/opt/deploy/server (deleted)");
+                case "readlink -f /opt/deploy" -> ok("/opt/deploy");
+                default -> notFound();
+            };
+        };
+    }
+
+    // Same boundary-root cwd, but the exe target is not absolute → rejected, fall back to cwd "/".
+    private Function<List<String>, ExecResult> exeNonAbsolute() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"server\",pid=1000,fd=10))");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1000/cmdline" -> ok("/opt/deploy/server --serve");
+                case "cat /proc/1000/cgroup" -> ok("0::/system.slice/myapp.service");
+                case "readlink /proc/1000/cwd" -> ok("/");
+                case "readlink /proc/1000/exe" -> ok("server"); // non-absolute → rejected
+                case "readlink -f /proc/1000/cwd" -> ok("/");
+                default -> notFound();
+            };
+        };
+    }
+
+    // A PID whose cwd is unreadable → the exe arm must never fire (R1: same ptrace check).
+    private Function<List<String>, ExecResult> unreadableCwd() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:8080       0.0.0.0:*     users:((\"server\",pid=1000,fd=10))");
+        return argv -> {
+            if (isCronProbe(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                case "cat /proc/1000/cmdline" -> ok("/opt/x/server --serve");
+                case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+                default -> notFound(); // readlink cwd/exe both unreadable
+            };
+        };
+    }
+
+    // An interpreter with a RELATIVE file argument (`python3 run`) resolvable against the cwd.
+    private Function<List<String>, ExecResult> relativeInterpreterFile() {
+        return argv -> {
+            if (isCronProbe(argv) || isPortFallback(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ps -eo pid=,args=" -> ok("4100 python3 run --daemon");
+                case "cat /proc/4100/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+                case "readlink /proc/4100/cwd", "readlink -f /proc/4100/cwd" -> ok("/opt/app");
+                case "ls -ld /opt/app/run" -> ok("-rwxr-xr-x 1 deploy deploy 100 Jan 1 00:00 /opt/app/run");
+                default -> notFound();
+            };
+        };
+    }
+
+    // An interpreter whose relative argument resolves to a DIRECTORY (`python3 somedir`) → rejected.
+    private Function<List<String>, ExecResult> interpreterDirectoryArg() {
+        return argv -> {
+            if (isCronProbe(argv) || isPortFallback(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ps -eo pid=,args=" -> ok("4100 python3 somedir --flag");
+                case "cat /proc/4100/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+                case "readlink /proc/4100/cwd" -> ok("/opt/proj");
+                case "ls -ld /opt/proj/somedir" -> ok("drwxr-xr-x 2 deploy deploy 4096 Jan 1 00:00 /opt/proj/somedir");
                 default -> notFound();
             };
         };
