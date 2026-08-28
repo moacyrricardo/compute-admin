@@ -19,8 +19,10 @@ lives in [specs/catalog.md](./specs/catalog.md).
 
 ## 2. Branches
 
-Linear is **BLOCKED** for this repo, so branches carry **no issue id**. Name a
-branch `<github-username>/spec-NNN-slug`. Dependent specs use **stacked branches**:
+Linear is **active** for this repo (team `BOL`, project ComputeAdmin, title prefix
+`CPT:`). A spec with an issue uses the Linear-generated branch name
+(`<github-username>/bol-<n>-slug`); a spec with no issue yet falls back to
+`<github-username>/spec-NNN-slug`. Dependent specs use **stacked branches**:
 branch the child off its parent's branch, not `main`. After the parent PR merges,
 **rebase the child onto `main`** and retarget its PR base to `main`.
 
