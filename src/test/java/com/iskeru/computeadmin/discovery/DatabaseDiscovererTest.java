@@ -88,7 +88,7 @@ class DatabaseDiscovererTest {
 
     @Test
     void discover_PostgresLogicalSize_ParamFreeSudo_ReusesPgDatabaseSizeQuery() {
-        ProposedRecipe pg = recipe(discoverer.discover(machine(), postgresSsh()), "postgresql");
+        ProposedRecipe pg = recipe(discoverer.discover(machine(), postgresSsh().session()), "postgresql");
         ProposedAction logical = action(pg, "db logical size");
 
         // Param-free ⇒ 057's client poll selects it like the docker checks; sudo=true (Decision 5).
@@ -110,7 +110,7 @@ class DatabaseDiscovererTest {
 
     @Test
     void discover_MysqlLogicalSize_FreshStats_AndDebianCnfFallback() {
-        ProposedRecipe my = recipe(discoverer.discover(machine(), mysqlSsh("mysql")), "mysql");
+        ProposedRecipe my = recipe(discoverer.discover(machine(), mysqlSsh("mysql").session()), "mysql");
         String script = scriptOf(action(my, "db logical size"));
 
         // Decision 2: information_schema SUM over the -N -B -e idiom (:62-63); MySQL prepends the
@@ -126,7 +126,7 @@ class DatabaseDiscovererTest {
 
     @Test
     void discover_MariadbLogicalSize_OmitsFreshStatsSet() {
-        ProposedRecipe md = recipe(discoverer.discover(machine(), mysqlSsh("mariadb")), "mariadb");
+        ProposedRecipe md = recipe(discoverer.discover(machine(), mysqlSsh("mariadb").session()), "mariadb");
         String script = scriptOf(action(md, "db logical size"));
 
         // MariaDB has no information_schema_stats_expiry session var — the SET is omitted.
@@ -138,7 +138,7 @@ class DatabaseDiscovererTest {
 
     @Test
     void discover_PhysicalSize_VerifiesDatadir_GuardsAbsolutePath_AndGatesRootFs() {
-        ProposedRecipe pg = recipe(discoverer.discover(machine(), postgresSsh()), "postgresql");
+        ProposedRecipe pg = recipe(discoverer.discover(machine(), postgresSsh().session()), "postgresql");
         ProposedAction physical = action(pg, "db physical size");
         assertThat(physical.sudo()).isTrue();
         assertThat(physical.paramDefs()).isEmpty();
@@ -161,7 +161,7 @@ class DatabaseDiscovererTest {
     void discover_PhysicalSize_NeverEchoesTheDatadir() {
         // S9: the resolved datadir is a secret internal path — it drives du but must never leave
         // the box on the run-output seam. Only the byte count and the boolean gate are echoed.
-        ProposedRecipe my = recipe(discoverer.discover(machine(), mysqlSsh("mysql")), "mysql");
+        ProposedRecipe my = recipe(discoverer.discover(machine(), mysqlSsh("mysql").session()), "mysql");
         String script = scriptOf(action(my, "db physical size"));
         String echoLine = script.lines().filter(l -> l.startsWith("echo")).findFirst().orElseThrow();
         assertThat(echoLine).doesNotContain("$d").doesNotContain("datadir=");
@@ -172,8 +172,8 @@ class DatabaseDiscovererTest {
         // Decision 5: every size script's no-privilege branch emits permission-denied at
         // confidence=low — it never fabricates a 0.
         for (ProposedRecipe recipe : List.of(
-                recipe(discoverer.discover(machine(), postgresSsh()), "postgresql"),
-                recipe(discoverer.discover(machine(), mysqlSsh("mysql")), "mysql"))) {
+                recipe(discoverer.discover(machine(), postgresSsh().session()), "postgresql"),
+                recipe(discoverer.discover(machine(), mysqlSsh("mysql").session()), "mysql"))) {
             for (String name : List.of("db logical size", "db physical size")) {
                 assertThat(scriptOf(action(recipe, name)))
                         .contains("permission-denied")
