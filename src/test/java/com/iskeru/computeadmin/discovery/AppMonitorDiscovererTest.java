@@ -194,7 +194,7 @@ class AppMonitorDiscovererTest {
         // /opt/lab/orders (spec-055 D2); the item carries the logical script-folder + context.
         FakeSshExecutor ssh = new FakeSshExecutor(contextMappedSpringBoot());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         AppPortItem item = springboot.appPortList().get(0);
 
         assertThat(item.appName()).isEqualTo("orders");
@@ -210,7 +210,7 @@ class AppMonitorDiscovererTest {
         // never a host context — the context fields stay null (056 owns docker contexts).
         FakeSshExecutor ssh = new FakeSshExecutor(dockerisedSpringBoot());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         AppPortItem item = springboot.appPortList().get(0);
 
         assertThat(item.runtime()).isEqualTo("docker");
@@ -227,7 +227,7 @@ class AppMonitorDiscovererTest {
         // as sibling app-scripts under the one context identity (spec-055 D4).
         FakeSshExecutor ssh = new FakeSshExecutor(twoScriptsOneContext());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
         assertThat(springboot.appPortList())
                 .allSatisfy(item -> {
