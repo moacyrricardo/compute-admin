@@ -1,6 +1,6 @@
 # 063 — Native-consumer channel & discovery-context DTO exposure
 
-**Status:** todo · Linear [BOL-892](https://linear.app/iskeru/issue/BOL-892) · build branch `moacyrricardo/bol-892-cpt-063-native-consumer-context-dto`. **Stacks on the integration branch (055–062).**
+**Status:** done · Linear [BOL-892](https://linear.app/iskeru/issue/BOL-892) · build branch `moacyrricardo/bol-892-cpt-063-native-consumer-context-dto`. **Stacks on the integration branch (055–062).**
 
 ## Context
 
@@ -119,3 +119,39 @@ test above.
   separate UI concern, out of scope here.
 - **Docker enrichment already covers its half** (061); 063 is the native counterpart. A host-network
   container seen by both channels relies on the existing spec-033 `appName` dedup, unchanged.
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-892-cpt-063-native-consumer-context-dto`, stacked on
+`moacyrricardo/integration-057-061-062` (PR #88, base = the integration branch). How the build
+differed from / refined the spec:
+
+- **`AppPortView` moved to `RecipeDtos`, not widened in place.** The spec said `RecipeView` gains
+  `appPortList : List<AppPortView>`, but `AppPortView` lived in `MonitorDtos` and `monitor` depends on
+  `recipe` — referencing it from `RecipeView` would have created a `recipe ↔ monitor` cycle. So the
+  record was **relocated to `RecipeDtos`** (the lower module, mirroring `ArgTokenView`/`ParamDefView`)
+  in its own behavior-neutral commit, and the `AppPort → AppPortView` mapping stays in `MonitorDtos`
+  as a static helper so no `monitor` type leaks into `recipe`. Single shared record, no cycle.
+- **Native channel is additive over the pre-063 consumer assembly, not a replacement.** PROCESS/SYSTEMD
+  apps now flow through `nativeConsumersFrom` (grouped by `contextKey`); a **context-less** app stays a
+  per-app singleton (identical to the pre-063 shape), so no shipped 029/032 behavior changed. A
+  **docker-runtime item on a native recipe** (the 061 double-detection link) still surfaces via the old
+  `ofNativeApp` DOCKER-source path — the native channel deliberately skips it, so nothing is
+  double-counted and no existing consumer vanished.
+- **`RecipeView.appPortList` carried, not live-populated.** `of(Recipe)` returns an empty list
+  (existing callers non-breaking) and a new `of(Recipe, List<AppPortView>)` overload is the population
+  hook. Parsing the recipe's `app_port_list` at the recipe-read endpoints to render per-context records
+  is the 059-followup's rendering job (D5); the `/api/monitor` read already carries every field end to
+  end (web test), which is the seam this spec guarantees.
+- **Datastore fingerprint is a self-contained name matcher in `MonitorService`** (`isDatastoreName`),
+  mirroring `DatastoreImages`' engine tokens plus the native daemon spellings
+  (`postmaster`/`mysqld`/`mariadbd`). `ServiceCatalog`/`DatastoreImages` are package-private in
+  `discovery.service`, so they could not be reused directly; the token list is duplicated deliberately
+  (a view-side classification, refinable in the 059-followup).
+- **`nativeConsumersFrom`/`isDatastoreName` are `public static`** (matching the `frameworkOf`
+  precedent) so the grouping/role/exclusion rules are unit-testable directly, not only through wire
+  assembly.
+- **One existing test adjusted.** `DockerCombinedObjectPersistenceTest` now asserts the reader surfaces
+  the 061-enriched context side-data on the docker combined-object row (previously-ignored persisted
+  fields the widened `parseAppPortList` now reads) and that a docker-runtime item yields no native
+  consumer. No migration, no version bump. `mvn -q test` green (364).

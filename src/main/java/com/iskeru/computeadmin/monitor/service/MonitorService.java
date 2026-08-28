@@ -7,6 +7,7 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.monitor.model.Bucket;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
+import com.iskeru.computeadmin.monitor.model.ConsumerSource;
 import com.iskeru.computeadmin.monitor.model.Dedication;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
@@ -17,8 +18,11 @@ import com.iskeru.computeadmin.recipe.service.RecipeService;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -66,7 +70,18 @@ public class MonitorService {
      * (spec-023) and any recipe whose {@code appPortList} is unset.
      */
     public record MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList,
-                                List<DockerConsumerData> dockerConsumers) {
+                                List<DockerConsumerData> dockerConsumers,
+                                List<NativeConsumerData> nativeConsumers) {
+
+        /**
+         * A native (or docker) monitor recipe whose native consumers are derived from its
+         * pre-filled apps (spec-063): the same {@code contextKey}-grouping the JSON read path
+         * applies, so a test-built recipe and a persisted one classify identically.
+         */
+        public MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList,
+                             List<DockerConsumerData> dockerConsumers) {
+            this(recipe, actions, appPortList, dockerConsumers, nativeConsumersFrom(appPortList));
+        }
 
         /** A native (or host) monitor recipe with no docker consumers (spec-025). */
         public MonitorRecipe(Recipe recipe, List<Action> actions, List<AppPort> appPortList) {
@@ -74,8 +89,41 @@ public class MonitorService {
         }
     }
 
-    /** One pre-filled app the dashboard shows/edits and the poller probes (spec-022/025). */
-    public record AppPort(String appName, int port, String runtime) {
+    /**
+     * One pre-filled app the dashboard shows/edits and the poller probes (spec-022/025),
+     * carrying the rich discovery-context side-data (spec-063): the logical
+     * {@code contextDisplay}/{@code scriptFolder} paths, the sibling {@code contextScripts},
+     * the {@code sourceNote} provenance, the fingerprint {@code confidence}, and the internal
+     * {@code contextKey} identity used to group native consumers. {@code contextKey} is the
+     * S9-secret dedup key — it never leaves the service (no DTO carries it).
+     */
+    public record AppPort(String appName, int port, String runtime,
+                          String contextKey, String contextDisplay, List<String> contextScripts,
+                          String sourceNote, String confidence, String scriptFolder) {
+
+        public AppPort {
+            contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
+        }
+
+        /** The bare three-field item (no resolved context) — old rows and docker-object items. */
+        public AppPort(String appName, int port, String runtime) {
+            this(appName, port, runtime, null, null, List.of(), null, null, null);
+        }
+    }
+
+    /**
+     * One native-sourced consumer derived from the pre-filled {@link AppPort}s (spec-063): the
+     * native counterpart to {@link DockerConsumerData}, grouped by the internal
+     * {@code contextKey} so the app-scripts collapsing to one context render as a single
+     * consumer. {@code role} is {@link ConsumerRole#DATABASE} when the group fingerprints a
+     * datastore (058's standalone pg/mysql/mariadb) else {@link ConsumerRole#APP};
+     * {@code source} is always {@link ConsumerSource#NATIVE}. {@code contextKey} is carried for
+     * internal correlation only — it never reaches a DTO (S9). {@code name} is the logical
+     * {@code contextDisplay} (or the single app name when a context could not be resolved).
+     */
+    public record NativeConsumerData(String name, ConsumerRole role, ConsumerSource source,
+                                     String contextKey, String contextDisplay, String confidence,
+                                     List<String> appNames) {
     }
 
     /**
@@ -138,9 +186,9 @@ public class MonitorService {
             for (Recipe recipe : recipeService.listForMachine(machine.getId())) {
                 List<Action> actions = recipeService.listActions(recipe.getId());
                 if (recipe.getType() == RecipeType.MONITOR) {
-                    recipes.add(new MonitorRecipe(recipe, actions,
-                            parseAppPortList(recipe.getAppPortList()),
-                            parseDockerConsumers(recipe.getAppPortList())));
+                    String raw = recipe.getAppPortList();
+                    recipes.add(new MonitorRecipe(recipe, actions, parseAppPortList(raw),
+                            parseDockerConsumers(raw), parseNativeConsumers(raw)));
                 }
                 // App-ops correlation (spec-026): any APPROVED action carrying the reserved
                 // scalar `app-name` param is an ops action, regardless of recipe type. Only
@@ -188,15 +236,23 @@ public class MonitorService {
         return items;
     }
 
-    /** Appends every {@code {"appName","port","runtime"}} entry of {@code array} to {@code items}. */
+    /**
+     * Appends every persisted app-port entry of {@code array} to {@code items}, reading the rich
+     * discovery-context side-data (spec-063) — {@code contextKey}/{@code contextDisplay}/{@code
+     * contextScripts}/{@code sourceNote}/{@code confidence}/{@code scriptFolder} — alongside the
+     * base {@code appName}/{@code port}/{@code runtime}. Absent keys default to {@code null}/empty,
+     * so an old bare {@code {"appName","port","runtime"}} row and a docker-object item (which carry
+     * none of the context fields) parse unchanged — 061's tolerant-reader contract holds.
+     */
     private void addAppPorts(JsonNode array, List<AppPort> items) {
         for (JsonNode node : array) {
             JsonNode appName = node.get("appName");
             JsonNode port = node.get("port");
-            JsonNode runtime = node.get("runtime");
             if (appName != null && port != null) {
-                items.add(new AppPort(appName.asText(), port.asInt(),
-                        runtime == null || runtime.isNull() ? null : runtime.asText()));
+                items.add(new AppPort(appName.asText(), port.asInt(), text(node.get("runtime")),
+                        text(node.get("contextKey")), text(node.get("contextDisplay")),
+                        stringList(node.get("contextScripts")), text(node.get("sourceNote")),
+                        text(node.get("confidence")), text(node.get("scriptFolder"))));
             }
         }
     }
@@ -236,6 +292,99 @@ public class MonitorService {
             return List.of();
         }
         return consumers;
+    }
+
+    /**
+     * Derives the <strong>native</strong> consumers from a recipe's stored app-port list
+     * (spec-063), the native counterpart of {@link #parseDockerConsumers}: it reads the same
+     * persisted value through {@link #parseAppPortList} and groups the parsed items by
+     * {@code contextKey}. A null/blank/malformed value (or one with no native items) yields the
+     * empty list.
+     */
+    private List<NativeConsumerData> parseNativeConsumers(String rawJson) {
+        return nativeConsumersFrom(parseAppPortList(rawJson));
+    }
+
+    /**
+     * Groups pre-filled {@link AppPort}s into native consumers (spec-063). PROCESS/SYSTEMD items
+     * only — a docker-runtime item is the spec-061 double-detection link whose consumer comes from
+     * the docker channel, so it is skipped here (never double-counted). Items sharing a non-null
+     * {@code contextKey} collapse into one consumer named by the logical {@code contextDisplay}; an
+     * item with no resolved context is its own singleton consumer named by its app name (preserving
+     * the pre-063 per-app behaviour). {@code role} is {@link ConsumerRole#DATABASE} when any member
+     * fingerprints a datastore, else {@link ConsumerRole#APP}; {@code source} is always
+     * {@link ConsumerSource#NATIVE}.
+     */
+    public static List<NativeConsumerData> nativeConsumersFrom(List<AppPort> appPorts) {
+        List<NativeConsumerData> out = new ArrayList<>();
+        Map<String, List<AppPort>> byContext = new LinkedHashMap<>();
+        for (AppPort app : appPorts) {
+            if ("docker".equalsIgnoreCase(app.runtime())) {
+                continue; // docker-cgroup items route to the docker channel (056/061)
+            }
+            if (app.contextKey() == null) {
+                out.add(nativeConsumer(
+                        app.contextDisplay() != null ? app.contextDisplay() : app.appName(),
+                        null, app.contextDisplay(), List.of(app)));
+            } else {
+                byContext.computeIfAbsent(app.contextKey(), k -> new ArrayList<>()).add(app);
+            }
+        }
+        for (Map.Entry<String, List<AppPort>> entry : byContext.entrySet()) {
+            List<AppPort> group = entry.getValue();
+            String display = group.get(0).contextDisplay();
+            String name = display != null ? display : group.get(0).appName();
+            out.add(nativeConsumer(name, entry.getKey(), display, group));
+        }
+        return out;
+    }
+
+    /** Builds one native consumer from a context group: role from the datastore fingerprint. */
+    private static NativeConsumerData nativeConsumer(String name, String contextKey, String display,
+                                                     List<AppPort> group) {
+        List<String> appNames = new ArrayList<>();
+        String confidence = null;
+        boolean datastore = false;
+        for (AppPort app : group) {
+            if (!appNames.contains(app.appName())) {
+                appNames.add(app.appName());
+            }
+            if (app.confidence() != null && (confidence == null || "high".equalsIgnoreCase(app.confidence()))) {
+                confidence = app.confidence();
+            }
+            if (isDatastoreName(app.appName())) {
+                datastore = true;
+            }
+        }
+        ConsumerRole role = datastore ? ConsumerRole.DATABASE : ConsumerRole.APP;
+        return new NativeConsumerData(name, role, ConsumerSource.NATIVE, contextKey, display,
+                confidence, appNames);
+    }
+
+    /**
+     * The datastore engine tokens a native fingerprint marks as a {@link ConsumerRole#DATABASE}
+     * (spec-063). Mirrors {@code DatastoreImages}' engine set plus the native daemon spellings
+     * ({@code postmaster}/{@code mysqld}/{@code mariadbd}) the listening sweep reports as the app
+     * name; nginx and other non-datastore common services are deliberately absent.
+     */
+    private static final Set<String> DATASTORE_TOKENS = Set.of(
+            "postgres", "postgresql", "postmaster", "mysql", "mysqld", "mariadb", "mariadbd",
+            "mongo", "mongodb", "redis", "valkey", "keydb", "memcached", "cassandra", "scylladb",
+            "elasticsearch", "opensearch", "clickhouse", "cockroachdb", "cockroach", "influxdb",
+            "timescaledb", "couchdb", "couchbase", "neo4j", "mssql", "sqlserver");
+
+    /** Whether {@code appName} names a known datastore engine (058's standalone pg/mysql/mariadb). */
+    public static boolean isDatastoreName(String appName) {
+        if (appName == null) {
+            return false;
+        }
+        String lower = appName.toLowerCase(Locale.ROOT);
+        for (String token : DATASTORE_TOKENS) {
+            if (lower.contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<DockerServiceData> services(JsonNode array) {

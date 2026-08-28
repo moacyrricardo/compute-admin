@@ -12,7 +12,9 @@ import com.iskeru.computeadmin.monitor.service.MonitorService.DockerConsumerData
 import com.iskeru.computeadmin.monitor.service.MonitorService.DockerServiceData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
+import com.iskeru.computeadmin.monitor.service.MonitorService.NativeConsumerData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.OpsAction;
+import com.iskeru.computeadmin.recipe.api.RecipeDtos.AppPortView;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ArgTokenView;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ParamDefView;
 import com.iskeru.computeadmin.recipe.model.Action;
@@ -133,13 +135,23 @@ public final class MonitorDtos {
                 // docker recipe is told apart by carrying dockerConsumers.
                 if (r.dockerConsumers().isEmpty() && !r.appPortList().isEmpty()) {
                     String framework = frameworkOf(r.recipe().getName());
+                    // The native-consumer channel (spec-063): PROCESS/SYSTEMD apps grouped by
+                    // context into one consumer each (a datastore group ⇒ role=DATABASE), fed
+                    // through the SAME MonitorConsumerView as the docker path so both render as
+                    // one contract. A context-less app stays its own singleton (pre-063 shape).
+                    for (NativeConsumerData n : r.nativeConsumers()) {
+                        consumersByName.putIfAbsent(n.name(), MonitorConsumerView.ofNativeConsumer(n));
+                    }
                     for (AppPort item : r.appPortList()) {
                         apps.add(MonitorAppView.of(machine.getId(), item, framework,
                                 recipeChecks, opsForApp(appOps, item.appName())));
-                        // The same pre-filled app as a spec-032 consumer. A native
-                        // app-monitor recipe (spec-025) yields an APP consumer whose source
-                        // is read from the runtime label the discoverer attached.
-                        consumersByName.putIfAbsent(item.appName(), MonitorConsumerView.ofNativeApp(item));
+                        // A docker-runtime item on a native recipe is the spec-061
+                        // double-detection link: keep surfacing it as a DOCKER-source consumer
+                        // (its native counterpart rides the native channel above). A real docker
+                        // recipe overwrites it by name in the docker pass — never doubled.
+                        if ("docker".equalsIgnoreCase(item.runtime())) {
+                            consumersByName.putIfAbsent(item.appName(), MonitorConsumerView.ofNativeApp(item));
+                        }
                     }
                 }
             }
@@ -286,6 +298,21 @@ public final class MonitorDtos {
         }
 
         /**
+         * The native-consumer channel (spec-063): a context-grouped native consumer derived from
+         * the pre-filled {@link AppPort}s ({@link NativeConsumerData}), the native counterpart of
+         * {@link #ofDockerConsumer}. {@code source} is always {@link ConsumerSource#NATIVE};
+         * {@code role} is the group's fingerprint classification ({@link ConsumerRole#DATABASE} for
+         * a datastore, else {@link ConsumerRole#APP}). Datastore dedication/owner/usedBy and buckets
+         * stay {@code null} — native discovery attaches no such labels (that is the docker path's,
+         * spec-033); the three axes stay {@code null} for the client to fill (057's footprint where
+         * present, honest null otherwise); a native consumer has no docker services.
+         */
+        public static MonitorConsumerView ofNativeConsumer(NativeConsumerData n) {
+            return new MonitorConsumerView(n.name(), n.name(), n.role(), n.source(),
+                    null, null, null, null, null, null, null, List.of());
+        }
+
+        /**
          * The docker-sourced consumer (spec-033): a compose project ({@link
          * ConsumerRole#APP}), a datastore ({@link ConsumerRole#DATABASE}, {@link
          * Dedication#DEDICATED} with an {@code owner} or {@link Dedication#SHARED} with
@@ -375,7 +402,7 @@ public final class MonitorDtos {
             List<AppPortView> apps = new ArrayList<>();
             if (hasAppParam) {
                 for (AppPort item : appPortList) {
-                    apps.add(AppPortView.of(item));
+                    apps.add(appPortView(item));
                 }
             }
             return new MonitorActionView(action.getId(), machineId, recipe.getId(), recipe.getName(),
@@ -385,13 +412,17 @@ public final class MonitorDtos {
     }
 
     /**
-     * One discovery-pre-filled {@code (app-name, port)} item a fan-out probe action
-     * runs over (spec-025), with the optional {@code runtime} label (spec-022) the UI
-     * uses for the docker/systemd/process affordance and the double-detection link.
+     * Maps a {@link AppPort} read aggregate onto the shared {@link AppPortView} wire record
+     * (which lives in {@code RecipeDtos}, the lower module — {@code monitor → recipe}), copying
+     * the rich discovery-context side-data (spec-063): the logical {@code contextDisplay}/{@code
+     * scriptFolder} paths, the sibling {@code contextScripts}, the {@code sourceNote} provenance
+     * and the fingerprint {@code confidence}. The internal {@code contextKey} is deliberately
+     * <em>not</em> copied — it stays service-side (S9). The mapping lives here so no {@code
+     * monitor} type leaks into {@code recipe}.
      */
-    public record AppPortView(String appName, int port, String runtime) {
-        public static AppPortView of(AppPort item) {
-            return new AppPortView(item.appName(), item.port(), item.runtime());
-        }
+    static AppPortView appPortView(AppPort item) {
+        return new AppPortView(item.appName(), item.port(), item.runtime(),
+                item.contextDisplay(), item.contextScripts(), item.sourceNote(),
+                item.confidence(), item.scriptFolder());
     }
 }
