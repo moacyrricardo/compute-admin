@@ -48,10 +48,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * the whole run and discarded every good proposal. A <em>non-transport</em> exception
  * (a bug in a discoverer) is still allowed to abort loudly.
  *
- * <p>Three ordered fakes drive it: a good discoverer (NGINX) that always proposes, a
- * transport-thrower (DATABASE) that throws {@code SshExecutionException}, and an
- * abort-thrower (DOCKER, default-off) that throws a plain {@code RuntimeException}.
- * Per-machine enablement selects which run in each test.
+ * <p>Four ordered fakes drive it: a good discoverer (NGINX, order 1) that always
+ * proposes, a transport-thrower (DATABASE, order 2) that throws {@code
+ * SshExecutionException}, an abort-thrower (DOCKER, order 3, default-off) that throws a
+ * plain {@code RuntimeException}, and a late good discoverer (SYSTEMD, order 4) that
+ * proposes — used to prove a family ordered <em>after</em> the transport failure is
+ * folded into {@code failedFamilies} (and flagged {@code connectionLost}) rather than
+ * silently skipped (070 follow-up). Per-machine enablement selects which run in each test.
  *
  * <p>spec-070.
  */
@@ -122,11 +125,37 @@ class DiscoveryDegradeTest {
         }
     }
 
+    /** A good discoverer ordered AFTER the transport-thrower — must be reported unprobed, never run. */
+    static class LateGoodDiscoverer implements RecipeDiscoverer, Ordered {
+        @Override
+        public DiscovererFamily family() {
+            return DiscovererFamily.SYSTEMD;   // default-on; ordered after DATABASE
+        }
+
+        @Override
+        public int getOrder() {
+            return 4;
+        }
+
+        @Override
+        public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+            ProposedAction action = new ProposedAction("late-config", "Read-only.", false,
+                    List.of(literal("systemctl"), literal("status")), List.of());
+            return List.of(new ProposedRecipe(RecipeType.SYSTEMD, "late-service",
+                    "Never runs — the shared session died on an earlier family.", List.of(action)));
+        }
+    }
+
     @TestConfiguration
     static class FakeDiscoverersConfig {
         @Bean
         GoodDiscoverer goodDiscoverer() {
             return new GoodDiscoverer();
+        }
+
+        @Bean
+        LateGoodDiscoverer lateGoodDiscoverer() {
+            return new LateGoodDiscoverer();
         }
 
         @Bean
@@ -178,15 +207,40 @@ class DiscoveryDegradeTest {
         AppUser alice = saveUser("alice@example.com");
         asUser(alice, () -> {
             String machineId = register();
-            // DOCKER default-off → the abort-thrower stays out; good (NGINX) then the
-            // transport-thrower (DATABASE) run.
+            // DOCKER default-off (abort-thrower out); SYSTEMD off too, so this stays the
+            // focused two-family case: good (NGINX) then the transport-thrower (DATABASE).
+            enablement.setEnabled(machineId, DiscovererFamily.SYSTEMD, false);
             DiscoveryOutcome outcome = discoveryService.discover(machineId);
 
             // The earlier family's proposal survived the later family's transport failure...
             assertThat(outcome.recipes()).extracting(d -> d.recipe().getName()).contains("good-service");
-            // ...and the run is flagged partial, naming the family that could not be probed.
+            // ...and the run is flagged partial + connection-lost, naming the failed family.
             assertThat(outcome.partial()).isTrue();
+            assertThat(outcome.connectionLost()).isTrue();
             assertThat(outcome.failedFamilies()).containsExactly(DiscovererFamily.DATABASE);
+            return null;
+        });
+    }
+
+    @Test
+    void discover_SessionLostMidPass_FoldsUnprobedFamiliesAndFlagsConnectionLost() {
+        AppUser carol = saveUser("carol@example.com");
+        asUser(carol, () -> {
+            String machineId = register();
+            // Default enablement: NGINX(1) good → DATABASE(2) throws (session dies) →
+            // SYSTEMD(4) good but ordered AFTER the failure. DOCKER default-off.
+            DiscoveryOutcome outcome = discoveryService.discover(machineId);
+
+            // NGINX ran before the session died and its proposal survives...
+            assertThat(outcome.recipes()).extracting(d -> d.recipe().getName()).contains("good-service");
+            // ...SYSTEMD, ordered after the transport failure, NEVER ran — its proposal is absent...
+            assertThat(outcome.recipes()).extracting(d -> d.recipe().getName()).doesNotContain("late-service");
+            // ...and it is reported as unprobed (finding ①: not silently dropped as "probed and
+            // empty"), with connectionLost distinguishing session death from a per-family failure.
+            assertThat(outcome.connectionLost()).isTrue();
+            assertThat(outcome.partial()).isTrue();
+            assertThat(outcome.failedFamilies())
+                    .containsExactly(DiscovererFamily.DATABASE, DiscovererFamily.SYSTEMD);
             return null;
         });
     }

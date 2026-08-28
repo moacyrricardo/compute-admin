@@ -772,9 +772,17 @@
         // still return the rest — say so rather than claim a clean run.
         if (result && result.partial) {
           var fams = (result.failedFamilies || []).join(", ");
-          toast(fams
-            ? "Discovery partial — some families could not be probed: " + fams
-            : "Discovery partial — some families could not be probed");
+          if (result.connectionLost) {
+            // The shared session dropped (or never opened) — the run is truncated, not
+            // a set of individually-empty families (070 follow-up).
+            toast(fams
+              ? "Discovery incomplete — lost the connection to the machine mid-probe (unprobed: " + fams + ")"
+              : "Discovery incomplete — could not reach the machine");
+          } else {
+            toast(fams
+              ? "Discovery partial — some families could not be probed: " + fams
+              : "Discovery partial — some families could not be probed");
+          }
         } else {
           toast("Discovery complete");
         }

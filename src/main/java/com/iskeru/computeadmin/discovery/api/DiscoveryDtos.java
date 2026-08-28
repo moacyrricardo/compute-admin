@@ -30,15 +30,18 @@ public final class DiscoveryDtos {
     /**
      * The proposals reconciled for a machine by a discovery run. {@code partial} is set
      * when a transport failure skipped one or more discoverer families (or the session
-     * could not be opened at all), and {@code failedFamilies} names the skipped families
-     * — so the UI can surface "some families could not be probed" (spec-070).
+     * could not be opened at all), {@code connectionLost} distinguishes a session that
+     * could not be opened or died mid-pass (results truncated) from an honest per-family
+     * failure, and {@code failedFamilies} names every family that did not get a clean
+     * probe — so the UI can surface "some families could not be probed" (spec-070).
      */
     public record DiscoveryResult(String machineId, List<ProposedRecipeView> recipes,
-                                  boolean partial, List<String> failedFamilies) {
+                                  boolean partial, boolean connectionLost, List<String> failedFamilies) {
         public static DiscoveryResult of(String machineId, DiscoveryOutcome outcome) {
             return new DiscoveryResult(machineId,
                     outcome.recipes().stream().map(ProposedRecipeView::of).toList(),
                     outcome.partial(),
+                    outcome.connectionLost(),
                     outcome.failedFamilies().stream().map(Enum::name).toList());
         }
     }
