@@ -243,12 +243,6 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private static final Set<String> PACKAGED_BINARY_ROOTS = Set.of(
             "/usr", "/bin", "/sbin", "/lib", "/lib64", "/snap");
 
-    /** An nginx {@code root <path>;} directive (surrounding quotes stripped by the capture group). */
-    private static final Pattern NGINX_ROOT = Pattern.compile("^\\s*root\\s+\"?([^;\"\\s]+)\"?\\s*;");
-
-    /** nginx stock default-server document roots to discard when picking the modal real root (spec-062 D4). */
-    private static final Set<String> NGINX_DEFAULT_ROOTS = Set.of("/usr/share/nginx/html", "/var/www/html");
-
     /** ss line's owning process spec: {@code (("java",pid=1234,fd=10))}. */
     private static final Pattern SS_PROC = Pattern.compile("\\(\"([^\"]+)\",pid=(\\d+)");
 
@@ -1109,6 +1103,17 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             String override = envValue(ssh, target, pid, service.dataDirEnvVar());
             if (override != null) {
                 return override;
+            }
+        }
+        // spec-062 Decision 4: nginx has no data-dir env var, so its catalog default (/var/www) is a
+        // guess. When nginx is on PATH, dump its config read-only (nginx -T) and take the modal real
+        // root directive. Denied/absent/all-filtered → the catalog default stands (the same degrade
+        // rule the env-override path applies).
+        if ("nginx".equals(service.name()) && Probes.commandExists(ssh, target, "nginx")) {
+            String realRoot = ServiceCatalog.modalNginxRoot(
+                    Probes.lines(ssh, target, List.of("nginx", "-T")));
+            if (realRoot != null) {
+                return realRoot;
             }
         }
         return service.dataDir();
