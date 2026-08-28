@@ -17,10 +17,11 @@ import java.util.List;
  * <em>and</em> port) mark the record {@code confidence = high}; a single signal, {@code low}.
  *
  * <p>Only the Debian/Ubuntu-family rows ship here; mongo and non-Debian catalogs are a
- * near-future addition (spec-056 Known Gaps). The dockerized image-tag half of the fingerprint
- * is a follow-on; this class is consumed by the native listening sweep today.
+ * near-future addition (spec-056 Known Gaps). Both fingerprint entry points are live: the native
+ * listening sweep matches by process/exe name ({@link #fingerprintByProcess}); the docker branch
+ * matches by image tag ({@link #fingerprintByImage}, spec-061).
  *
- * <p>spec-056.
+ * <p>spec-056; image-tag fingerprint added in spec-061.
  */
 final class ServiceCatalog {
 
@@ -69,5 +70,45 @@ final class ServiceCatalog {
             case "mariadb" -> haystack.contains("mariadbd");
             default -> haystack.contains(name); // nginx
         };
+    }
+
+    /**
+     * The catalog row a dockerized container fingerprints to by its <strong>image tag</strong>
+     * (spec-061 Decision 3), the docker mirror of {@link #fingerprintByProcess}. The image ref is
+     * normalised the same way {@link DatastoreImages} normalises it (via the shared {@link ImageRef})
+     * and its repository path segments are matched onto the same four Debian/Ubuntu rows:
+     * {@code postgres}/{@code postgresql} → the postgres row, {@code mysql} → mysql, {@code mariadb}
+     * → mariadb (never the mysql row), {@code nginx} → nginx. {@code null} when the image is not a
+     * catalogued common service. The discoverer then applies the same <em>verify</em> step — a
+     * {@code Config.Env} data-dir override translated through {@code Mounts[]} — before trusting the
+     * row's default folders.
+     */
+    static Service fingerprintByImage(String imageRef) {
+        for (String segment : ImageRef.segments(imageRef)) {
+            Service row = rowForSegment(segment);
+            if (row != null) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    private static Service rowForSegment(String segment) {
+        String name = switch (segment) {
+            case "postgres", "postgresql" -> "postgres";
+            case "mysql" -> "mysql";
+            case "mariadb" -> "mariadb";
+            case "nginx" -> "nginx";
+            default -> null;
+        };
+        if (name == null) {
+            return null;
+        }
+        for (Service service : ROWS) {
+            if (service.name().equals(name)) {
+                return service;
+            }
+        }
+        return null;
     }
 }
