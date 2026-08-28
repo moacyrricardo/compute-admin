@@ -223,3 +223,40 @@ Decision; how it differed from the spec sketch:
   there can still surface as a raw 500. The spec scopes the wrapping contract to `withSession`
   / `SshSession.exec` and says to leave the streaming `run()`/cancel path exactly as is, so
   hardening bare `exec()` was left for its own decision.
+
+### Follow-up (BOL-900, PR #91)
+
+An independent, context-less Fable-5 `/spec-workflow:eval` of the merged PR #90 passed the build
+**SHIP-as-is** (no correctness or safety defect — session reuse, the narrow L0 catch, the S4
+invariants, the untouched streaming/cancel path, and the gate all verified against the code). It
+surfaced residuals, addressed on `moacyrricardo/bol-900-discovery-connlost-reporting` (BOL-900,
+PR #91):
+
+- **Mid-pass session-loss reporting (eval finding ①).** In the one-session model a transport
+  failure kills the shared session, but the merged code recorded only the *throwing* family in
+  `failedFamilies` and `break`ed — leaving every enabled family after it silently unprobed, so a
+  caller read `partial:true, failedFamilies:[DATABASE]` and wrongly assumed the later families
+  were probed-and-empty. The follow-up adds a **`connectionLost`** flag to `DiscoveryOutcome`
+  (threaded through `DiscoveryResult`, the MCP `DiscoverRecipesTool`, and the `app.js` toast) that
+  distinguishes a session that never opened / died mid-pass from an honest per-family failure, and
+  **folds every not-yet-probed enabled family into `failedFamilies`** (enablement gate kept
+  upstream of the fold, so a disabled family is never mis-listed). This makes the `connectionLost`
+  pseudo-code the spec described a real, caller-visible field — the merged build had only the
+  local `connectionLost` boolean on the total-outage path.
+- **Test gap (finding ②).** The original `DiscoveryDegradeTest` ordered the transport-thrower
+  *last*, so break-vs-fold was observationally identical. Added a `LateGoodDiscoverer` (SYSTEMD,
+  ordered after the thrower) and `discover_SessionLostMidPass_FoldsUnprobedFamiliesAndFlagsConnectionLost`
+  asserting the late family's proposal is absent, it appears in `failedFamilies`, and
+  `connectionLost` is set; `DiscoveryConnectionLostTest` gained the `connectionLost` assertion.
+- **Cause-chaining (finding ⑤).** Now that discovery degrades-and-logs instead of throwing a 502,
+  the `warn` is the diagnostic surface — but `SshExecutionException` dropped its cause. Added a
+  cause-carrying `AppException` constructor and chained the cause (wire format unchanged), so
+  refused-vs-auth-vs-timeout survives in the log.
+- **Doc fix.** `CONTRIBUTING.md` still read "Linear is BLOCKED"; aligned to the active `BOL` /
+  `CPT:` workflow.
+- **Still deferred (unchanged):** the bare single-shot `exec()` `RuntimeSshException` wrapping
+  above, and the monitor run/poll connection burst (**concern 071**) — neither is touched by the
+  follow-up.
+- **Change division (CONTRIBUTING §3):** three commits — the reporting fix (service + DTO + MCP +
+  app.js + tests), the cause-chaining (AppException + SshExecutionException), and the docs fix —
+  each one logical concern, tree compiles at each. Conformant. Tests: `mvn test` green, 333.
