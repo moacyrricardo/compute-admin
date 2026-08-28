@@ -6,8 +6,7 @@ import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
 import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -46,15 +45,14 @@ public class NginxDiscoverer implements RecipeDiscoverer {
     private static final String ENABLED_DIR = "/etc/nginx/sites-enabled";
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        if (!Probes.commandExists(ssh, target, "nginx")) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        if (!Probes.commandExists(session, "nginx")) {
             return List.of();
         }
         // Read-only config-test probe (also surfaced below as the test-config action).
-        ssh.exec(target, List.of("nginx", "-t"), false);
-        List<String> available = Probes.lines(ssh, target, List.of("ls", AVAILABLE_DIR));
-        List<String> enabled = Probes.lines(ssh, target, List.of("ls", ENABLED_DIR));
+        session.exec(List.of("nginx", "-t"), false);
+        List<String> available = Probes.lines(session, List.of("ls", AVAILABLE_DIR));
+        List<String> enabled = Probes.lines(session, List.of("ls", ENABLED_DIR));
 
         List<ProposedAction> actions = new ArrayList<>();
         actions.add(new ProposedAction("test-config",

@@ -37,7 +37,7 @@ class SystemdDiscovererTest {
                 "nginx.service    loaded active running The web server\n"
                         + "orders.service   loaded active running Orders app\n"));
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).hasSize(1);
         ProposedRecipe recipe = recipes.get(0);
@@ -75,20 +75,20 @@ class SystemdDiscovererTest {
                 "ok.service loaded active running fine\n"
                         + "@weird loaded active running x\n"));
 
-        ProposedRecipe recipe = discoverer.discover(machine(), ssh).get(0);
+        ProposedRecipe recipe = discoverer.discover(machine(), ssh.session()).get(0);
         assertThat(allowedSet(recipe, "status", "app-name")).containsExactly("ok.service");
     }
 
     @Test
     void discover_NoRunningUnits_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(systemdWith(""));
-        assertThat(discoverer.discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
     }
 
     @Test
     void discover_SystemctlNotInstalled_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
-        assertThat(discoverer.discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
         // Only the existence probe was attempted; the unit listing was never sent.
         assertThat(ssh.commands).containsExactly(PROBE_EXISTS);
     }

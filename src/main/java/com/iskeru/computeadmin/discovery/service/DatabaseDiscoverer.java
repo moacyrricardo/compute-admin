@@ -6,8 +6,7 @@ import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
 import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -48,28 +47,27 @@ public class DatabaseDiscoverer implements RecipeDiscoverer {
             Set.of("information_schema", "performance_schema", "mysql", "sys");
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
         List<ProposedRecipe> proposals = new ArrayList<>();
 
-        boolean mysql = Probes.commandExists(ssh, target, "mysql");
-        boolean mariadb = Probes.commandExists(ssh, target, "mariadb");
+        boolean mysql = Probes.commandExists(session, "mysql");
+        boolean mariadb = Probes.commandExists(session, "mariadb");
         if (mysql || mariadb) {
             String binary = mysql ? "mysql" : "mariadb";
             String service = mysql ? "mysql" : "mariadb";
             // Read-only service-status probe (best effort; the status action reports it).
-            ssh.exec(target, List.of("systemctl", "is-active", service), false);
-            List<String> databases = Probes.lines(ssh, target,
+            session.exec(List.of("systemctl", "is-active", service), false);
+            List<String> databases = Probes.lines(session,
                             List.of(binary, "-N", "-B", "-e", "SHOW DATABASES")).stream()
                     .filter(db -> !MYSQL_SYSTEM_DBS.contains(db))
                     .toList();
             proposals.add(mysqlRecipe(service, databases));
         }
 
-        if (Probes.commandExists(ssh, target, "psql")) {
+        if (Probes.commandExists(session, "psql")) {
             String service = "postgresql";
-            ssh.exec(target, List.of("systemctl", "is-active", service), false);
-            List<String> databases = Probes.lines(ssh, target,
+            session.exec(List.of("systemctl", "is-active", service), false);
+            List<String> databases = Probes.lines(session,
                     List.of("psql", "-tAc",
                             "SELECT datname FROM pg_database WHERE datistemplate = false"));
             proposals.add(postgresRecipe(service, databases));

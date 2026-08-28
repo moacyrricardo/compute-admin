@@ -52,14 +52,14 @@ class DockerComposeDiscovererTest {
     void discover_DockerNotInstalled_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
 
-        assertThat(discoverer().discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer().discover(machine(), ssh.session())).isEmpty();
     }
 
     @Test
     void discover_GroupsComposeProject_IsOneConsumerWithDatastoreServices() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
 
-        List<ProposedRecipe> recipes = discoverer().discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer().discover(machine(), ssh.session());
 
         ProposedRecipe orders = recipe(recipes, "orders");
         assertThat(orders.type()).isEqualTo(RecipeType.MONITOR);
@@ -88,7 +88,7 @@ class DockerComposeDiscovererTest {
     void discover_StandaloneDatastore_IsShared_AndNonDatastoreGoesToBucket() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
 
-        List<ProposedRecipe> recipes = discoverer().discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer().discover(machine(), ssh.session());
 
         // The bare redis is a SHARED datastore consumer (no owning project).
         DockerConsumer redis = consumer(recipe(recipes, "cache"), "cache");
@@ -107,7 +107,7 @@ class DockerComposeDiscovererTest {
     void discover_NoContainers_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(""));
 
-        assertThat(discoverer().discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer().discover(machine(), ssh.session())).isEmpty();
     }
 
     private Function<List<String>, ExecResult> dockerWith(String psJson) {

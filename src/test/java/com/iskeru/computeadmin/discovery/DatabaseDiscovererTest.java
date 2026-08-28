@@ -39,7 +39,7 @@ class DatabaseDiscovererTest {
             return notFound();
         });
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).hasSize(1);
         ProposedRecipe recipe = recipes.get(0);
@@ -68,7 +68,7 @@ class DatabaseDiscovererTest {
             return notFound();
         });
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).hasSize(1);
         assertThat(recipes.get(0).name()).isEqualTo("postgresql");
@@ -79,7 +79,7 @@ class DatabaseDiscovererTest {
     void discover_NoDatabaseEngine_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
 
-        assertThat(discoverer.discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
     }
 
     private static List<String> argTokenValues(ProposedAction action) {

@@ -2,6 +2,7 @@ package com.iskeru.computeadmin.machine.service;
 
 import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshSession;
 import com.iskeru.computeadmin.ssh.SshTarget;
 import org.springframework.stereotype.Service;
 
@@ -46,13 +47,23 @@ public class MachineFactsProbe {
         this.ssh = ssh;
     }
 
-    /** Runs the read-only probes and returns what was detected (facets may be null). */
+    /**
+     * Runs the read-only probes and returns what was detected (facets may be null). All
+     * the {@code cat} reads share <strong>one</strong> authenticated session (spec-070):
+     * one facts pass = one SSH handshake, not one per file. Best-effort — a failure to
+     * even open the session yields all-null facts rather than an error.
+     */
     public MachineFacts probe(SshTarget target) {
-        return new MachineFacts(detectOs(target), detectCloud(target));
+        try {
+            return ssh.withSession(target, session ->
+                    new MachineFacts(detectOs(session), detectCloud(session)));
+        } catch (RuntimeException e) {
+            return new MachineFacts(null, null);
+        }
     }
 
-    private String detectOs(SshTarget target) {
-        for (String line : read(target, "/etc/os-release")) {
+    private String detectOs(SshSession session) {
+        for (String line : read(session, "/etc/os-release")) {
             if (line.startsWith("ID=")) {
                 String id = unquote(line.substring("ID=".length())).toLowerCase(Locale.ROOT);
                 return OS_TAGS.get(id);
@@ -61,13 +72,13 @@ public class MachineFactsProbe {
         return null;
     }
 
-    private String detectCloud(SshTarget target) {
+    private String detectCloud(SshSession session) {
         StringBuilder vendor = new StringBuilder();
         for (String path : List.of(
                 "/sys/class/dmi/id/sys_vendor",
                 "/sys/class/dmi/id/product_name",
                 "/sys/class/dmi/id/board_vendor")) {
-            for (String line : read(target, path)) {
+            for (String line : read(session, path)) {
                 vendor.append(line).append('\n');
             }
         }
@@ -85,9 +96,9 @@ public class MachineFactsProbe {
     }
 
     /** Trimmed, non-blank stdout lines of {@code cat path}; empty on any failure. */
-    private List<String> read(SshTarget target, String path) {
+    private List<String> read(SshSession session, String path) {
         try {
-            ExecResult result = ssh.exec(target, List.of("cat", path), false);
+            ExecResult result = session.exec(List.of("cat", path), false);
             if (!result.succeeded() || result.stdout() == null) {
                 return List.of();
             }

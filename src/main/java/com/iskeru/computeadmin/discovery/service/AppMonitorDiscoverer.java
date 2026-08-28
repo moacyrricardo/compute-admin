@@ -8,8 +8,7 @@ import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -161,9 +160,8 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private static final Pattern HEX_ID = Pattern.compile("[0-9a-f]{12,}");
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        List<Listener> listeners = listeners(ssh, target);
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        List<Listener> listeners = listeners(session);
         if (listeners.isEmpty()) {
             return List.of();
         }
@@ -173,20 +171,20 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         Map<Family, List<AppPortItem>> byFamily = new LinkedHashMap<>();
         boolean prometheus = false;
         for (Listener listener : listeners) {
-            String cmdline = cmdline(ssh, target, listener.pid());
-            Runtime runtime = runtimeOf(ssh, target, listener.pid());
-            String container = runtime == Runtime.DOCKER ? containerName(ssh, target, listener.pid()) : null;
+            String cmdline = cmdline(session, listener.pid());
+            Runtime runtime = runtimeOf(session, listener.pid());
+            String container = runtime == Runtime.DOCKER ? containerName(session, listener.pid()) : null;
             Family family = classify(listener.process(), cmdline);
             // A java listener is only a springboot monitor if Actuator actually answers;
             // otherwise its /actuator/* probes would all be dead. Fall back to an HTTP
             // liveness monitor (GET / + process) — the actuator-less Spring Boot case.
-            if (family == Family.SPRINGBOOT && !respondsToActuator(ssh, target, listener.port())) {
+            if (family == Family.SPRINGBOOT && !respondsToActuator(session, listener.port())) {
                 family = Family.HTTP;
             }
-            String appName = appName(family, listener, cmdline, container, ssh, target);
+            String appName = appName(family, listener, cmdline, container, session);
             byFamily.computeIfAbsent(family, f -> new ArrayList<>())
                     .add(new AppPortItem(appName, listener.port(), runtime.label));
-            if (family == Family.FASTAPI && respondsToMetrics(ssh, target, listener.port())) {
+            if (family == Family.FASTAPI && respondsToMetrics(session, listener.port())) {
                 prometheus = true;
             }
         }
@@ -201,23 +199,23 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     // --- probes -------------------------------------------------------------
 
     /** Listening TCP sockets owned by the login user, via {@code ss} (netstat fallback). */
-    private List<Listener> listeners(SshExecutor ssh, SshTarget target) {
-        List<String> ss = Probes.lines(ssh, target, List.of("ss", "-ltnp"));
+    private List<Listener> listeners(SshSession session) {
+        List<String> ss = Probes.lines(session, List.of("ss", "-ltnp"));
         if (!ss.isEmpty()) {
             return parseSs(ss);
         }
-        return parseNetstat(Probes.lines(ssh, target, List.of("netstat", "-ltnp")));
+        return parseNetstat(Probes.lines(session, List.of("netstat", "-ltnp")));
     }
 
     /** The whitespace-normalised {@code /proc/<pid>/cmdline} (NUL-separated on disk). */
-    private String cmdline(SshExecutor ssh, SshTarget target, String pid) {
-        List<String> lines = Probes.lines(ssh, target, List.of("cat", "/proc/" + pid + "/cmdline"));
+    private String cmdline(SshSession session, String pid) {
+        List<String> lines = Probes.lines(session, List.of("cat", "/proc/" + pid + "/cmdline"));
         return String.join(" ", lines).replace('\0', ' ').trim();
     }
 
     /** {@code docker} if the PID's cgroup resolves to a container, else systemd/process. */
-    private Runtime runtimeOf(SshExecutor ssh, SshTarget target, String pid) {
-        for (String line : Probes.lines(ssh, target, List.of("cat", "/proc/" + pid + "/cgroup"))) {
+    private Runtime runtimeOf(SshSession session, String pid) {
+        for (String line : Probes.lines(session, List.of("cat", "/proc/" + pid + "/cgroup"))) {
             if (line.contains("docker") || line.contains("kubepods") || line.contains("containerd")) {
                 return Runtime.DOCKER;
             }
@@ -229,8 +227,8 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     /** The container name recovered from the PID's cgroup, or {@code null} if only an opaque id. */
-    private String containerName(SshExecutor ssh, SshTarget target, String pid) {
-        for (String line : Probes.lines(ssh, target, List.of("cat", "/proc/" + pid + "/cgroup"))) {
+    private String containerName(SshSession session, String pid) {
+        for (String line : Probes.lines(session, List.of("cat", "/proc/" + pid + "/cgroup"))) {
             Matcher m = CGROUP_DOCKER.matcher(line);
             if (m.find()) {
                 String ref = m.group(1);
@@ -245,18 +243,18 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     /** Whether the app answers Spring Boot Actuator on {@code /actuator/health} (HTTP 2xx). */
-    private boolean respondsToActuator(SshExecutor ssh, SshTarget target, int port) {
+    private boolean respondsToActuator(SshSession session, int port) {
         // Same fixed read-only GET shape as the metrics probe; -f makes a 404/redirect
         // fail so an actuator-less app yields no lines.
-        return !Probes.lines(ssh, target,
+        return !Probes.lines(session,
                 List.of("curl", "-sf", "-m", "2", "http://127.0.0.1:" + port + "/actuator/health")).isEmpty();
     }
 
     /** Whether the FastAPI app exposes a Prometheus {@code /metrics} endpoint (HTTP 2xx). */
-    private boolean respondsToMetrics(SshExecutor ssh, SshTarget target, int port) {
+    private boolean respondsToMetrics(SshSession session, int port) {
         // Concrete integer port (from ss) built into a fixed read-only GET; -f makes a
         // 404 fail so a non-Prometheus app yields no lines.
-        return !Probes.lines(ssh, target,
+        return !Probes.lines(session,
                 List.of("curl", "-sf", "-m", "2", "http://127.0.0.1:" + port + "/metrics")).isEmpty();
     }
 
@@ -342,12 +340,12 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     private String appName(Family family, Listener listener, String cmdline, String container,
-                           SshExecutor ssh, SshTarget target) {
+                           SshSession session) {
         if (container != null) {
             return sanitize(container, listener.port());
         }
         String derived = switch (family) {
-            case SPRINGBOOT, HTTP -> springBootName(cmdline, ssh, target, listener.pid());
+            case SPRINGBOOT, HTTP -> springBootName(cmdline, session, listener.pid());
             case FASTAPI -> fastApiName(cmdline);
             case GENERIC -> listener.process();
         };
@@ -359,7 +357,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             "app", "application", "web", "api", "server", "service", "main", "demo",
             "start", "run", "boot", "target", "build", "dist");
 
-    private String springBootName(String cmdline, SshExecutor ssh, SshTarget target, String pid) {
+    private String springBootName(String cmdline, SshSession session, String pid) {
         Matcher name = SPRING_APP_NAME.matcher(cmdline);
         if (name.find()) {
             return name.group(1);
@@ -375,11 +373,11 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         // A generic (or missing) jar name — "app.jar", "web.jar". Reach further: the
         // deploy directory (cheap, /proc/<pid>/cwd) usually IS the app name, then the jar
         // manifest's Start-Class (the real app class; Main-Class is the boot loader).
-        String cwd = deployDirName(ssh, target, pid);
+        String cwd = deployDirName(session, pid);
         if (cwd != null && !isGeneric(cwd)) {
             return cwd;
         }
-        String fromManifest = manifestAppName(ssh, target, jarPath);
+        String fromManifest = manifestAppName(session, jarPath);
         if (fromManifest != null) {
             return fromManifest;
         }
@@ -408,8 +406,8 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     /** Basename of {@code /proc/<pid>/cwd} (the deploy dir), or null. */
-    private String deployDirName(SshExecutor ssh, SshTarget target, String pid) {
-        List<String> out = Probes.lines(ssh, target, List.of("readlink", "/proc/" + pid + "/cwd"));
+    private String deployDirName(SshSession session, String pid) {
+        List<String> out = Probes.lines(session, List.of("readlink", "/proc/" + pid + "/cwd"));
         if (out.isEmpty()) {
             return null;
         }
@@ -427,12 +425,12 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
      * {@code com.ex.BirthdayRsvpApplication} → {@code birthday-rsvp}. Null when {@code
      * unzip} is absent or nothing usable is found.
      */
-    private String manifestAppName(SshExecutor ssh, SshTarget target, String jarPath) {
+    private String manifestAppName(SshSession session, String jarPath) {
         // Only a plain jar path (no shell metacharacters) is passed, as an argv element.
         if (jarPath == null || !jarPath.matches("[A-Za-z0-9._/-]+\\.jar")) {
             return null;
         }
-        List<String> raw = Probes.lines(ssh, target,
+        List<String> raw = Probes.lines(session,
                 List.of("unzip", "-p", jarPath, "META-INF/MANIFEST.MF"));
         if (raw.isEmpty()) {
             return null;

@@ -31,7 +31,7 @@ class MonitorMachineDiscovererTest {
     void discover_ProposesMonitorMachineWithThreeReadOnlyActions() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> ok("anything"));
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).hasSize(1);
         ProposedRecipe recipe = recipes.get(0);
@@ -59,7 +59,7 @@ class MonitorMachineDiscovererTest {
         // this one is universal and proposes the host monitor anyway.
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("monitor machine");
     }
@@ -70,7 +70,7 @@ class MonitorMachineDiscovererTest {
         // shows it never issued a probe just to propose.
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> ok(""));
 
-        discoverer.discover(machine(), ssh);
+        discoverer.discover(machine(), ssh.session());
 
         assertThat(ssh.commands).isEmpty();
     }

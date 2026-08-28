@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.discovery.api;
 
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveredRecipe;
+import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveryOutcome;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconcileOutcome;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.ReconciledAction;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos;
@@ -26,11 +27,19 @@ public final class DiscoveryDtos {
     private DiscoveryDtos() {
     }
 
-    /** The proposals reconciled for a machine by a discovery run. */
-    public record DiscoveryResult(String machineId, List<ProposedRecipeView> recipes) {
-        public static DiscoveryResult of(String machineId, List<DiscoveredRecipe> discovered) {
+    /**
+     * The proposals reconciled for a machine by a discovery run. {@code partial} is set
+     * when a transport failure skipped one or more discoverer families (or the session
+     * could not be opened at all), and {@code failedFamilies} names the skipped families
+     * — so the UI can surface "some families could not be probed" (spec-070).
+     */
+    public record DiscoveryResult(String machineId, List<ProposedRecipeView> recipes,
+                                  boolean partial, List<String> failedFamilies) {
+        public static DiscoveryResult of(String machineId, DiscoveryOutcome outcome) {
             return new DiscoveryResult(machineId,
-                    discovered.stream().map(ProposedRecipeView::of).toList());
+                    outcome.recipes().stream().map(ProposedRecipeView::of).toList(),
+                    outcome.partial(),
+                    outcome.failedFamilies().stream().map(Enum::name).toList());
         }
     }
 

@@ -18,7 +18,11 @@ import com.iskeru.computeadmin.recipe.service.ActionService.AddActionInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.EditActionInput;
 import com.iskeru.computeadmin.recipe.service.ApprovalService;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
+import com.iskeru.computeadmin.ssh.SshExecutionException;
 import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshTarget;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -65,6 +69,8 @@ import java.util.Set;
 @Service
 public class DiscoveryService {
 
+    private static final Logger log = LoggerFactory.getLogger(DiscoveryService.class);
+
     /**
      * What reconciliation did with one proposed action on a re-discovery (spec-021):
      * <ul>
@@ -91,6 +97,17 @@ public class DiscoveryService {
 
     /** A reconciled proposal: the recipe and its reconciled actions. */
     public record DiscoveredRecipe(Recipe recipe, List<ReconciledAction> actions) {
+    }
+
+    /**
+     * The result of a discovery pass (spec-070): the reconciled recipes, whether the run
+     * was <strong>partial</strong> (a transport failure skipped one or more families or
+     * the session could not be opened at all), and the {@link DiscovererFamily} families
+     * whose probes were skipped. A clean run is {@code partial == false} with an empty
+     * {@code failedFamilies}.
+     */
+    public record DiscoveryOutcome(List<DiscoveredRecipe> recipes, boolean partial,
+                                   List<DiscovererFamily> failedFamilies) {
     }
 
     private final MachineService machineService;
@@ -141,27 +158,63 @@ public class DiscoveryService {
      * @throws com.iskeru.computeadmin.machine.service.MachineNotFoundException 404 if
      *         the machine is absent or owned by another user.
      */
-    public List<DiscoveredRecipe> discover(String machineId) {
+    public DiscoveryOutcome discover(String machineId) {
         Machine machine = machineService.requireMachine(machineId);
         // Per-machine enablement (spec-035): skip a disabled family entirely — no probe,
         // no proposal. Docker is default-off (root-equivalent socket); the read-only
         // families the login user can already run stay on. This gate is upstream of, and
         // distinct from, the approval gate — enabled discoverers still only propose.
         Set<DiscovererFamily> enabled = enablementService.enabledFamilies(machineId);
-        // Probe phase — no open transaction; collect proposals in memory.
+        SshTarget target = Probes.target(machine);
+
+        // Probe phase — no open transaction; collect proposals in memory. All the
+        // discoverers share ONE authenticated session (spec-070 L1): one discovery pass =
+        // one SSH handshake, not one per probe.
         List<ProposedRecipe> proposals = new ArrayList<>();
-        for (RecipeDiscoverer discoverer : discoverers) {
-            if (!enabled.contains(discoverer.family())) {
-                continue;
-            }
-            proposals.addAll(discoverer.discover(machine, ssh));
+        List<DiscovererFamily> failed = new ArrayList<>();
+        // A boxed flag the session lambda can set: at least one discoverer completed a
+        // probe pass, so the box was actually reached (not a connect-then-drop).
+        boolean[] reached = {false};
+        boolean connectionLost = false;
+        try {
+            ssh.withSession(target, session -> {
+                for (RecipeDiscoverer discoverer : discoverers) {
+                    if (!enabled.contains(discoverer.family())) {
+                        continue;
+                    }
+                    try {
+                        proposals.addAll(discoverer.discover(machine, session));   // L1: one open session
+                        reached[0] = true;
+                    } catch (SshExecutionException e) {                            // L0: degrade — transport only
+                        // A transport failure mid-pass usually means the one shared session
+                        // died; stop iterating and report connection-lost rather than
+                        // emitting a misleading "family failed" for every remaining family.
+                        log.warn("discovery: family {} could not probe {} — connection lost mid-discovery",
+                                discoverer.family(), machineId, e);
+                        failed.add(discoverer.family());
+                        break;
+                    }
+                    // NB: a non-SshExecutionException (e.g. a discoverer NPE) is NOT caught
+                    // here — it aborts loudly, as it should. Only transport failures degrade.
+                }
+                return null;
+            });
+        } catch (SshExecutionException e) {
+            // connect/auth failed BEFORE any probe ran → real outage; degrade, don't abort.
+            log.warn("discovery: could not open a session to {}", machineId, e);
+            connectionLost = true;
         }
-        // The probe phase connected over SSH — the box is reachable, so announce it;
-        // a listener refreshes the machine to ONLINE asynchronously (via = SYSTEM).
-        // spec-019.
-        events.publishEvent(new MachineReachedEvent(machineId, Instant.now()));
+
+        boolean partial = connectionLost || !failed.isEmpty();
+        // Only announce ONLINE when a probe actually succeeded — never off a run that
+        // connected then dropped. A listener refreshes the machine to ONLINE
+        // asynchronously (via = SYSTEM). spec-019/070.
+        if (reached[0]) {
+            events.publishEvent(new MachineReachedEvent(machineId, Instant.now()));
+        }
         // Persist phase — one short transaction.
-        return tx.execute(status -> persist(machineId, proposals));
+        List<DiscoveredRecipe> persisted = tx.execute(status -> persist(machineId, proposals));
+        return new DiscoveryOutcome(persisted, partial, List.copyOf(failed));
     }
 
     private List<DiscoveredRecipe> persist(String machineId, List<ProposedRecipe> proposals) {

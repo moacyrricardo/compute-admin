@@ -767,8 +767,17 @@
     discoverBtn.addEventListener("click", function () {
       discoverBtn.disabled = true;
       discoverBtn.textContent = "Discovering…";
-      api("POST", "/machines/" + mid + "/discover").then(function () {
-        toast("Discovery complete");
+      api("POST", "/machines/" + mid + "/discover").then(function (result) {
+        // spec-070: a transport failure can skip one or more discoverer families and
+        // still return the rest — say so rather than claim a clean run.
+        if (result && result.partial) {
+          var fams = (result.failedFamilies || []).join(", ");
+          toast(fams
+            ? "Discovery partial — some families could not be probed: " + fams
+            : "Discovery partial — some families could not be probed");
+        } else {
+          toast("Discovery complete");
+        }
         screenMachineDetail(p);
       }).catch(function (err) { toast(err.message); discoverBtn.disabled = false; discoverBtn.textContent = "Discover recipes"; });
     });

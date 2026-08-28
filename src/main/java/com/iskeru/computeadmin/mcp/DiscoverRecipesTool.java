@@ -3,6 +3,8 @@ package com.iskeru.computeadmin.mcp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService;
 import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveredRecipe;
+import com.iskeru.computeadmin.discovery.service.DiscoveryService.DiscoveryOutcome;
+import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -54,11 +56,18 @@ public class DiscoverRecipesTool implements McpTool {
     private McpSchema.CallToolResult call(McpSyncServerExchange exchange, Map<String, Object> arguments) {
         try {
             String machineId = arguments == null ? null : (String) arguments.get("machineId");
-            List<Map<String, Object>> proposals = discoveryService.discover(machineId).stream()
+            DiscoveryOutcome outcome = discoveryService.discover(machineId);
+            List<Map<String, Object>> proposals = outcome.recipes().stream()
                     .map(DiscoverRecipesTool::summarize)
                     .toList();
+            // Surface partiality (spec-070) — else an MCP caller silently never learns a
+            // family was skipped by a transport failure and treats a degraded run as complete.
+            Map<String, Object> result = Map.of(
+                    "proposals", proposals,
+                    "partial", outcome.partial(),
+                    "failedFamilies", outcome.failedFamilies().stream().map(DiscovererFamily::name).toList());
             return McpSchema.CallToolResult.builder()
-                    .addTextContent(objectMapper.writeValueAsString(proposals))
+                    .addTextContent(objectMapper.writeValueAsString(result))
                     .build();
         } catch (Exception e) {
             return McpSchema.CallToolResult.builder()

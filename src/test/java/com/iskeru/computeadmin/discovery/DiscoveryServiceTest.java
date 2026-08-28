@@ -149,7 +149,7 @@ class DiscoveryServiceTest {
             // Docker discovery is default-off (spec-035); this test asserts the docker
             // recipe/actions, so opt this machine into the DOCKER family first.
             enablement.setEnabled(machine.getId(), DiscovererFamily.DOCKER, true);
-            return discoveryService.discover(machine.getId());
+            return discoveryService.discover(machine.getId()).recipes();
         });
 
         // Every built-in service was detected → a recipe per type (mysql is DATABASE).
@@ -177,7 +177,7 @@ class DiscoveryServiceTest {
 
         asUser(alice, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "deploy"));
-            return discoveryService.discover(machine.getId());
+            return discoveryService.discover(machine.getId()).recipes();
         });
 
         assertThat(fake.commands).isNotEmpty();
@@ -279,7 +279,7 @@ class DiscoveryServiceTest {
 
             // Re-discover with identical probe output.
             ReconciledAction reconciled = reconciledActionNamed(
-                    discoveryService.discover(machine.getId()), "ps");
+                    discoveryService.discover(machine.getId()).recipes(), "ps");
             assertThat(reconciled.outcome()).isEqualTo(ReconcileOutcome.UNCHANGED);
             assertThat(reconciled.action().getApprovalState()).isEqualTo(ApprovalState.APPROVED);
             assertThat(reconciled.proposed()).isNull();
@@ -302,7 +302,7 @@ class DiscoveryServiceTest {
             // A new container appears in the ALLOWED_SET before the human re-approves.
             dockerPsOutput = "web\napi\n";
             ReconciledAction reconciled = reconciledActionNamed(
-                    discoveryService.discover(machine.getId()), "restart container");
+                    discoveryService.discover(machine.getId()).recipes(), "restart container");
 
             // The approval is left intact and the diff surfaced — never auto-adopted.
             assertThat(reconciled.outcome()).isEqualTo(ReconcileOutcome.DIFFERS_AWAITING_REAPPROVAL);
@@ -328,7 +328,7 @@ class DiscoveryServiceTest {
             // Never approved; a new container appears before review.
             dockerPsOutput = "web\napi\n";
             ReconciledAction reconciled = reconciledActionNamed(
-                    discoveryService.discover(machine.getId()), "restart container");
+                    discoveryService.discover(machine.getId()).recipes(), "restart container");
 
             assertThat(reconciled.outcome()).isEqualTo(ReconcileOutcome.REFRESHED);
             assertThat(reconciled.action().getApprovalState()).isEqualTo(ApprovalState.PENDING_APPROVAL);
@@ -364,7 +364,7 @@ class DiscoveryServiceTest {
 
         List<DiscoveredRecipe> discovered = asUser(owner, () -> {
             Machine machine = machineService.register(new RegisterMachineInput("probe-host", "probe-host", 22, "deploy"));
-            return discoveryService.discover(machine.getId());
+            return discoveryService.discover(machine.getId()).recipes();
         });
         try {
             // The read-only probes ran, and none of them saw an active transaction.

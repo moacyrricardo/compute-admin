@@ -3,6 +3,7 @@ package com.iskeru.computeadmin.discovery;
 import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.OutputSink;
 import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshSession;
 import com.iskeru.computeadmin.ssh.SshTarget;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -35,6 +36,16 @@ class FakeSshExecutor implements SshExecutor {
 
     FakeSshExecutor(Function<List<String>, ExecResult> responder) {
         this.responder = responder;
+    }
+
+    /**
+     * A single-session view over this fake (spec-070): the discoverer contract now takes
+     * an {@link SshSession}, and the default {@code withSession} bridge routes every
+     * {@code exec} straight back through this fake, so the recorded-argv assertions are
+     * unchanged. The target is ignored by the fake.
+     */
+    SshSession session() {
+        return SshSession.of(this, new SshTarget("host", 22, "deploy"));
     }
 
     static ExecResult ok(String stdout) {
