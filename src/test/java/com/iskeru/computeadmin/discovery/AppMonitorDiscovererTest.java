@@ -520,7 +520,7 @@ class AppMonitorDiscovererTest {
         // so the port is discovered AND attributed — here it fingerprints as postgres.
         FakeSshExecutor ssh = new FakeSshExecutor(noSsFallbackInventory());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem pg = generic.appPortList().stream()
                 .filter(i -> i.port() == 5432).findFirst().orElseThrow();
 
@@ -539,7 +539,7 @@ class AppMonitorDiscovererTest {
         // with no PID recoverable it survives as a single low-confidence app-<port> record.
         FakeSshExecutor ssh = new FakeSshExecutor(blankUsersSs());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem item = generic.appPortList().stream()
                 .filter(i -> i.port() == 8080).findFirst().orElseThrow();
 
@@ -557,7 +557,7 @@ class AppMonitorDiscovererTest {
         // record — rather than being lost.
         FakeSshExecutor ssh = new FakeSshExecutor(foreignFallbackSocket());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
 
         assertThat(generic.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::confidence)
@@ -570,7 +570,7 @@ class AppMonitorDiscovererTest {
         // 0.0.0.0:8080 are distinct listeners — a port-only key would wrongly drop one.
         FakeSshExecutor ssh = new FakeSshExecutor(bothAddrsSamePort());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
 
         assertThat(generic.appPortList())
                 .filteredOn(i -> i.port() == 8080)
@@ -585,7 +585,7 @@ class AppMonitorDiscovererTest {
         // never read — and :8080 stays the ss-attributed springboot app.
         FakeSshExecutor ssh = new FakeSshExecutor(ssBeatsFallback());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
         ProposedRecipe springboot = recipe(recipes, "springboot monitor");
 
         assertThat(springboot.appPortList())
@@ -604,7 +604,7 @@ class AppMonitorDiscovererTest {
         // LOWEST PID (the master), which drives context/classification. PID 650 is read, 700 is not.
         FakeSshExecutor ssh = new FakeSshExecutor(sharedInodeLowestPid());
 
-        discoverer.discover(machine(), ssh);
+        discoverer.discover(machine(), ssh.session());
 
         assertThat(ssh.commands).contains(List.of("cat", "/proc/650/cmdline"));
         assertThat(ssh.commands).doesNotContain(List.of("cat", "/proc/700/cmdline"));
@@ -618,7 +618,7 @@ class AppMonitorDiscovererTest {
         // nginx record), NOT doubled as a low-confidence app-80 card, and nginx.service is deduped.
         FakeSshExecutor ssh = new FakeSshExecutor(systemdOwnedPortViaFallback());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
 
         assertThat(generic.appPortList()).filteredOn(i -> i.port() == 80)
                 .singleElement()
@@ -637,7 +637,7 @@ class AppMonitorDiscovererTest {
         // a $-variable root and the stock /usr/share/nginx/html default. /var/www/site is chosen.
         FakeSshExecutor ssh = new FakeSshExecutor(nginxRealRoot());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem nginx = generic.appPortList().stream()
                 .filter(i -> i.appName().equals("nginx")).findFirst().orElseThrow();
 
@@ -652,7 +652,7 @@ class AppMonitorDiscovererTest {
         // redeployed binary's " (deleted)" suffix is stripped before the deploy folder is derived.
         FakeSshExecutor ssh = new FakeSshExecutor(exeDeletedSuffix());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem item = generic.appPortList().get(0);
 
         assertThat(item.appName()).isEqualTo("server");
@@ -666,7 +666,7 @@ class AppMonitorDiscovererTest {
         // the PID falls back to its (boundary-root) cwd mapping — never a bogus relative context.
         FakeSshExecutor ssh = new FakeSshExecutor(exeNonAbsolute());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem item = generic.appPortList().get(0);
 
         assertThat(item.contextKey()).isEqualTo("/");
@@ -678,7 +678,7 @@ class AppMonitorDiscovererTest {
         // check, so an unreadable cwd means an equally unreadable exe — the exe arm must never fire.
         FakeSshExecutor ssh = new FakeSshExecutor(unreadableCwd());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
 
         assertThat(generic.appPortList().get(0).contextKey()).isNull();
         assertThat(ssh.commands).doesNotContain(List.of("readlink", "/proc/1000/exe"));
@@ -690,7 +690,7 @@ class AppMonitorDiscovererTest {
         // the process cwd and accepted only when an ls -ld existence probe confirms it is a FILE.
         FakeSshExecutor ssh = new FakeSshExecutor(relativeInterpreterFile());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
 
         assertThat(generic.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::contextKey)
@@ -703,7 +703,7 @@ class AppMonitorDiscovererTest {
         // rejected — it is not an app-script — so nothing is proposed for it.
         FakeSshExecutor ssh = new FakeSshExecutor(interpreterDirectoryArg());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).isEmpty();
         // The ls -ld file test really ran and returned a directory.
