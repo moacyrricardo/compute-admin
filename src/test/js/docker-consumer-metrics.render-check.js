@@ -13,7 +13,7 @@ src = src.replace(
   "  window.addEventListener(\"hashchange\", route);\n  route();\n})();",
   "  window.addEventListener(\"hashchange\", route);\n" +
   "  globalThis.__ca = { buildConsumers, applyDockerReading, applyConsumerReading," +
-  " parseAppCpu, consumerLegend, consumerCard," +
+  " parsePss, parseStatTicks, parseDuBytes, consumerLegend, consumerCard," +
   " datastoresOf, serviceRow, parseDockerStats, parseDockerPs, parseDockerVolumes," +
   " dockerBytes, parseDfTotal, pctText };\n})();"
 );
@@ -142,19 +142,26 @@ const shDbs = ca.datastoresOf(shModels);
 assert(shDbs.shared.length === 1 && shDbs.ded.length === 0,
   "a standalone DATABASE consumer must stay in the Shared band: " + JSON.stringify({ded:shDbs.ded.length,shared:shDbs.shared.length}));
 
-// ---- spec-039: a NATIVE consumer's CPU axis fills from the process-tree cpu probe ----
-// The 032 cpu probe emits `## pid N` headers + `ps -o …,pcpu=,comm=` rows; parseAppCpu
-// sums the 3rd (pcpu) field, and applyConsumerReading divides by the host core count
-// (the SAME denom docker uses) so a native consumer reads a numeric CPU axis, not —.
-assert(ca.parseAppCpu("## pid 100\n100 1 80.0 java\n101 100 20.0 java\n") === 100,
-  "parseAppCpu should sum pcpu (80+20=100), got " + ca.parseAppCpu("## pid 100\n100 1 80.0 java\n101 100 20.0 java\n"));
-assert(ca.parseAppCpu("no listener on port 8080") === null, "no-listener sentinel must parse to null");
-assert(ca.parseAppCpu("") === null && ca.parseAppCpu(null) === null, "empty/absent stdout must parse to null");
+// ---- spec-057: a NATIVE consumer's footprint axes fill from the ram/cpu/disk probes ----
+// ram → Σ PSS; cpu → a RATE (Δ jiffies / measured Δt / CLK_TCK); disk → du bytes ÷ root-FS.
+// applyConsumerReading divides each by the SAME host denominator docker uses, so a native
+// consumer reads numeric axes (not —) and subtracts cleanly from OTHER (spec-041).
+const cpuStdout = "clk_tck=100\nt0=1000.0\n## s0\npid=100 ticks=100 starttime=9\npid=101 ticks=50 starttime=9\n"
+  + "t1=1002.0\n## s1\npid=100 ticks=500 starttime=9\npid=101 ticks=150 starttime=9\n";
+// Σ Δticks = (500-100)+(150-50)=500; /100 CLK_TCK = 5 CPU-s; /2s Δt = 2.5 cores = 250% cross-core.
+assert(Math.round(ca.parseStatTicks(cpuStdout)) === 250,
+  "parseStatTicks should be 250% cross-core, got " + ca.parseStatTicks(cpuStdout));
+assert(ca.parseStatTicks("no listener on port 8080") === null, "no-listener → null");
+assert(ca.parsePss("## pid 100\nPss: 1024000 kB\n## pid 101\nPss: 1024000 kB\n") === 2000,
+  "parsePss should sum PSS to MB (2000), got " + ca.parsePss("## pid 100\nPss: 1024000 kB\n"));
+assert(ca.parseDuBytes("app_folder=/opt/orders\ndu_bytes=5368709120\n") === 5368709120, "parseDuBytes bytes");
 
 const nativeMachine = { machineId:"m4", apps:[
   { appName:"orders", framework:"spring", port:8080, checks:[
     { id:"proc1", name:"process", approvalState:"APPROVED", changedSinceApproval:false },
-    { id:"cpu1", name:"cpu", approvalState:"APPROVED", changedSinceApproval:false }
+    { id:"ram1", name:"ram", approvalState:"APPROVED", changedSinceApproval:false },
+    { id:"cpu1", name:"cpu", approvalState:"APPROVED", changedSinceApproval:false },
+    { id:"disk1", name:"disk", approvalState:"APPROVED", changedSinceApproval:false }
   ] }
 ], consumers:[
   { id:"orders", name:"orders", role:"APP", source:"HOST", ram:null, cpu:null, disk:null, services:[] }
@@ -162,35 +169,38 @@ const nativeMachine = { machineId:"m4", apps:[
 const nmodels = ca.buildConsumers(nativeMachine);
 const nc = nmodels[0];
 
-// Pre-poll the native CPU axis is — (the bug 039 fixes).
+// Pre-poll the native axes are — (the null-honest starting state).
 const nBefore = ca.consumerLegend(nmodels, ()=>{}).textContent;
-assert(nBefore.indexOf("—") >= 0, "native consumer CPU axis should start at — : " + nBefore);
+assert(nBefore.indexOf("—") >= 0, "native consumer axes should start at — : " + nBefore);
 
-// process → RAM (VmRSS 2048000 kB = 2000 MB / 4000 = 50%); cpu → 100% pcpu / 4 cores = 25%.
+// ram → Σ PSS 2000 MB / 4000 = 50%; cpu → 250% cross-core / 4 cores = 63%; disk → 5 GiB /
+// 50 GiB root-FS = 10%. denom = { ramMb:4000, cores:4, diskBytes: 50 GiB }.
+const DISK_DENOM = 50 * 1024 * 1024 * 1024;
 const nOutputs = {
   proc1: { orders: { stdout: "VmRSS: 2048000 kB\n", exit: 0 } },
-  cpu1:  { orders: { stdout: "## pid 100\n100 1 80.0 java\n101 100 20.0 java\n", exit: 0 } }
+  ram1:  { orders: { stdout: "## pid 100\nPss: 1024000 kB\n## pid 101\nPss: 1024000 kB\n", exit: 0 } },
+  cpu1:  { orders: { stdout: cpuStdout, exit: 0 } },
+  disk1: { orders: { stdout: "app_folder=/opt/orders\ndu_bytes=" + (5 * 1024 * 1024 * 1024) + "\n", exit: 0 } }
 };
-ca.applyConsumerReading(nc, nOutputs, 4000, 4);
-assert(nc.ram === 50, "native RAM expected 50, got " + nc.ram);
-assert(nc.cpu === 25, "native CPU expected 25 (100 pcpu / 4 cores), got " + nc.cpu);
+ca.applyConsumerReading(nc, nOutputs, 4000, 4, DISK_DENOM);
+assert(nc.ram === 50, "native RAM expected 50 (PSS, not RSS-in-a-sum), got " + nc.ram);
+assert(nc.cpu === 63, "native CPU expected 63 (250% / 4 cores), got " + nc.cpu);
+assert(nc.disk === 10, "native disk expected 10 (5GiB / 50GiB), got " + nc.disk);
 
 const nCard = ca.consumerCard(nc, ()=>{}, ()=>{}).textContent;
-assert(/25%/.test(nCard), "native card must show a numeric CPU axis (25%), not — : " + nCard);
+assert(/63%/.test(nCard) && /10%/.test(nCard), "native card must show numeric cpu+disk axes: " + nCard);
 assert(/UP/.test(nCard), "native card should show UP: " + nCard);
-const nLegend = ca.consumerLegend(nmodels, ()=>{}).textContent;
-assert(/50%/.test(nLegend) && /25%/.test(nLegend), "native legend missing numeric ram/cpu: " + nLegend);
 
-// Honest — : an unapproved/absent cpu reading (no probe outputs) leaves CPU null.
+// Honest — : absent readings leave every axis null.
 const nc2 = ca.buildConsumers(nativeMachine)[0];
-ca.applyConsumerReading(nc2, null, 4000, 4);
-assert(nc2.cpu === null || nc2.cpu === undefined, "absent cpu reading must stay — (null), got " + nc2.cpu);
+ca.applyConsumerReading(nc2, null, 4000, 4, DISK_DENOM);
+assert((nc2.cpu == null) && (nc2.disk == null), "absent readings must stay — (null)");
 
-// Honest — : an unknown core count leaves CPU null even with a parseable reading.
+// Honest — : an unknown root-FS denominator leaves disk — even with a parseable du reading.
 const nc3 = ca.buildConsumers(nativeMachine)[0];
-ca.applyConsumerReading(nc3, nOutputs, 4000, null);
-assert(nc3.cpu === null || nc3.cpu === undefined, "unknown cores must leave CPU — (null), got " + nc3.cpu);
+ca.applyConsumerReading(nc3, nOutputs, 4000, 4, null);
+assert(nc3.disk == null, "unknown root-FS denom must leave disk — (null), got " + nc3.disk);
 
 console.log("PASS: docker consumer axes render numeric (ram=51% cpu=50% disk=3%), UP, service axes + unit/df/volume parsers verified");
 console.log("PASS: spec-038 — compose project renders as ONE card (services incl. datastore, axes sum all); Databases lens Dedicated band derives from the project's DB service; standalone datastore stays Shared");
-console.log("PASS: spec-039 — native consumer CPU axis fills from the process-tree probe (100 pcpu / 4 cores = 25%), renders numeric on the card/legend; absent reading or unknown cores stays —");
+console.log("PASS: spec-057 — native footprint axes fill from PSS ram / cpu-rate / du disk probes (50% / 63% / 10%), each ÷ its host denominator, and stay — on absent reading or unknown denominator");

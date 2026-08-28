@@ -64,8 +64,11 @@ class DockerComposeDiscovererTest {
         ProposedRecipe orders = recipe(recipes, "orders");
         assertThat(orders.type()).isEqualTo(RecipeType.MONITOR);
         assertThat(orders.appPortList()).isEmpty();
+        // The project holds a datastore (orders-db-1), so it also carries the paired db-size
+        // probes (spec-057) alongside the fixed docker RAM/CPU/disk reads.
         assertThat(orders.actions()).extracting(ProposedAction::name)
-                .containsExactly("docker stats", "docker disk", "docker volumes");
+                .containsExactly("docker stats", "docker disk", "docker volumes",
+                        "db logical size", "db physical size");
 
         // spec-038: a compose project is ONE consumer carrying ALL its services — app AND
         // datastore — each tagged with its role; there is NO separate dedicated consumer.
@@ -101,6 +104,41 @@ class DockerComposeDiscovererTest {
         assertThat(bucket.bucket()).isEqualTo(Bucket.DOCKER);
         assertThat(bucket.role()).isEqualTo(ConsumerRole.OTHER);
         assertThat(bucket.services()).isEmpty();
+
+        // The standalone datastore carries the db-size probes; the non-datastore bucket doesn't.
+        assertThat(recipe(recipes, "cache").actions()).extracting(ProposedAction::name)
+                .contains("db logical size", "db physical size");
+        assertThat(recipe(recipes, "docker containers").actions()).extracting(ProposedAction::name)
+                .doesNotContain("db logical size", "db physical size");
+    }
+
+    @Test
+    void discover_DbSizeProbes_ReportLogicalAndPhysicalBytes_ParamFreeReadOnly() {
+        FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(PS_JSON));
+        ProposedRecipe orders = recipe(discoverer().discover(machine(), ssh), "orders");
+        ProposedAction logical = actionOf(orders, "db logical size");
+        ProposedAction physical = actionOf(orders, "db physical size");
+
+        // No bound param ⇒ trivially S4-safe; read-only, login-user.
+        assertThat(logical.sudo()).isFalse();
+        assertThat(logical.paramDefs()).isEmpty();
+        assertThat(physical.sudo()).isFalse();
+        assertThat(physical.paramDefs()).isEmpty();
+
+        String lScript = scriptOf(logical);
+        // Decision 4: served size — Postgres pg_database_size; MySQL fresh (stats_expiry=0),
+        // creds from the container's own env (no password on an argv, carried via MYSQL_PWD).
+        assertThat(lScript).contains("logicalBytes=").contains("pg_database_size")
+                .contains("information_schema_stats_expiry=0")
+                .contains("POSTGRES_USER").contains("MYSQL_ROOT_PASSWORD").contains("MYSQL_PWD");
+
+        // Decision 4: physical size — du on the engine's data volume.
+        assertThat(scriptOf(physical)).contains("physicalBytes=").contains("du -sb")
+                .contains("/var/lib/postgresql/data").contains("/var/lib/mysql");
+
+        // Both persist within the token_value column bound (no schema change, spec-057).
+        assertThat(lScript.length()).isLessThan(1024);
+        assertThat(scriptOf(physical).length()).isLessThan(1024);
     }
 
     @Test
@@ -124,6 +162,14 @@ class DockerComposeDiscovererTest {
 
     private static ProposedRecipe recipe(List<ProposedRecipe> recipes, String name) {
         return recipes.stream().filter(r -> r.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    private static ProposedAction actionOf(ProposedRecipe recipe, String name) {
+        return recipe.actions().stream().filter(a -> a.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    private static String scriptOf(ProposedAction action) {
+        return action.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
     }
 
     private static DockerConsumer consumer(ProposedRecipe recipe, String name) {

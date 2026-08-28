@@ -1,6 +1,6 @@
 # 057 — App footprint probing
 
-**Status:** todo · Linear [BOL-886](https://linear.app/iskeru/issue/BOL-886) · build branch `moacyrricardo/bol-886-cpt-057-app-footprint-probing`. **Blocked by 056 (BOL-885).**
+**Status:** done · Linear [BOL-886](https://linear.app/iskeru/issue/BOL-886) · build branch `moacyrricardo/bol-886-cpt-057-app-footprint-probing`. Stacked on 056 (BOL-885).
 
 ## Context
 
@@ -167,3 +167,30 @@ human-accepted label (053 dec. 12 / spec-055).
   proves insufficient for the slow tier.
 - **`du` on a giant tree** degrades the *probe* (timeout → lower bound), never the host; a fully
   accurate disk figure under adversarial trees is explicitly not guaranteed.
+
+## Implementation Notes
+
+Built as specified; the four axes, the client fold onto `c.ram/c.cpu/c.disk`, and the
+`computeOther`-untouched integration all landed as prescribed. Where the build refined the spec:
+
+- **`app-folder` binding seam.** Rather than a bespoke side-channel, the per-context path rides
+  the existing `ParamBinder` component mechanism as a new `APP_FOLDER_COMPONENT`, enriched
+  server-side in `RunService` from the recipe's un-audited `app_port_list` side-data (keyed by
+  `(appName, port)`). It is validated against a new anchored, shell-safe absolute-path charset
+  (`APP_FOLDER_PATTERN`) as defense-in-depth (S4) even though it is never caller-supplied — so a
+  tampered side-data value still cannot widen the shell surface. Fan-out items with no resolved
+  context are dropped from the disk probe rather than probed with a null path (honest absence).
+- **Degrade-and-label parity (Decision 6) for disk.** The fold initially carried only the RAM
+  low-confidence flag (`_ramLow`); the disk `du`-timeout lower bound (`disk_confidence=low
+  reason=du-timeout`) was filling `c.disk` silently. Added a matching `c._diskLow` flag so
+  spec-059 badges the disk lower bound exactly as it badges the RAM RSS fallback. This is a
+  pure data-carry in the fold — presentation of the badge remains spec-059's surface.
+- **CPU-rate column safety.** The `/proc/<pid>/stat` parse reads fields 14+15+22 *after the last
+  `") "`* (an `awk index($0,") ")` split), so a `comm` containing spaces/parens never shifts the
+  columns — a robustness detail the spec implied ("`starttime` guards PID churn") but did not
+  spell out.
+- **Tests.** Probe-script and fold behaviour is pinned by `AppMonitorDiscovererTest` /
+  `DockerComposeDiscovererTest` (Java) plus the headless `app-footprint-probing.render-check.js`
+  (the client fold, PSS-not-RSS, CPU-rate + churn guard, `du` double-count/degrade, the OTHER
+  subtraction). No migration, no schema change, no new entity, no MCP-surface delta, no version
+  bump — as scoped.

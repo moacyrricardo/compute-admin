@@ -49,26 +49,31 @@ class AppMonitorDiscovererTest {
         assertThat(recipes).allSatisfy(r -> assertThat(r.type()).isEqualTo(RecipeType.MONITOR));
 
         // java -jar /opt/orders.jar → springboot monitor, pre-filled (orders, 8080).
-        // The app-level cpu check (spec-032) follows the process probe in every family.
+        // The four footprint axes (spec-057) follow the process probe in every family:
+        // ram (PSS), cpu (rate), disk (du), + the two on-demand sudo re-probes.
         ProposedRecipe springboot = recipe(recipes, "springboot monitor");
         assertThat(springboot.actions()).extracting(ProposedAction::name)
-                .containsExactly("health", "metrics", "beans", "info", "process", "cpu");
+                .containsExactly("health", "metrics", "beans", "info", "process",
+                        "ram", "cpu", "disk", "ram (sudo re-probe)", "disk (sudo re-probe)");
         assertThat(springboot.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
                 .containsExactly(tuple("orders", 8080, "process"));
 
         // python3 uvicorn billing.main:app → fastapi monitor, pre-filled (billing, 8000).
-        // No Prometheus on /metrics → the metrics action is not proposed (process + cpu + health).
+        // No Prometheus on /metrics → the metrics action is not proposed.
         ProposedRecipe fastapi = recipe(recipes, "fastapi monitor");
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
-                .containsExactly("process", "cpu", "health");
+                .containsExactly("process", "ram", "cpu", "disk",
+                        "ram (sudo re-probe)", "disk (sudo re-probe)", "health");
         assertThat(fastapi.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
                 .containsExactly(tuple("billing", 8000, "process"));
 
-        // an unclassifiable daemon → generic app monitor, process + cpu probes only.
+        // an unclassifiable daemon → generic app monitor, process + the footprint axes.
         ProposedRecipe generic = recipe(recipes, "generic app monitor");
-        assertThat(generic.actions()).extracting(ProposedAction::name).containsExactly("process", "cpu");
+        assertThat(generic.actions()).extracting(ProposedAction::name)
+                .containsExactly("process", "ram", "cpu", "disk",
+                        "ram (sudo re-probe)", "disk (sudo re-probe)");
         assertThat(generic.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
                 .containsExactly(tuple("mydaemon", 5000, "process"));
@@ -118,9 +123,10 @@ class AppMonitorDiscovererTest {
 
         ProposedRecipe fastapi = recipe(discoverer.discover(machine(), ssh), "fastapi monitor");
 
-        // /metrics responds → the optional Prometheus probe is proposed alongside health.
+        // /metrics responds → the optional Prometheus probe is proposed after health.
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
-                .containsExactly("process", "cpu", "health", "metrics");
+                .containsExactly("process", "ram", "cpu", "disk",
+                        "ram (sudo re-probe)", "disk (sudo re-probe)", "health", "metrics");
     }
 
     @Test
@@ -228,7 +234,8 @@ class AppMonitorDiscovererTest {
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("http app monitor");
         ProposedRecipe http = recipe(recipes, "http app monitor");
         assertThat(http.actions()).extracting(ProposedAction::name)
-                .containsExactly("liveness", "process", "cpu");
+                .containsExactly("liveness", "process", "ram", "cpu", "disk",
+                        "ram (sudo re-probe)", "disk (sudo re-probe)");
         assertThat(http.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::runtime)
                 .containsExactly(tuple("app", 8080, "process"));
@@ -292,10 +299,104 @@ class AppMonitorDiscovererTest {
         assertThat(cpu.argTokens()).anySatisfy(t ->
                 assertThat(t.value()).isEqualTo("port"));
 
-        // The script is a fixed process-tree CPU read (ps, PID + children) — never mutating.
+        // The script is a fixed process-tree CPU-RATE read (spec-057): two /proc/<pid>/stat
+        // samples a measured Δt apart, emitting Δticks (fields 14+15) and starttime (field 22)
+        // for the client to divide — never mutating, never the lifetime-average ps %cpu.
         String script = cpu.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
-        assertThat(script).contains("ps ").contains("--ppid").contains("pcpu");
+        assertThat(script).contains("/stat").contains("sleep").contains("starttime").contains("clk_tck");
+        assertThat(script).doesNotContain("pcpu"); // the replaced lifetime-average source
         MUTATING_TOKENS.forEach(tok -> assertThat(script).doesNotContain(" " + tok + " "));
+    }
+
+    @Test
+    void discover_RamProbe_IsPssSumWithLabelledRssFallback() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction ram = action(springboot, "ram");
+
+        // Read-only, login-user, fans out over the port like the other native probes.
+        assertThat(ram.sudo()).isFalse();
+        assertThat(ram.argTokens()).anySatisfy(t -> assertThat(t.value()).isEqualTo("port"));
+
+        String script = scriptOf(ram);
+        // Sums PSS from smaps_rollup (the honest RAM figure) — never a naive sum of RSS.
+        assertThat(script).contains("smaps_rollup").contains("Pss:");
+        // Degrades to VmRSS with an explicit low-confidence label on procfs denial.
+        assertThat(script).contains("VmRSS").contains("ram_confidence=low");
+        MUTATING_TOKENS.forEach(tok -> assertThat(script).doesNotContain(" " + tok + " "));
+    }
+
+    @Test
+    void discover_DiskProbe_DuOnAppFolder_RootFsBytes_BindsFolderNotPort() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction disk = action(springboot, "disk");
+
+        assertThat(disk.sudo()).isFalse();
+        // The bound component is the per-context app-folder (enriched server-side from side-data),
+        // NEVER the port — the context path never becomes a caller-supplied value (S9).
+        assertThat(disk.argTokens()).anySatisfy(t -> assertThat(t.value()).isEqualTo("app-folder"));
+        assertThat(disk.argTokens()).noneSatisfy(t -> assertThat(t.value()).isEqualTo("port"));
+        assertThat(disk.paramDefs()).extracting(p -> p.kind())
+                .containsExactly(com.iskeru.computeadmin.recipe.model.ParamKind.APP_PORT_LIST);
+
+        String script = scriptOf(disk);
+        // du -sbx keeps the walk on the app-folder's own filesystem (root/data-root FS bytes,
+        // the double-count rule): under-mounts are -x-excluded and findmnt cross-checked;
+        // bounded by timeout/nice/ionice so it never hammers the host.
+        assertThat(script).contains("du -sbx").contains("findmnt")
+                .contains("timeout").contains("nice").contains("ionice");
+        MUTATING_TOKENS.forEach(tok -> assertThat(script).doesNotContain(" " + tok + " "));
+    }
+
+    @Test
+    void discover_CpuRateProbe_SamplesTwiceInOneExecAndParsesPastTheComm() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction cpu = action(springboot, "cpu");
+
+        String script = scriptOf(cpu);
+        // Decision 3: the RATE is Δ(utime+stime) sampled TWICE inside ONE ssh exec, a measured
+        // Δt apart — two sample blocks (## s0 / ## s1) bracketing a single sleep, with t0/t1
+        // timestamps so the client divides by the REAL Δt (not the nominal sleep).
+        assertThat(script).contains("## s0").contains("## s1").contains("sleep 4")
+                .contains("t0=").contains("t1=");
+        // Fields 14+15 (utime+stime) and 22 (starttime) are read AFTER the last ") ", so a comm
+        // containing spaces/parens never shifts the columns (the awk index($0,") ") split).
+        assertThat(script).contains("index($0,\") \")").contains("starttime=");
+    }
+
+    @Test
+    void discover_DiskProbe_ExcludesUnderMountsAndDegradesToLowerBoundOnTimeout() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction disk = action(springboot, "disk");
+
+        String script = scriptOf(disk);
+        // Decision 1 double-count rule: every mount source UNDER the app-folder is enumerated
+        // from findmnt TARGETs and added as an explicit --exclude, so an under-mount's bytes are
+        // counted at most once (and -x already keeps the walk on the app-folder's own fs).
+        assertThat(script).contains("findmnt -rno TARGET").contains("\"^$dir/\"")
+                .contains("--exclude=");
+        // Decision 6 degrade-and-label for disk: on a du timeout it emits a low-confidence marker
+        // and falls back to a per-child --max-depth=1 sum (a labelled LOWER bound), never failing.
+        assertThat(script).contains("disk_confidence=low").contains("du-timeout")
+                .contains("--max-depth=1");
+    }
+
+    @Test
+    void discover_SudoReprobes_AreSudoGatedVariantsOfTheRamAndDiskProbes() {
+        FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedAction ramSudo = action(springboot, "ram (sudo re-probe)");
+        ProposedAction diskSudo = action(springboot, "disk (sudo re-probe)");
+
+        // Decision 6: sudo=true so ParamBinder prepends `sudo -n`; gated like any sudo action.
+        assertThat(ramSudo.sudo()).isTrue();
+        assertThat(diskSudo.sudo()).isTrue();
+        // Same fixed scripts as the no-sudo probes (only the privilege differs).
+        assertThat(scriptOf(ramSudo)).isEqualTo(scriptOf(action(springboot, "ram")));
+        assertThat(scriptOf(diskSudo)).isEqualTo(scriptOf(action(springboot, "disk")));
     }
 
     @Test
@@ -696,6 +797,15 @@ class AppMonitorDiscovererTest {
 
     private static ProposedRecipe recipe(List<ProposedRecipe> recipes, String name) {
         return recipes.stream().filter(r -> r.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    private static ProposedAction action(ProposedRecipe recipe, String name) {
+        return recipe.actions().stream().filter(a -> a.name().equals(name)).findFirst().orElseThrow();
+    }
+
+    /** The flattened script text of a probe action (its argTokens joined), for content asserts. */
+    private static String scriptOf(ProposedAction action) {
+        return action.argTokens().stream().map(t -> t.value()).reduce("", (a, b) -> a + "\n" + b);
     }
 
     private static Machine machine() {

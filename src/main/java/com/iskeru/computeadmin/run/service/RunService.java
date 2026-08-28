@@ -10,8 +10,10 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.ApprovalState;
+import com.iskeru.computeadmin.recipe.model.ArgToken;
 import com.iskeru.computeadmin.recipe.model.ParamDef;
 import com.iskeru.computeadmin.recipe.model.ParamKind;
+import com.iskeru.computeadmin.recipe.model.TokenKind;
 import com.iskeru.computeadmin.recipe.service.ActionNotApprovedException;
 import com.iskeru.computeadmin.recipe.service.ActionNotFoundException;
 import com.iskeru.computeadmin.recipe.service.ActionService;
@@ -217,6 +219,15 @@ public class RunService {
         Map<String, String> baseParams = new LinkedHashMap<>(supplied);
         baseParams.remove(appPortListName);
 
+        // A footprint disk probe (spec-057) binds a per-context `app-folder`. The path is
+        // NEVER caller-supplied: it is enriched server-side from the recipe's un-audited
+        // `app_port_list` side-data (the S9-secret contextKey), keyed by (appName, port), so
+        // it never crosses the client/MCP boundary and never enters the snapshot hash. An
+        // item with no stored context (docker overlayfs, non-listening no-folder) has no
+        // attributable disk and is dropped from THIS fan-out — honest absence, never a fake 0.
+        boolean needsFolder = referencesAppFolder(action);
+        Map<String, String> foldersByItem = needsFolder ? contextFolders(action) : Map.of();
+
         // Bind EVERY item first: each bind is the SAME fixed template with one item's
         // validated scalar values — discrete argv, never a shell loop (S4, per item).
         List<BoundItem> bound = new ArrayList<>();
@@ -224,8 +235,19 @@ public class RunService {
             Map<String, String> itemParams = new LinkedHashMap<>(baseParams);
             itemParams.put(ParamBinder.APP_NAME_COMPONENT, item.appName());
             itemParams.put(ParamBinder.PORT_COMPONENT, item.port());
+            if (needsFolder) {
+                String folder = foldersByItem.get(itemKey(item.appName(), item.port()));
+                if (folder == null) {
+                    continue; // no resolved context ⇒ no attributable disk; drop this item
+                }
+                itemParams.put(ParamBinder.APP_FOLDER_COMPONENT, folder);
+            }
             List<String> argv = paramBinder.bind(action, itemParams);
             bound.add(new BoundItem(item.appName(), itemParams, argv));
+        }
+        if (bound.isEmpty()) {
+            throw new BadRequestException(
+                    "APP_PORT_LIST param '" + appPortListName + "' bound no probe-able items");
         }
 
         // Parent handle for the poll; children each a faithful spec-005 record.
@@ -278,6 +300,62 @@ public class RunService {
             }
         }
         return null;
+    }
+
+    /** Whether the action's argv references the per-context {@code app-folder} component (spec-057). */
+    private static boolean referencesAppFolder(Action action) {
+        for (ArgToken token : action.getArgTokens()) {
+            if (token.getKind() == TokenKind.PARAM
+                    && ParamBinder.APP_FOLDER_COMPONENT.equals(token.getValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The resolved context folder per fan-out item, read from the recipe's un-audited
+     * {@code app_port_list} side-data (spec-055/057). Keyed by {@code itemKey(appName, port)};
+     * the value is the item's S9-secret {@code contextKey} — the resolved app-folder the disk
+     * {@code du} probe walks. Items with no stored context are simply absent from the map (⇒
+     * dropped from the disk fan-out). Never surfaced to the client or MCP; bound only into the
+     * run's argv here.
+     */
+    private Map<String, String> contextFolders(Action action) {
+        Map<String, String> byItem = new LinkedHashMap<>();
+        String sideData = action.getRecipe().getAppPortList();
+        if (sideData == null || sideData.isBlank()) {
+            return byItem;
+        }
+        JsonNode root;
+        try {
+            root = json.readTree(sideData);
+        } catch (JsonProcessingException e) {
+            return byItem; // malformed side-data ⇒ no folders; disk simply stays absent
+        }
+        if (!root.isArray()) {
+            return byItem;
+        }
+        for (JsonNode node : root) {
+            JsonNode appNode = node.get("appName");
+            JsonNode portNode = node.get("port");
+            JsonNode keyNode = node.get("contextKey");
+            if (appNode == null || appNode.isNull() || keyNode == null || keyNode.isNull()) {
+                continue;
+            }
+            String folder = keyNode.asText();
+            if (folder == null || folder.isBlank()) {
+                continue;
+            }
+            String port = portNode == null || portNode.isNull() ? "0" : portNode.asText();
+            byItem.put(itemKey(appNode.asText(), port), folder);
+        }
+        return byItem;
+    }
+
+    /** The (appName, port) join key shared by a supplied fan-out item and its stored side-data. */
+    private static String itemKey(String appName, String port) {
+        return appName + ' ' + (port == null ? "0" : port);
     }
 
     /**
