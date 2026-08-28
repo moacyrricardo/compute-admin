@@ -29,7 +29,7 @@ class NginxDiscovererTest {
     void discover_WithSites_ProposesCuratedCatalogWithDiscoveredSites() {
         FakeSshExecutor ssh = new FakeSshExecutor(nginxWith("default\nblog\n", "default\n"));
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).hasSize(1);
         ProposedRecipe recipe = recipes.get(0);
@@ -52,7 +52,7 @@ class NginxDiscovererTest {
     void discover_NoSites_OmitsEnableAndDisable() {
         FakeSshExecutor ssh = new FakeSshExecutor(nginxWith("", ""));
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes.get(0).actions()).extracting(ProposedAction::name)
                 .containsExactly("test-config", "reload", "restart");
@@ -62,7 +62,7 @@ class NginxDiscovererTest {
     void discover_NginxNotInstalled_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
 
-        assertThat(discoverer.discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
     }
 
     private Function<List<String>, com.iskeru.computeadmin.ssh.ExecResult> nginxWith(String available, String enabled) {

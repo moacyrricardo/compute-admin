@@ -2,7 +2,7 @@ package com.iskeru.computeadmin.discovery;
 
 import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
-import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshSession;
 
 import java.util.List;
 
@@ -36,11 +36,15 @@ import java.util.List;
 public interface RecipeDiscoverer {
 
     /**
-     * Runs this discoverer's fixed read-only probes against {@code machine} over
-     * {@code ssh} and returns the recipes it proposes — empty when the service is
-     * not installed. Must never issue a mutating command.
+     * Runs this discoverer's fixed read-only probes against {@code machine} on the open
+     * {@code session} (one authenticated connection reused across the whole discovery
+     * pass, spec-070) and returns the recipes it proposes — empty when the service is
+     * not installed. Must never issue a mutating command. A transport failure surfaces
+     * as {@link com.iskeru.computeadmin.ssh.SshExecutionException}, which
+     * {@link com.iskeru.computeadmin.discovery.service.DiscoveryService} catches to
+     * degrade that one family rather than abort the run.
      */
-    List<ProposedRecipe> discover(Machine machine, SshExecutor ssh);
+    List<ProposedRecipe> discover(Machine machine, SshSession session);
 
     /**
      * The enablement family this discoverer belongs to (spec-035). Discoverers in the

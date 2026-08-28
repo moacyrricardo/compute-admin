@@ -7,8 +7,7 @@ import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.service.ParamBinder;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -53,13 +52,12 @@ public class SystemdDiscoverer implements RecipeDiscoverer {
     private static final Pattern APP_NAME = Pattern.compile(ParamBinder.APP_NAME_PATTERN);
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        if (!Probes.commandExists(ssh, target, "systemctl")) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        if (!Probes.commandExists(session, "systemctl")) {
             return List.of();
         }
         List<String> units = new ArrayList<>();
-        for (String line : Probes.lines(ssh, target,
+        for (String line : Probes.lines(session,
                 List.of("systemctl", "list-units", "--type=service", "--state=running", "--no-legend"))) {
             // The unit name is the first whitespace-delimited field of each row.
             String unit = line.split("\\s+", 2)[0];

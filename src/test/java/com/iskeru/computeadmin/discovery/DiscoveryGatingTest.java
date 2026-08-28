@@ -21,6 +21,7 @@ import com.iskeru.computeadmin.recipe.service.ScriptPinService;
 import com.iskeru.computeadmin.ssh.ExecResult;
 import com.iskeru.computeadmin.ssh.OutputSink;
 import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshSession;
 import com.iskeru.computeadmin.ssh.SshTarget;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,7 +75,7 @@ class DiscoveryGatingTest {
         }
 
         @Override
-        public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
+        public List<ProposedRecipe> discover(Machine machine, SshSession session) {
             probed = true;
             ProposedAction action = new ProposedAction("restart", "Restart the service (mutating).",
                     false, List.of(literal("service"), literal("restart")), List.of());
@@ -148,7 +149,7 @@ class DiscoveryGatingTest {
     void discover_DockerDefaultOff_DockerFamilyNotProbed_NginxFamilyProbed() {
         asUser(alice, () -> {
             String machineId = register();
-            List<DiscoveredRecipe> discovered = discoveryService.discover(machineId);
+            List<DiscoveredRecipe> discovered = discoveryService.discover(machineId).recipes();
 
             // Docker is default-off → never probed; the on-by-default nginx family is probed.
             assertThat(dockerFake.probed).isFalse();
@@ -166,7 +167,7 @@ class DiscoveryGatingTest {
             String machineId = register();
             enablement.setEnabled(machineId, DiscovererFamily.DOCKER, true);
 
-            List<DiscoveredRecipe> discovered = discoveryService.discover(machineId);
+            List<DiscoveredRecipe> discovered = discoveryService.discover(machineId).recipes();
 
             assertThat(dockerFake.probed).isTrue();
             // Enablement is NOT the approval gate: the proposed action is still PENDING_APPROVAL.

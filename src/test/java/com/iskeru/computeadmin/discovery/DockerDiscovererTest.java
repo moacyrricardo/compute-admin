@@ -30,7 +30,7 @@ class DockerDiscovererTest {
     void discover_WithContainers_ProposesCuratedCatalogWithDiscoveredNames() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith("web\ndb\n"));
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).hasSize(1);
         ProposedRecipe recipe = recipes.get(0);
@@ -52,7 +52,7 @@ class DockerDiscovererTest {
     void discover_NoContainers_ProposesOnlyPs() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerWith(""));
 
-        assertThat(discoverer.discover(machine(), ssh).get(0).actions())
+        assertThat(discoverer.discover(machine(), ssh.session()).get(0).actions())
                 .extracting(ProposedAction::name).containsExactly("ps");
     }
 
@@ -60,7 +60,7 @@ class DockerDiscovererTest {
     void discover_DockerNotInstalled_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
 
-        assertThat(discoverer.discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
     }
 
     private Function<List<String>, ExecResult> dockerWith(String names) {

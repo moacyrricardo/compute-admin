@@ -2,7 +2,7 @@ package com.iskeru.computeadmin.discovery.service;
 
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.ssh.ExecResult;
-import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshSession;
 import com.iskeru.computeadmin.ssh.SshTarget;
 
 import java.util.List;
@@ -27,14 +27,14 @@ final class Probes {
     }
 
     /** {@code true} when {@code binary} resolves on the target ({@code command -v}). */
-    static boolean commandExists(SshExecutor ssh, SshTarget target, String binary) {
-        ExecResult result = ssh.exec(target, List.of("command", "-v", binary), false);
+    static boolean commandExists(SshSession session, String binary) {
+        ExecResult result = session.exec(List.of("command", "-v", binary), false);
         return result.succeeded() && result.stdout() != null && !result.stdout().isBlank();
     }
 
     /** The trimmed, non-blank stdout lines of {@code argv}; empty when it fails. */
-    static List<String> lines(SshExecutor ssh, SshTarget target, List<String> argv) {
-        ExecResult result = ssh.exec(target, argv, false);
+    static List<String> lines(SshSession session, List<String> argv) {
+        ExecResult result = session.exec(argv, false);
         if (!result.succeeded() || result.stdout() == null) {
             return List.of();
         }

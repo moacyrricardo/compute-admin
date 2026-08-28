@@ -6,8 +6,7 @@ import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
 import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -34,14 +33,13 @@ public class CronDiscoverer implements RecipeDiscoverer {
     }
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        if (!Probes.commandExists(ssh, target, "crontab")) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        if (!Probes.commandExists(session, "crontab")) {
             return List.of();
         }
         // Read-only probes: the login user's crontab and the system cron.d drop-ins.
-        ssh.exec(target, List.of("crontab", "-l"), false);
-        ssh.exec(target, List.of("ls", "/etc/cron.d"), false);
+        session.exec(List.of("crontab", "-l"), false);
+        session.exec(List.of("ls", "/etc/cron.d"), false);
 
         ProposedAction list = new ProposedAction("list",
                 "List the login user's crontab (crontab -l). Read-only.", false,

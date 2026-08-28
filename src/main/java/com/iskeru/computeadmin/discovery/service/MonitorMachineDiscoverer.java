@@ -6,7 +6,7 @@ import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
 import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
-import com.iskeru.computeadmin.ssh.SshExecutor;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -50,7 +50,7 @@ public class MonitorMachineDiscoverer implements RecipeDiscoverer {
     }
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
         List<ProposedAction> actions = List.of(
                 new ProposedAction("cpu",
                         "CPU load and utilisation snapshot (top -bn1). Read-only.", false,

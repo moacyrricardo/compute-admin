@@ -36,7 +36,7 @@ class AppMonitorDiscovererTest {
     void discover_ClassifiesEachListener_AndRoutesToItsFamilyRecipe() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).extracting(ProposedRecipe::name)
                 .containsExactlyInAnyOrder("springboot monitor", "fastapi monitor", "generic app monitor");
@@ -69,7 +69,7 @@ class AppMonitorDiscovererTest {
     void discover_ContainerHostedApp_StampsDockerRuntimeAndContainerName() {
         FakeSshExecutor ssh = new FakeSshExecutor(dockerisedSpringBoot());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         // The cgroup resolves to container "orders-api", so the pre-filled item reconciles
         // with DockerDiscoverer's container name and is stamped runtime = docker.
@@ -82,7 +82,7 @@ class AppMonitorDiscovererTest {
     void discover_FastApiWithPrometheus_ProposesMetricsAction() {
         FakeSshExecutor ssh = new FakeSshExecutor(fastApiWithMetrics());
 
-        ProposedRecipe fastapi = recipe(discoverer.discover(machine(), ssh), "fastapi monitor");
+        ProposedRecipe fastapi = recipe(discoverer.discover(machine(), ssh.session()), "fastapi monitor");
 
         // /metrics responds → the optional Prometheus probe is proposed alongside health.
         assertThat(fastapi.actions()).extracting(ProposedAction::name)
@@ -92,7 +92,7 @@ class AppMonitorDiscovererTest {
     @Test
     void discover_NoListeners_ProposesNothing() {
         FakeSshExecutor ssh = new FakeSshExecutor(argv -> notFound());
-        assertThat(discoverer.discover(machine(), ssh)).isEmpty();
+        assertThat(discoverer.discover(machine(), ssh.session())).isEmpty();
     }
 
     @Test
@@ -103,7 +103,7 @@ class AppMonitorDiscovererTest {
         // (e.g. a `nohup java -jar app.jar` deploy) is invisible to app-monitor discovery.
         FakeSshExecutor ssh = new FakeSshExecutor(allInterfacesSpringBoot());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("app", 8080, "process"));
@@ -115,7 +115,7 @@ class AppMonitorDiscovererTest {
         // probes; it falls back to an http app monitor (liveness GET / + process).
         FakeSshExecutor ssh = new FakeSshExecutor(actuatorlessSpringBoot());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("http app monitor");
         ProposedRecipe http = recipe(recipes, "http app monitor");
@@ -130,7 +130,7 @@ class AppMonitorDiscovererTest {
         // must come from the EXECUTABLE jar (orders), not the agent/classpath jars.
         FakeSshExecutor ssh = new FakeSshExecutor(agentAndClasspathSpringBoot());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("orders", 8080, "process"));
@@ -141,7 +141,7 @@ class AppMonitorDiscovererTest {
         // -jar /opt/app.jar → generic "app"; /proc/<pid>/cwd (the deploy dir) names it.
         FakeSshExecutor ssh = new FakeSshExecutor(genericJarDeployDir());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("birthday-rsvp", 8080, "process"));
@@ -153,7 +153,7 @@ class AppMonitorDiscovererTest {
         // Main-Class): package dropped, "Application" stripped, camelCase → kebab.
         FakeSshExecutor ssh = new FakeSshExecutor(genericJarManifest());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
 
         assertThat(springboot.appPortList())
                 .containsExactly(new AppPortItem("payment-gateway", 8080, "process"));
@@ -163,7 +163,7 @@ class AppMonitorDiscovererTest {
     void discover_AppLevelCpuProbe_IsBoundedReadOnlyProcessTreeProbe() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         ProposedAction cpu = springboot.actions().stream()
                 .filter(a -> a.name().equals("cpu")).findFirst().orElseThrow();
 
@@ -185,7 +185,7 @@ class AppMonitorDiscovererTest {
     void discover_OnlyEverIssuesReadOnlyProbes() {
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
-        discoverer.discover(machine(), ssh);
+        discoverer.discover(machine(), ssh.session());
 
         assertThat(ssh.commands).isNotEmpty();
         assertThat(ssh.commands).allSatisfy(argv -> {

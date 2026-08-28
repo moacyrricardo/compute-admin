@@ -13,8 +13,7 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.monitor.model.Bucket;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
 import com.iskeru.computeadmin.monitor.model.Dedication;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -81,12 +80,11 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
     }
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        if (!Probes.commandExists(ssh, target, "docker")) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        if (!Probes.commandExists(session, "docker")) {
             return List.of();
         }
-        List<Container> containers = containers(ssh, target);
+        List<Container> containers = containers(session);
         if (containers.isEmpty()) {
             return List.of();
         }
@@ -211,9 +209,9 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
     // --- probing / parsing --------------------------------------------------
 
     /** Every running container as {@code (name, image, project, service)} via {@code docker ps}. */
-    private List<Container> containers(SshExecutor ssh, SshTarget target) {
+    private List<Container> containers(SshSession session) {
         List<Container> out = new ArrayList<>();
-        for (String line : Probes.lines(ssh, target,
+        for (String line : Probes.lines(session,
                 List.of("docker", "ps", "--format", "{{json .}}"))) {
             try {
                 JsonNode node = json.readTree(line);

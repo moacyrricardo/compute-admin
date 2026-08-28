@@ -6,8 +6,7 @@ import com.iskeru.computeadmin.discovery.RecipeDiscoverer;
 import com.iskeru.computeadmin.discovery.model.DiscovererFamily;
 import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.recipe.model.RecipeType;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -42,12 +41,11 @@ public class DockerDiscoverer implements RecipeDiscoverer {
     private static final int MAX_TAIL = 10_000;
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        if (!Probes.commandExists(ssh, target, "docker")) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        if (!Probes.commandExists(session, "docker")) {
             return List.of();
         }
-        List<String> containers = Probes.lines(ssh, target,
+        List<String> containers = Probes.lines(session,
                 List.of("docker", "ps", "--format", "{{.Names}}"));
 
         List<ProposedAction> actions = new ArrayList<>();
