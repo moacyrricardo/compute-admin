@@ -34,6 +34,16 @@ class ListActionsToolTest {
     }
 
     @Test
+    void renderTokenValue_StandaloneDbSizingPathLiterals_AreReducedToBasenames() {
+        // spec-058 relies on this 055 fix: a standalone DB-size check's path-shaped LITERALs —
+        // the engine data directory and the mysql maintenance-account config — must surface only
+        // their basename identity on the MCP surface, never the raw datadir or the config path (S9).
+        assertThat(render(TokenKind.LITERAL, "/etc/mysql/debian.cnf")).isEqualTo("debian.cnf");
+        assertThat(render(TokenKind.LITERAL, "/var/lib/postgresql/16/main")).isEqualTo("main");
+        assertThat(render(TokenKind.LITERAL, "/var/lib/mysql")).isEqualTo("mysql");
+    }
+
+    @Test
     void renderTokenValue_ParamToken_PassesThroughVerbatim() {
         // A PARAM token carries a param name, not a path — never rewritten.
         assertThat(render(TokenKind.PARAM, "msg")).isEqualTo("msg");
