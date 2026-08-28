@@ -43,4 +43,14 @@ public class AppException extends WebApplicationException {
     public AppException(Response.Status status, String code, String detail) {
         super(detail, Response.status(status).entity(new ErrorResponse(code, detail)).build());
     }
+
+    /**
+     * As {@link #AppException(Response.Status, String, String)}, but chains the underlying
+     * {@code cause} so it survives in logs — e.g. an SSH failure keeps whether it was a
+     * refused connect, an auth failure, or a timeout (070 follow-up). The wire format is
+     * unchanged; the cause is diagnostic only.
+     */
+    protected AppException(Response.Status status, String code, String detail, Throwable cause) {
+        super(detail, cause, Response.status(status).entity(new ErrorResponse(code, detail)).build());
+    }
 }

@@ -21,6 +21,7 @@ public class SshExecutionException extends AppException {
 
     public SshExecutionException(SshTarget target, Throwable cause) {
         super(Response.Status.BAD_GATEWAY, "ssh_failed",
-                "SSH command failed against " + target.loginUser() + "@" + target.host() + ":" + target.port());
+                "SSH command failed against " + target.loginUser() + "@" + target.host() + ":" + target.port(),
+                cause);
     }
 }
