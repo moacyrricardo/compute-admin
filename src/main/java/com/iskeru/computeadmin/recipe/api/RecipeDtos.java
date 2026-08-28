@@ -66,6 +66,23 @@ public final class RecipeDtos {
     }
 
     /**
+     * One discovery-pre-filled {@code (app-name, port)} item a fan-out probe action
+     * runs over (spec-025), with the optional {@code runtime} label (spec-022) the UI
+     * uses for the docker/systemd/process affordance and the double-detection link.
+     *
+     * <p>Lives in the {@code recipe} module (the lower module) so both the {@code recipe}
+     * and {@code monitor} read surfaces can reference one shared record without inverting
+     * the {@code monitor → recipe} dependency direction (the same reason
+     * {@code ArgTokenView}/{@code ParamDefView} live here). The mapping from a
+     * {@code MonitorService.AppPort} lives in {@code MonitorDtos}, not here — it would
+     * otherwise pull {@code monitor} types into {@code recipe}.
+     *
+     * <p>spec-004; moved here from {@code MonitorDtos} in spec-063.
+     */
+    public record AppPortView(String appName, int port, String runtime) {
+    }
+
+    /**
      * An action, including its description (what a human reads when approving), its
      * approval state and a convenience {@code pendingApproval} flag, plus the
      * structured argv and param schema.
