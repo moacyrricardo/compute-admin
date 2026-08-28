@@ -76,7 +76,7 @@ class DockerInspectEnrichmentTest {
                 + "\"NetworkSettings\":{\"Ports\":{\"5432/tcp\":[{\"HostIp\":\"0.0.0.0\",\"HostPort\":\"5432\"}]}},"
                 + "\"HostConfig\":{\"PortBindings\":{\"5432/tcp\":[{\"HostPort\":\"5432\"}]}}}";
 
-        AppPortItem db = item(discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect))),
+        AppPortItem db = item(discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect)).session()),
                 "orders", "orders-db-1");
 
         assertThat(db.port()).isEqualTo(5432);
@@ -101,7 +101,7 @@ class DockerInspectEnrichmentTest {
                 + "\"NetworkSettings\":{\"Ports\":{}},"
                 + "\"HostConfig\":{\"PortBindings\":{\"5432/tcp\":[{\"HostPort\":\"15432\"}]}}}";
 
-        AppPortItem db = item(discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect))),
+        AppPortItem db = item(discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect)).session()),
                 "pgbind", "pgbind");
 
         assertThat(db.port()).isEqualTo(15432);
@@ -125,7 +125,7 @@ class DockerInspectEnrichmentTest {
                 "{ this is not valid json");
 
         List<ProposedRecipe> recipes =
-                discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect)));
+                discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect)).session());
 
         // goodapp keeps its published port; brokenapp (skipped inspect) degrades to a sentinel.
         assertThat(item(recipes, "docker containers", "goodapp").port()).isEqualTo(8080);
@@ -158,7 +158,7 @@ class DockerInspectEnrichmentTest {
                     "{\"Env\":[\"POSTGRES_PASSWORD=" + secret + "\"] BROKEN");
 
             List<ProposedRecipe> recipes =
-                    discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect)));
+                    discoverer().discover(machine(), new FakeSshExecutor(docker(ps, inspect)).session());
 
             // No item field carries the secret (only whitelisted data-dir paths are kept).
             assertThat(recipes).flatExtracting(ProposedRecipe::appPortList).allSatisfy(i -> {

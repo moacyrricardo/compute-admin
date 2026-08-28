@@ -14,8 +14,7 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.monitor.model.Bucket;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
 import com.iskeru.computeadmin.monitor.model.Dedication;
-import com.iskeru.computeadmin.ssh.SshExecutor;
-import com.iskeru.computeadmin.ssh.SshTarget;
+import com.iskeru.computeadmin.ssh.SshSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -164,18 +163,17 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
     }
 
     @Override
-    public List<ProposedRecipe> discover(Machine machine, SshExecutor ssh) {
-        SshTarget target = Probes.target(machine);
-        if (!Probes.commandExists(ssh, target, "docker")) {
+    public List<ProposedRecipe> discover(Machine machine, SshSession session) {
+        if (!Probes.commandExists(session, "docker")) {
             return List.of();
         }
-        List<Container> containers = containers(ssh, target);
+        List<Container> containers = containers(session);
         if (containers.isEmpty()) {
             return List.of();
         }
         // One batched `docker inspect` over the enumerated containers (spec-061): DNAT
         // published ports, mounts, image + data-dir env, keyed back by container name.
-        Map<String, Inspected> inspected = inspect(ssh, target, containers);
+        Map<String, Inspected> inspected = inspect(session, containers);
 
         // Partition by the compose-project label; project-less containers are standalone.
         Map<String, List<Container>> byProject = new LinkedHashMap<>();
@@ -385,9 +383,9 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
     // --- probing / parsing --------------------------------------------------
 
     /** Every running container as {@code (id, name, image, project, service)} via {@code docker ps}. */
-    private List<Container> containers(SshExecutor ssh, SshTarget target) {
+    private List<Container> containers(SshSession session) {
         List<Container> out = new ArrayList<>();
-        for (String line : Probes.lines(ssh, target,
+        for (String line : Probes.lines(session,
                 List.of("docker", "ps", "--format", "{{json .}}"))) {
             try {
                 JsonNode node = json.readTree(line);
@@ -416,7 +414,7 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
      * <strong>never</strong> logged with the raw line — that line carries the full {@code
      * Config.Env}, secrets included.
      */
-    private Map<String, Inspected> inspect(SshExecutor ssh, SshTarget target, List<Container> containers) {
+    private Map<String, Inspected> inspect(SshSession session, List<Container> containers) {
         List<String> ids = new ArrayList<>();
         for (Container c : containers) {
             if (c.id() != null && CONTAINER_ID.matcher(c.id()).matches()) {
@@ -429,7 +427,7 @@ public class DockerComposeDiscoverer implements RecipeDiscoverer {
         List<String> argv = new ArrayList<>(List.of("docker", "inspect", "--format", "{{json .}}"));
         argv.addAll(ids);
         Map<String, Inspected> byName = new LinkedHashMap<>();
-        for (String line : Probes.lines(ssh, target, argv)) {
+        for (String line : Probes.lines(session, argv)) {
             try {
                 Inspected ins = parseInspect(json.readTree(line));
                 if (ins != null) {
