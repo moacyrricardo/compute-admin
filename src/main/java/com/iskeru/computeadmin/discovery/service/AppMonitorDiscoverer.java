@@ -1018,12 +1018,20 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             if (!pid.matches("\\d+")) {
                 continue;
             }
-            String script = interpreterScript(trimmed.substring(sp + 1).trim());
-            if (script == null || !emitted.add(pid)) {
+            String token = interpreterScript(trimmed.substring(sp + 1).trim());
+            if (token == null || !emitted.add(pid)) {
                 continue;
             }
             if (runtimeOf(ssh, target, pid) == Runtime.DOCKER) {
                 continue; // Decision 2
+            }
+            // spec-062 Decision 5: an absolute token is the script; a relative one (e.g. `python3 run`
+            // started from the app folder) is anchored against the PID's cwd, charset-validated, and
+            // accepted only when a fixed-argv existence probe confirms it is a FILE — a directory hit
+            // (`python3 somedir`) or a module token (`python3 -m uvicorn` → `uvicorn`) is rejected.
+            String script = resolveInterpreterScript(ssh, target, pid, token);
+            if (script == null) {
+                continue;
             }
             String appName = sanitize(baseName(script), 0);
             out.add(new Resolved(Family.GENERIC, appName, 0, Runtime.PROCESS.label,
@@ -1033,10 +1041,10 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     }
 
     /**
-     * The interpreter's target script from a {@code ps args} string, or null when the argv is
-     * not {@code <interpreter> [flags] <script-file>}. A leading interpreter is required and the
-     * first non-flag token must look like a script (absolute path or a known script extension),
-     * so {@code python3 -m uvicorn} (a module, not a file) is correctly rejected.
+     * The interpreter's candidate script token from a {@code ps args} string — the first non-flag
+     * token after a leading interpreter — or null when the argv is not {@code <interpreter> [flags]
+     * <token>}. Acceptance (absolute path, cwd-relative file, or rejected module/directory) is the
+     * caller's ({@link #resolveInterpreterScript}); this only isolates the token (spec-062 D5).
      */
     private String interpreterScript(String args) {
         String[] tokens = args.split("\\s+");
@@ -1044,13 +1052,39 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             return null;
         }
         for (int i = 1; i < tokens.length; i++) {
-            String t = tokens[i];
-            if (t.startsWith("-")) {
-                continue; // an interpreter flag (-u, -O, -jar, …) precedes the script
+            if (!tokens[i].startsWith("-")) {
+                return tokens[i]; // an interpreter flag (-u, -O, -jar, …) precedes the script
             }
-            return t.startsWith("/") || SCRIPT_ARG.matcher(t).matches() ? t : null;
         }
         return null;
+    }
+
+    /**
+     * Resolves an interpreter's candidate token to an absolute script path (spec-062 Decision 5):
+     * an absolute token is taken as-is; a relative token is anchored as {@code <cwd>/<token>},
+     * charset-validated ({@code [A-Za-z0-9._/-]+}, the manifest-jar precedent), and accepted iff a
+     * fixed-argv {@code ls -ld} existence probe confirms it is a <strong>file</strong> — a directory
+     * hit ({@code python3 somedir}) is rejected. When the cwd is unreadable, the old
+     * absolute-or-known-extension rule stands so behaviour never regresses. The bound candidate is
+     * one validated argv element (never a shell string), so no S4 surface widens.
+     */
+    private String resolveInterpreterScript(SshExecutor ssh, SshTarget target, String pid, String token) {
+        if (token.startsWith("/")) {
+            return token;
+        }
+        String cwd = cwdPath(ssh, target, pid);
+        if (cwd == null) {
+            return SCRIPT_ARG.matcher(token).matches() ? token : null;
+        }
+        String candidate = (cwd.endsWith("/") ? cwd : cwd + "/") + token;
+        if (!candidate.matches("[A-Za-z0-9._/-]+")) {
+            return null;
+        }
+        List<String> ls = Probes.lines(ssh, target, List.of("ls", "-ld", candidate));
+        if (ls.isEmpty()) {
+            return null;
+        }
+        return ls.get(0).trim().startsWith("d") ? null : candidate;
     }
 
     /**
