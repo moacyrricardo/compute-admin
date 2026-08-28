@@ -69,9 +69,21 @@ assert(Math.round(ca.parseStatTicks(churn)) === 200,
 assert(ca.parseStatTicks("clk_tck=100\nt0=5.0\n## s0\npid=1 ticks=1 starttime=1\nt1=5.0\n## s1\npid=1 ticks=9 starttime=1\n") === null,
   "a non-positive Δt must yield null");
 
+// ---- 2b. CPU rate: the plain (no-churn) multi-PID sum honours clk_tck and the MEASURED Δt ----
+// Two stable PIDs (starttime unchanged): Δticks 300 + 100 = 400 / 100 CLK_TCK / 4s measured
+// = 1.0 core = 100%. Proves the ordinary rate math independent of the churn-guard branch.
+const rate = "clk_tck=100\nt0=100.0\n## s0\npid=1 ticks=200 starttime=5\npid=2 ticks=50 starttime=6\n"
+  + "t1=104.0\n## s1\npid=1 ticks=500 starttime=5\npid=2 ticks=150 starttime=6\n";
+assert(Math.round(ca.parseStatTicks(rate)) === 100,
+  "CPU-rate plain sum = 400 ticks / 100 / 4s = 100%, got " + ca.parseStatTicks(rate));
+
 // ---- 3. du bytes parse (already bytes, -b) ----
 assert(ca.parseDuBytes("app_folder=/opt/x\ndu_bytes=1073741824\n") === 1073741824, "parseDuBytes");
 assert(ca.parseDuBytes("no dir /opt/x") === null, "no-dir sentinel → null");
+// A du-timeout degrade still folds a value: the fallback emits disk_confidence=low PLUS a
+// --max-depth=1 du_bytes sum (a labelled LOWER bound), so the disk axis fills, never null.
+assert(ca.parseDuBytes("disk_confidence=low reason=du-timeout\ndu_bytes=500\n") === 500,
+  "a du-timeout lower bound still yields du_bytes, got " + ca.parseDuBytes("disk_confidence=low reason=du-timeout\ndu_bytes=500\n"));
 
 // ---- 4. degrade-and-label: procfs denied → RSS upper-bound, flagged low ----
 const denied = "## pid 100\nVmRSS: 4096000 kB\nram_confidence=low reason=procfs-denied\n";
@@ -103,4 +115,4 @@ assert(ca.checkKind({ name: "ram (sudo re-probe)" }) === "ram", "sudo ram re-pro
 assert(ca.checkKind({ name: "disk (sudo re-probe)" }) === "disk", "sudo disk re-probe is a disk-kind check");
 
 if (failed) { console.error("FAILED: " + failed + " assertion(s)"); process.exit(1); }
-console.log("PASS: spec-057 — PSS summed (not RSS), CPU-rate with PID-churn guard, du bytes, degrade-and-label (RSS upper-bound, _ramLow), native disk subtracts from spec-041 OTHER, sudo re-probes classify by axis");
+console.log("PASS: spec-057 — PSS summed (not RSS), CPU-rate (plain sum + PID-churn guard), du bytes (incl. du-timeout lower bound), degrade-and-label (RSS upper-bound, _ramLow), native disk subtracts from spec-041 OTHER, sudo re-probes classify by axis");
