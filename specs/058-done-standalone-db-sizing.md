@@ -1,6 +1,6 @@
 # 058 — Standalone database sizing
 
-**Status:** todo · Linear [BOL-887](https://linear.app/iskeru/issue/BOL-887) · build branch `moacyrricardo/bol-887-cpt-058-standalone-database-sizing`. **Blocked by 057 (BOL-886).**
+**Status:** done · Linear [BOL-887](https://linear.app/iskeru/issue/BOL-887) · build branch `moacyrricardo/bol-887-cpt-058-standalone-database-sizing`. **Blocked by 057 (BOL-886)** — satisfied (built on the 057+061+062 integration branch).
 
 ## Context
 
@@ -182,3 +182,34 @@ numerator on the correct denominator.
 - **The UI surface for the standalone DB context is 059**; 058 supplies the data, not the screen.
 - **No approval-gate, verb-contract, or `ActionSnapshot`-hash change** — the size checks are
   ordinary read-only MONITOR actions; verbs/hash are spec-053/055/060 scope.
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-887-cpt-058-standalone-database-sizing`, stacked on the
+`moacyrricardo/integration-057-061-062` base (PR #87). How the build differed from the spec:
+
+- **Landed as two `sh -c` MONITOR checks per engine on `DatabaseDiscoverer`** — `db logical size`
+  and `db physical size`, `sudo=true`, param-free, appended to each engine recipe alongside
+  `status`/`backup`. This mirrors 057's dockerized `DockerComposeDiscoverer` DB-size pair exactly,
+  differing only in transport (host-side vs `docker exec`). No migration (existing token/side-data
+  seams suffice; scripts stay under the `token_value(1024)` bound).
+- **`sudo=true` reconciled with Decision 3's transport precedence.** The action's `sudo=true` flag
+  (Decision 5) means the executor runs the script under an outer `sudo -n`; the transport therefore
+  runs privileged, so mysql/mariadb use **root socket auth** as the primary path (the root-readable
+  `--defaults-extra-file=/etc/mysql/debian.cnf` as the fallback) and postgres keeps the explicit
+  `sudo -u postgres` for peer auth. This realizes D3's precedence at the privilege level D5 mandates;
+  no DB password is ever handled.
+- **Logical rows summed in-script (`awk`)** rather than client-side, so the emitted `logicalBytes=`
+  single value matches the output shape 057's docker path (and 059's parser) already consume. The
+  query text still matches Decision 2 verbatim (`SELECT datname, pg_database_size(datname) …`).
+- **Physical probe emits `physicalBytes` + an `onRootFs` boolean** (via `findmnt -rno TARGET -T`),
+  keeping the spec-041 root/data-root FS gate in 058's data output; the actual disk-axis fold and all
+  presentation are 059's (the spec forbids a `computeOther` edit here). The datadir is resolved at
+  runtime and **never echoed** (S9).
+- **Deferred: the NATIVE DATABASE consumer classification on the `app_port_list` seam.** The spec's
+  cross-spec note assigns creation of the *native-consumer classification channel* to 055/056/057
+  ("058 populates it, it does not create it"); that channel is **absent** from `DiscoveryService.persist`
+  in the integration branch (only the docker-consumer channel exists; `AppPortItem` has no
+  `role`/`source` field). 058 delivers the size probes that feed 057's `{logicalBytes, physicalBytes}`
+  pair; the consumer-card wiring is blocked on that upstream channel and is tracked on BOL-887 for a
+  human decision (add the channel under 055/056/057, or a new spec).
