@@ -126,7 +126,12 @@ public final class MonitorDtos {
                 // probe actions as its `checks` and correlated to the machine's app-ops by
                 // app-name. Live metrics (up/rss/mem%) stay null here — the browser fills
                 // them from the client-driven poll (024); the server only assembles identity.
-                if (!r.appPortList().isEmpty()) {
+                // Only a NATIVE app-monitor recipe's pre-filled list feeds the spec-029 fleet
+                // rollup and the ofNativeApp consumers. A docker recipe (spec-061) also carries an
+                // appPortList — its inspect-enriched published-port items — but those are 057/059
+                // side-data surfaced through its dockerConsumers below, not native app cards; a
+                // docker recipe is told apart by carrying dockerConsumers.
+                if (r.dockerConsumers().isEmpty() && !r.appPortList().isEmpty()) {
                     String framework = frameworkOf(r.recipe().getName());
                     for (AppPort item : r.appPortList()) {
                         apps.add(MonitorAppView.of(machine.getId(), item, framework,

@@ -1,6 +1,5 @@
 package com.iskeru.computeadmin.discovery.service;
 
-import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -49,22 +48,9 @@ final class DatastoreImages {
      * tolerant of a null/blank image.
      */
     static String engine(String image) {
-        if (image == null || image.isBlank()) {
-            return null;
-        }
-        // Drop any @sha256:... digest and the :tag, then the registry host, leaving the
-        // repository path (which may still have namespace segments like "bitnami/").
-        String ref = image.trim().toLowerCase(Locale.ROOT);
-        int at = ref.indexOf('@');
-        if (at >= 0) {
-            ref = ref.substring(0, at);
-        }
-        int lastSlash = ref.lastIndexOf('/');
-        int colon = ref.indexOf(':', lastSlash + 1);
-        if (colon >= 0) {
-            ref = ref.substring(0, colon);
-        }
-        for (String segment : ref.split("/")) {
+        // The registry/tag/digest strip + path-segment split is shared with ServiceCatalog
+        // (spec-061) so the two fingerprinters cannot drift.
+        for (String segment : ImageRef.segments(image)) {
             if (DATASTORE_TOKENS.contains(segment)) {
                 return segment;
             }

@@ -249,14 +249,16 @@ public class DiscoveryService {
             // It is a runtime value, not part of any action's content hash (spec-022), so
             // reconciling the apps never re-opens an approval — re-discovery just picks up
             // a new/removed app on the same recipe (no duplicate card). A docker compose
-            // monitor (spec-033) instead refreshes its classified consumers into the same
-            // un-audited column (no new schema); the two channels are mutually exclusive.
-            if (!proposal.appPortList().isEmpty()) {
+            // monitor (spec-033/061) refreshes BOTH its classified consumers AND its
+            // inspect-enriched published-port items into the same un-audited column as one
+            // combined object (no new schema); a native recipe writes the bare item array.
+            if (!proposal.dockerConsumers().isEmpty()) {
+                recipe = recipeService.refreshDiscoveredAppPortList(
+                        recipe.getId(),
+                        toDockerJson(proposal.dockerConsumers(), proposal.appPortList()));
+            } else if (!proposal.appPortList().isEmpty()) {
                 recipe = recipeService.refreshDiscoveredAppPortList(
                         recipe.getId(), toJson(proposal.appPortList()));
-            } else if (!proposal.dockerConsumers().isEmpty()) {
-                recipe = recipeService.refreshDiscoveredAppPortList(
-                        recipe.getId(), toDockerConsumersJson(proposal.dockerConsumers()));
             }
             discovered.add(new DiscoveredRecipe(recipe, actions));
         }
@@ -321,15 +323,19 @@ public class DiscoveryService {
     }
 
     /**
-     * Serialises the docker consumers (spec-033) into the recipe's {@code appPortList}
-     * column as {@code {"dockerConsumers":[…]}} — an object, so the monitor read tells it
-     * apart from the native {@code [{"appName","port"}]} array by shape (no new schema).
+     * Serialises a docker proposal into the recipe's {@code appPortList} column as one combined
+     * object {@code {"dockerConsumers":[…],"appPortList":[…]}} (spec-061, retiring spec-033's
+     * consumers-only object). The object shape tells the monitor read apart from the native
+     * {@code [{"appName","port"}]} array; both members ride the same CLOB with no new schema.
+     * Readers are tolerant: a pre-061 row carrying only {@code dockerConsumers} still parses (its
+     * missing {@code appPortList} reads as the empty list).
      */
-    private String toDockerConsumersJson(List<DockerConsumer> consumers) {
+    private String toDockerJson(List<DockerConsumer> consumers, List<AppPortItem> appPortList) {
         try {
-            return json.writeValueAsString(Map.of("dockerConsumers", consumers));
+            return json.writeValueAsString(
+                    Map.of("dockerConsumers", consumers, "appPortList", appPortList));
         } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Could not serialise docker consumers", e);
+            throw new IllegalStateException("Could not serialise docker proposal", e);
         }
     }
 }

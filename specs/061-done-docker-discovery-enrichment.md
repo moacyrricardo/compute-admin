@@ -1,6 +1,6 @@
 # 061 — Docker-branch discovery enrichment
 
-**Status:** todo · Linear [BOL-890](https://linear.app/iskeru/issue/BOL-890) · build branch `moacyrricardo/bol-890-cpt-061-docker-discovery-enrichment`. **Blocked by 056 (BOL-885).**
+**Status:** done · Linear [BOL-890](https://linear.app/iskeru/issue/BOL-890) · Branch `moacyrricardo/bol-890-cpt-061-docker-discovery-enrichment`. Stacked on 056 (BOL-885).
 
 ## Context
 
@@ -219,3 +219,35 @@ yields an `AppPortItem` whose `port` is the **host** port with a `sourceNote` na
 - **056's other deferrals stay open**: the `/proc/net/tcp{,6}` + fd-inode fallback, the
   `exe`-as-app-script signal, `nginx -T` real roots, and relative interpreter-script resolution
   (Implementation Notes items 2–3) are not absorbed into this spec.
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-890-cpt-061-docker-discovery-enrichment`, stacked on the 056 build
+branch (PR #84 → planning #82 ← #81 ← #80 ← #79). Landed as the Decision prescribed; the notable
+points where the build differed from or sharpened the spec:
+
+- **Shared image normaliser (`ImageRef`).** Extracted `DatastoreImages`' registry/tag/digest strip
+  + path-segment split into a new package-private `ImageRef.segments(...)` (its own behaviour-neutral
+  commit, per CONTRIBUTING's enabling-refactor-first rule); both `DatastoreImages.engine` and the new
+  `ServiceCatalog.fingerprintByImage` consume it so the two fingerprinters cannot drift.
+- **Monitor-read integration fix (in-scope, not in the spec text).** Adding an `appPortList` to a
+  docker recipe caused `MonitorDtos.of`'s spec-029 native fleet rollup to absorb the docker items as
+  native app cards/consumers (double-surfacing). Gated that rollup on `dockerConsumers().isEmpty()`
+  so a docker recipe's enriched items stay 057/059 side-data surfaced through its `dockerConsumers`,
+  restoring the exact prior monitor-read for docker recipes. Regression-tested.
+- **Malformed-inspect-line log — deliberate deviation.** The spec asked the skip to "log only the
+  container id". With one *batched* `docker inspect`, a garbage line cannot be correlated back to an
+  id, so the skip logs nothing (debug, no content) instead of an id. The load-bearing property — no
+  `Config.Env` value or raw inspect line ever reaches a log or an exception — is upheld and directly
+  asserted (`DockerInspectEnrichmentTest`, Logback `ListAppender`).
+- **Data-dir env whitelist as a fixed set.** The whitelisted `Config.Env` keys are held as a small
+  explicit constant (`{PGDATA, MYSQL_DATADIR}`) in the discoverer — the union of the catalog rows'
+  `dataDirEnvVar`s — rather than derived from `ServiceCatalog`, keeping the secret-boundary scan
+  self-evident. `scriptFolder` is set only for a fingerprinted-**DB** row (a row with a
+  `dataDirEnvVar`); nginx fingerprints (confidence label) but claims no host path.
+- **Translation appends the path tail.** `translateToHost` replaces the longest matching mount
+  `Destination` prefix with the mount `Source` and appends the remainder (so a `PGDATA` deeper than
+  the mount point resolves correctly), returning null when no mount covers the dir (honest absence).
+- **Combined-object serialisation** uses `Map.of("dockerConsumers", …, "appPortList", …)`;
+  `MonitorService.parseAppPortList` grew an object branch (reads the `appPortList` member, absent ⇒
+  empty list) while `parseDockerConsumers` needed no change. No migration.
