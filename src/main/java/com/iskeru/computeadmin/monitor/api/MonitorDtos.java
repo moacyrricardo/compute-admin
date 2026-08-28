@@ -13,6 +13,7 @@ import com.iskeru.computeadmin.monitor.service.MonitorService.DockerServiceData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
 import com.iskeru.computeadmin.monitor.service.MonitorService.OpsAction;
+import com.iskeru.computeadmin.recipe.api.RecipeDtos.AppPortView;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ArgTokenView;
 import com.iskeru.computeadmin.recipe.api.RecipeDtos.ParamDefView;
 import com.iskeru.computeadmin.recipe.model.Action;
@@ -375,7 +376,7 @@ public final class MonitorDtos {
             List<AppPortView> apps = new ArrayList<>();
             if (hasAppParam) {
                 for (AppPort item : appPortList) {
-                    apps.add(AppPortView.of(item));
+                    apps.add(appPortView(item));
                 }
             }
             return new MonitorActionView(action.getId(), machineId, recipe.getId(), recipe.getName(),
@@ -385,13 +386,11 @@ public final class MonitorDtos {
     }
 
     /**
-     * One discovery-pre-filled {@code (app-name, port)} item a fan-out probe action
-     * runs over (spec-025), with the optional {@code runtime} label (spec-022) the UI
-     * uses for the docker/systemd/process affordance and the double-detection link.
+     * Maps a {@link AppPort} read aggregate onto the shared {@link AppPortView} wire record
+     * (which lives in {@code RecipeDtos}, the lower module — {@code monitor → recipe}). The
+     * mapping lives here so no {@code monitor} type leaks into {@code recipe}.
      */
-    public record AppPortView(String appName, int port, String runtime) {
-        public static AppPortView of(AppPort item) {
-            return new AppPortView(item.appName(), item.port(), item.runtime());
-        }
+    static AppPortView appPortView(AppPort item) {
+        return new AppPortView(item.appName(), item.port(), item.runtime());
     }
 }
