@@ -871,10 +871,56 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     private ContextMapper.Context resolveContext(SshExecutor ssh, SshTarget target, String pid) {
         String logical = cwdPath(ssh, target, pid);
         if (logical == null) {
+            // spec-062 Decision 3 (R1): /proc/<pid>/cwd and /proc/<pid>/exe sit behind the SAME
+            // ptrace-mode access check, so an unreadable cwd means an equally unreadable exe — the
+            // exe arm would be dead here; only the boundary-root arm (below) can fire.
             return null;
+        }
+        // spec-062 Decision 3: a compiled binary launched with WorkingDirectory unset (systemd
+        // default `/`) maps its cwd to a boundary root, losing the deploy folder. When the cwd
+        // clamps at a boundary root, fall back to the exe — readlink /proc/<pid>/exe — and, when it
+        // lives OUTSIDE the packaged-binary prefixes, resolve the context from its parent dir (the
+        // wrapper rule collapses /opt/app/bin/server → /opt/app). cwd stays primary (spec-055): this
+        // only fires on a dead-end cwd.
+        if (ContextMapper.boundaryRoots().contains(logical)) {
+            String exe = exePath(ssh, target, pid);
+            if (exe != null && !isUnderPackagedRoot(exe)) {
+                ContextMapper.Context viaExe = resolveContextForDir(ssh, target, parentDir(exe));
+                if (viaExe != null) {
+                    return viaExe;
+                }
+            }
         }
         String physical = realCwdPath(ssh, target, pid);
         return ContextMapper.resolveContext(logical, physical, dir -> hasMarkerFile(ssh, target, dir));
+    }
+
+    /**
+     * The <strong>normalised</strong> {@code readlink /proc/<pid>/exe} (spec-062 Decision 3): a
+     * trailing {@code " (deleted)"} suffix — a binary replaced since the process started, exactly
+     * the redeploy case this targets — is stripped and the real path used; a target that is still
+     * not absolute is rejected ({@code null}). Fixed-argv, read-only, no-sudo.
+     */
+    private String exePath(SshExecutor ssh, SshTarget target, String pid) {
+        List<String> out = Probes.lines(ssh, target, List.of("readlink", "/proc/" + pid + "/exe"));
+        if (out.isEmpty()) {
+            return null;
+        }
+        String path = out.get(0).trim();
+        if (path.endsWith(" (deleted)")) {
+            path = path.substring(0, path.length() - " (deleted)".length()).trim();
+        }
+        return path.startsWith("/") ? path : null;
+    }
+
+    /** Whether {@code exe} lives under a fixed packaged-binary prefix (not a deploy folder). */
+    private boolean isUnderPackagedRoot(String exe) {
+        for (String root : PACKAGED_BINARY_ROOTS) {
+            if (exe.equals(root) || exe.startsWith(root + "/")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The full logical {@code readlink /proc/<pid>/cwd}, or null. */
