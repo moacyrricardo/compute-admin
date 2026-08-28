@@ -80,7 +80,7 @@ class AppMonitorDiscovererTest {
         // folder discovered via its port. The note names the port, never a path (S9).
         FakeSshExecutor ssh = new FakeSshExecutor(mixedBox());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         AppPortItem item = springboot.appPortList().get(0);
 
         assertThat(item.sourceNote()).isEqualTo("app folder · discovered via port :8080");
@@ -92,7 +92,7 @@ class AppMonitorDiscovererTest {
         // its provenance (its host /proc path is never mapped — spec-056 Decision 2/4).
         FakeSshExecutor ssh = new FakeSshExecutor(dockerisedSpringBoot());
 
-        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh), "springboot monitor");
+        ProposedRecipe springboot = recipe(discoverer.discover(machine(), ssh.session()), "springboot monitor");
         AppPortItem item = springboot.appPortList().get(0);
 
         assertThat(item.sourceNote()).isEqualTo("container · discovered via port :8080");
@@ -130,7 +130,7 @@ class AppMonitorDiscovererTest {
         // the Docker branch owns that port's truth. Only the real native app is emitted.
         FakeSshExecutor ssh = new FakeSshExecutor(dockerProxyAndNativeApp());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("springboot monitor");
         assertThat(recipe(recipes, "springboot monitor").appPortList())
@@ -155,7 +155,7 @@ class AppMonitorDiscovererTest {
         // interpreter scan (dedup by PID).
         FakeSshExecutor ssh = new FakeSshExecutor(nonListeningBox());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).extracting(ProposedRecipe::name)
                 .contains("springboot monitor", "generic app monitor");
@@ -180,7 +180,7 @@ class AppMonitorDiscovererTest {
         // old "no listeners → nothing" early return: the non-listening sweep still discovers it.
         FakeSshExecutor ssh = new FakeSshExecutor(onlyNonListeningBox());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("generic app monitor");
         assertThat(recipe(recipes, "generic app monitor").appPortList())
@@ -195,7 +195,7 @@ class AppMonitorDiscovererTest {
         // sweep drops it (the Docker branch owns it), rather than mapping it natively.
         FakeSshExecutor ssh = new FakeSshExecutor(containerisedUnitBox());
 
-        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
 
         assertThat(recipes).isEmpty();
         // The guard fires on the cgroup read, before any cwd is mapped for the container PID.
@@ -353,7 +353,7 @@ class AppMonitorDiscovererTest {
         // context becomes the catalog data dir (no PGDATA override on the environment).
         FakeSshExecutor ssh = new FakeSshExecutor(postgresBox(null));
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem pg = generic.appPortList().stream()
                 .filter(i -> i.appName().equals("postgres")).findFirst().orElseThrow();
 
@@ -368,7 +368,7 @@ class AppMonitorDiscovererTest {
         // before it is trusted, so the mapped context is the real data dir, not the packaged one.
         FakeSshExecutor ssh = new FakeSshExecutor(postgresBox("/data/pg"));
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem pg = generic.appPortList().stream()
                 .filter(i -> i.appName().equals("postgres")).findFirst().orElseThrow();
 
@@ -381,7 +381,7 @@ class AppMonitorDiscovererTest {
         // A single agreeing signal (process only; the port is not the catalog 3306) ⇒ low.
         FakeSshExecutor ssh = new FakeSshExecutor(mariadbBox());
 
-        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh), "generic app monitor");
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
         AppPortItem db = generic.appPortList().stream()
                 .filter(i -> i.appName().equals("mariadbd")).findFirst().orElseThrow();
 
