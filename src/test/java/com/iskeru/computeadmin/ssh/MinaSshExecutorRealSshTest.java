@@ -20,6 +20,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.PublicKey;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,6 +46,12 @@ class MinaSshExecutorRealSshTest {
     private static final String MARKER = "IT-OK";
 
     private SshServer server;
+
+    /** Distinct server-side sessions that authenticated — one per SSH handshake (spec-070). */
+    private final Set<Object> authedSessions = ConcurrentHashMap.newKeySet();
+
+    /** How many exec channels (commands) the server was asked to run. */
+    private final AtomicInteger commandCount = new AtomicInteger();
 
     @AfterEach
     void tearDown() throws IOException {
@@ -73,6 +82,55 @@ class MinaSshExecutorRealSshTest {
         }
     }
 
+    @Test
+    void withSession_RunsManyExecsOnOneAuthenticatedSession(@TempDir Path dir) throws Exception {
+        KeyService keyService = new KeyService(dir.resolve("id_ed25519").toString());
+        keyService.init();
+        int port = startCountingServer(keyService.keyPair().getPublic(), dir.resolve("hostkey.ser"));
+        SshTarget target = new SshTarget(InetAddress.getLoopbackAddress().getHostAddress(), port, "admin");
+
+        MinaSshExecutor executor = new MinaSshExecutor(keyService, 10, 30);
+        try {
+            int n = 5;
+            executor.withSession(target, session -> {
+                for (int i = 0; i < n; i++) {
+                    ExecResult result = session.exec(List.of("echo", MARKER), false);
+                    assertThat(result.exitCode()).isZero();
+                }
+                return null;
+            });
+
+            // spec-070 L1: N execs inside one withSession reuse ONE authenticated session.
+            assertThat(commandCount).hasValue(n);
+            assertThat(authedSessions).hasSize(1);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    void bareExec_AuthenticatesOncePerCall_TheRegressionSessionReuseFixes(@TempDir Path dir) throws Exception {
+        KeyService keyService = new KeyService(dir.resolve("id_ed25519").toString());
+        keyService.init();
+        int port = startCountingServer(keyService.keyPair().getPublic(), dir.resolve("hostkey.ser"));
+        SshTarget target = new SshTarget(InetAddress.getLoopbackAddress().getHostAddress(), port, "admin");
+
+        MinaSshExecutor executor = new MinaSshExecutor(keyService, 10, 30);
+        try {
+            int n = 5;
+            for (int i = 0; i < n; i++) {
+                executor.exec(target, List.of("echo", MARKER), false);
+            }
+
+            // The pre-fix behaviour the burst overwhelmed the remote sshd with: each bare
+            // exec() opens its own session, so N commands cost N handshakes/auths.
+            assertThat(commandCount).hasValue(n);
+            assertThat(authedSessions).hasSize(n);
+        } finally {
+            executor.shutdown();
+        }
+    }
+
     /** Boots an embedded sshd on an ephemeral loopback port accepting only {@code allowed}. */
     private int startServerAcceptingOnly(PublicKey allowed, Path hostKeyPath) throws IOException {
         server = SshServer.setUpDefaultServer();
@@ -86,10 +144,42 @@ class MinaSshExecutorRealSshTest {
         return server.getPort();
     }
 
+    /**
+     * Like {@link #startServerAcceptingOnly} but with a <strong>counting</strong>
+     * publickey authenticator (records each distinct server-side session that
+     * authenticated) and a counting command factory (records each exec channel) — the
+     * seam the spec-070 tests use to prove one handshake vs. N.
+     */
+    private int startCountingServer(PublicKey allowed, Path hostKeyPath) throws IOException {
+        server = SshServer.setUpDefaultServer();
+        server.setHost(InetAddress.getLoopbackAddress().getHostAddress());
+        server.setPort(0);
+        server.setKeyPairProvider(new SimpleGeneratorHostKeyProvider(hostKeyPath));
+        server.setPublickeyAuthenticator((username, key, session) -> {
+            boolean ok = KeyUtils.compareKeys(key, allowed);
+            if (ok) {
+                authedSessions.add(session);
+            }
+            return ok;
+        });
+        server.setCommandFactory(new CountingCommandFactory());
+        server.start();
+        return server.getPort();
+    }
+
     /** Ignores the command line and emits a fixed marker with exit 0 — enough to prove the channel ran. */
     private static final class FixedOutputCommandFactory implements CommandFactory {
         @Override
         public Command createCommand(ChannelSession channel, String command) {
+            return new FixedOutputCommand();
+        }
+    }
+
+    /** Counts each exec channel the client opens, then runs the fixed-output command. */
+    private final class CountingCommandFactory implements CommandFactory {
+        @Override
+        public Command createCommand(ChannelSession channel, String command) {
+            commandCount.incrementAndGet();
             return new FixedOutputCommand();
         }
     }
