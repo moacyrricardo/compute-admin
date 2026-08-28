@@ -1,6 +1,10 @@
 package com.iskeru.computeadmin.discovery.service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The fixed, source-controlled default-folder catalog for the common services the app map
@@ -69,5 +73,42 @@ final class ServiceCatalog {
             case "mariadb" -> haystack.contains("mariadbd");
             default -> haystack.contains(name); // nginx
         };
+    }
+
+    /** An nginx {@code root <path>;} directive; the capture group strips surrounding quotes. */
+    private static final Pattern NGINX_ROOT = Pattern.compile("^\\s*root\\s+\"?([^;\"\\s]+)\"?\\s*;");
+
+    /** nginx stock default-server document roots to discard when picking the modal real root. */
+    private static final java.util.Set<String> NGINX_DEFAULT_ROOTS =
+            java.util.Set.of("/usr/share/nginx/html", "/var/www/html");
+
+    /**
+     * The nginx real document root from an {@code nginx -T} config dump (spec-062 Decision 4): the
+     * <strong>modal</strong> {@code root <path>;} directive after discarding (a) a
+     * {@code $}-variable root like {@code root $app_root;} — not a literal path — and (b) a stock
+     * default-server root ({@code /usr/share/nginx/html}, {@code /var/www/html}). Surrounding quotes
+     * are stripped. Returns {@code null} when the dump is empty, denied, or every directive was
+     * filtered — the caller then keeps the catalog default. Pure over the given lines; no SSH.
+     */
+    static String modalNginxRoot(List<String> nginxTLines) {
+        Map<String, Integer> counts = new HashMap<>();
+        String modal = null;
+        int best = 0;
+        for (String line : nginxTLines) {
+            Matcher m = NGINX_ROOT.matcher(line);
+            if (!m.find()) {
+                continue;
+            }
+            String root = m.group(1);
+            if (root.contains("$") || NGINX_DEFAULT_ROOTS.contains(root)) {
+                continue;
+            }
+            int count = counts.merge(root, 1, Integer::sum);
+            if (count > best) {
+                best = count;
+                modal = root;
+            }
+        }
+        return modal;
     }
 }
