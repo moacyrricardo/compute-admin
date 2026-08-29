@@ -1,6 +1,6 @@
 # 067 — Machine-dashboard composition (Screen C)
 
-**Status:** doing · Linear [BOL-896](https://linear.app/iskeru/issue/BOL-896) · build branch `moacyrricardo/bol-896-cpt-067-machine-dashboard-composition` · **Part of concern 064 (mockup delivery).**
+**Status:** done · Linear [BOL-896](https://linear.app/iskeru/issue/BOL-896) · build branch `moacyrricardo/bol-896-cpt-067-machine-dashboard-composition` · **Part of concern 064 (mockup delivery).**
 
 ## Context
 
@@ -226,3 +226,54 @@ discipline — no `innerHTML`); **restart `spring-boot:run` for every edit** (us
   polls. But when **069**'s server-backed history swaps in behind this same section, that history
   *will* be dominated by the machine page's own poll runs; 069 must filter them out (e.g. by `Via`
   / monitor-origin) — flagged for 069, see [069](069-todo-run-history-endpoint.md).
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-896-cpt-067-machine-dashboard-composition` (PR #98, base `main`),
+front-end only in `src/main/resources/static/{app.js,app.css}` — no Java/server change, so the
+Maven suite is unchanged (387 tests green) and the client logic is covered by a new headless
+render-check.
+
+**Change division (per `CONTRIBUTING.md`).** Five commits, refactor-first:
+1. `todo→doing` (isolated rename + header flip).
+2. **Enabling refactor** — extract the footprint section factory `makeFootprint(cfg)` out of
+   `screenMonitor` (the `buildSection` closure, the four `pollHost*` helpers, the six host
+   denominator/usage maps, and the lens/bucket state → `fp.view`). **Behaviour-neutral**: the
+   fleet Monitor renders identically and all five pre-existing `src/test/js/*.render-check.js`
+   still pass. This is why the behaviour commit reads as a pure delta.
+3. **Behaviour** — recompose `screenMachineDetail` (footprint via the shared factory, SSH card,
+   search + type/source filter, recent runs) + the in-place re-mount leak fix + CSS.
+4. Test + a small behaviour-neutral lift of the source-classification predicates to module scope
+   so they are unit-testable.
+5. Eval fix — degrade a failed `/monitor` read to an omitted footprint.
+`## API Modules` = **None**, so the API-Diff subsection is skipped (per `CONTRIBUTING.md` §9).
+
+**How the build differed from / sharpened the spec.**
+- **Leak fix chose option (a).** `screenMachineDetail` runs `runViewCleanup()` at entry (before
+  wiring the heartbeat), which closes the timer-orphan blocker. Consequence, as the spec allows:
+  the search text + chip selections are **not** preserved across the four in-place re-mounts
+  (approve / discover / toggle-family / drawer-done); option (b) would have preserved them. This is
+  spec-sanctioned ("either (a) … or (b)") and left as a possible later polish.
+- **`makeFootprint` shape.** The factory owns the host maps + `pollHost*` and takes injected
+  `models` / `selectedNamed` / `noAppsOn` / `onToggleApp` + a `showHead` flag, exposing `{ view,
+  buildSection }`. The fleet route drives lens/bucket through `fp.view`; the machine page passes a
+  fixed `apps` lens, `showHead:false` (its `pageHead` owns the identity + status chip), and a
+  **null** `onToggleApp` so `consumerCard` renders the consumer name as **plain text** (the fleet
+  "filter to app" affordance is meaningless on one machine). The machine page therefore shows
+  strictly less than `#/monitor` (no DB lens, no bucket reveal) — by design.
+- **Source chips are inert on this route today (recorded gap).** The spec's premise that
+  `RecipeView.appPortList` carries the source assumes a populated list, but `GET /recipes?machineId=`
+  maps via the plain `RecipeView::of` (empty `appPortList`), so **every** recipe here is
+  "other / none" and the native/docker chips only re-label under that heading rather than narrowing.
+  The spec's hardened empty-majority rule ("unconditional chips; empty ⇒ other/none, never hidden")
+  is implemented exactly, so it **degrades correctly**; populating a parsed `appPortList` on the
+  list path is a server change that belongs with **066** (which re-homes the discovery rows and
+  owns the merged source rendering), not presentation-only 067.
+- **Robustness.** Both the `/monitor` and `/ssh/public-key` reads `.catch(→null)` so a footprint or
+  key-read error omits just that section/row rather than failing the whole dashboard.
+- **Two "Copy host" buttons** (page head + SSH-card footer) — both spec-referenced; minor
+  redundancy left as directed.
+- **Testing.** New `src/test/js/machine-dashboard-composition.render-check.js` (the `node <file>`
+  idiom, not wired into `mvn`) locks: `makeFootprint` head-strip / no-fork, `consumerCard`
+  plain-name when toggle-less, and the source-filter empty/docker/native/mixed classification incl.
+  the "other / none never hidden" rule.
