@@ -604,6 +604,32 @@
 
   // ----- Machine detail -----------------------------------------------------
 
+  // spec-067 Decision 4: a recipe's source set, derived from its RecipeView.appPortList
+  // runtimes (docker ⇒ docker, else native — the server's own sourceOf). An empty
+  // appPortList (blueprint/custom, and the plain /recipes list path — the majority) yields
+  // {} = "other / none".
+  function recipeSourceSet(recipe) {
+    var set = {};
+    ((recipe && recipe.appPortList) || []).forEach(function (item) {
+      set[(item.runtime && item.runtime.toLowerCase() === "docker") ? "docker" : "native"] = true;
+    });
+    return set;
+  }
+  function recipeIsOtherNone(recipe) {
+    var s = recipeSourceSet(recipe);
+    return !s.docker && !s.native;
+  }
+  // A recipe passes the source filter when: no source chip is selected (all pass); OR it is
+  // "other / none" (empty appPortList — NEVER hidden by a source chip, so turning on
+  // native/docker cannot silently drop the un-pre-filled majority); OR at least one of its
+  // sources is selected. A mixed-runtime recipe matches every source its items carry.
+  function recipeMatchesSources(recipe, selected) {
+    if (!selected.length) return true;
+    if (recipeIsOtherNone(recipe)) return true;
+    var src = recipeSourceSet(recipe);
+    return selected.some(function (s) { return src[s]; });
+  }
+
   /**
    * spec-067: the composed per-machine dashboard (Screen C). Stacks the identity head,
    * the tri-axis consumer footprint (the SAME makeFootprint the fleet Monitor uses, one
@@ -701,18 +727,6 @@
           });
         }
 
-        // A group's source(s) derive from its RecipeView.appPortList runtimes (docker ⇒
-        // docker, else native; the server's own sourceOf). Empty appPortList — the majority
-        // (blueprint/custom, and the plain /recipes list path) — is "other / none": it
-        // matches NO source chip and is never hidden by one (spec-067 Decision 4).
-        function sourcesOf(g) {
-          var set = {};
-          (g.recipe.appPortList || []).forEach(function (item) {
-            set[(item.runtime && item.runtime.toLowerCase() === "docker") ? "docker" : "native"] = true;
-          });
-          return set;
-        }
-        function isOtherNone(g) { var s = sourcesOf(g); return !s.docker && !s.native; }
         function selectedTypes() { return typeValues.filter(function (t) { return selType[t]; }); }
         function selectedSources() { return ["native", "docker"].filter(function (s) { return selSource[s]; }); }
         function matchesQuery(g) {
@@ -725,13 +739,7 @@
           var s = selectedTypes();
           return !s.length || s.indexOf(g.recipe.type) >= 0;
         }
-        function matchesSource(g) {
-          var sel = selectedSources();
-          if (!sel.length) return true;
-          if (isOtherNone(g)) return true;   // un-pre-filled majority: never silently hidden
-          var src = sourcesOf(g);
-          return sel.some(function (s) { return src[s]; });
-        }
+        function matchesSource(g) { return recipeMatchesSources(g.recipe, selectedSources()); }
         function groupNode(g) {
           return h("div", { class: "section" },
             h("div", { class: "row-between" },
@@ -758,8 +766,8 @@
           // With a source chip on, split the un-pre-filled majority under an "other / none"
           // heading so turning on native/docker re-labels rather than hides them.
           if (selectedSources().length) {
-            var sourced = visible.filter(function (g) { return !isOtherNone(g); });
-            var other = visible.filter(isOtherNone);
+            var sourced = visible.filter(function (g) { return !recipeIsOtherNone(g.recipe); });
+            var other = visible.filter(function (g) { return recipeIsOtherNone(g.recipe); });
             sourced.forEach(function (g) { groupsBox.appendChild(groupNode(g)); });
             if (other.length) {
               groupsBox.appendChild(h("h3", { class: "mt-4 dim",
