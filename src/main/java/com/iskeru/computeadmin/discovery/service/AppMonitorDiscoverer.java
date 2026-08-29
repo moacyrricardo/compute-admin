@@ -1304,10 +1304,17 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         List<ProposedAction> actions = new ArrayList<>();
         switch (family) {
             case SPRINGBOOT -> {
-                actions.add(endpointProbe("health", "Spring Boot liveness/readiness (/actuator/health).", "/actuator/health"));
-                actions.add(endpointProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"));
-                actions.add(endpointProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"));
-                actions.add(endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"));
+                // spec-073: the actuator endpoints target the management port (bound per item from
+                // side-data, defaulting to the traffic port), so an app with a separate
+                // `management.server.port` probes actuator on the right socket. When every routed
+                // app is auth-gated (401/403, D6), only `health` is proposed — shipping
+                // metrics/beans/info probes that 401 by design is dishonest.
+                actions.add(actuatorProbe("health", "Spring Boot liveness/readiness (/actuator/health).", "/actuator/health"));
+                if (!allGated(apps)) {
+                    actions.add(actuatorProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"));
+                    actions.add(actuatorProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"));
+                    actions.add(actuatorProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"));
+                }
                 actions.add(processProbe("process", "Threads/fds/liveness from /proc (process-probe supplement)."));
                 actions.addAll(footprintProbes());
             }
@@ -1350,6 +1357,30 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 List.of(literal("sh"), literal("-c"), literal(script),
                         literal("sh"), param(ParamBinder.PORT_COMPONENT)),
                 List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * A Spring Boot actuator endpoint probe (spec-073): the same fixed {@code curl} template as
+     * {@link #endpointProbe}, but its bound port is the per-item {@link ParamBinder#MANAGEMENT_PORT_COMPONENT}
+     * — the {@code management.server.port} an actuator-merged app answers on, enriched server-side
+     * from side-data (defaulting to the traffic port for a single-port app). Only the actuator
+     * endpoints move to the management port; the FastAPI/HTTP liveness probes stay on {@code port}.
+     */
+    private ProposedAction actuatorProbe(String name, String description, String path) {
+        String script = "curl -s -m 2 \"http://127.0.0.1:$1" + path + "\"";
+        return new ProposedAction(name, description, false,
+                List.of(literal("sh"), literal("-c"), literal(script),
+                        literal("sh"), param(ParamBinder.MANAGEMENT_PORT_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /** The sourceNote marker a 401/403 auth-gated actuator carries (spec-073 D6). */
+    private static final String GATED_NOTE = "actuator secured";
+
+    /** Whether every app routed to the springboot family is auth-gated (D6: propose {@code health} only). */
+    private boolean allGated(List<AppPortItem> apps) {
+        return !apps.isEmpty() && apps.stream()
+                .allMatch(a -> a.sourceNote() != null && a.sourceNote().contains(GATED_NOTE));
     }
 
     /** A fixed process-probe action driven by {@link #PROCESS_PROBE_SCRIPT}, port as {@code $1}. */

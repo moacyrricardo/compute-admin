@@ -2430,6 +2430,7 @@
         framework: app ? (app.framework || "generic") : (c.role === "DATABASE" ? "datastore" : "generic"),
         runtime: app ? app.runtime : null,
         port: app ? app.port : null,
+        managementPort: app ? app.managementPort : null,
         checks: app ? (app.checks || []) : [],
         ops: app ? (app.ops || []) : []
       };
@@ -2605,7 +2606,11 @@
       onclick: function (e) { e.stopPropagation(); onToggle(consumer.name); } });
     var runtimeTag = h("span", { class: "tag mono",
       text: (consumer.runtime || (consumer.source === "DOCKER" ? "docker" : "process"))
-        + (consumer.port != null ? " :" + consumer.port : "") });
+        + (consumer.port != null ? " :" + consumer.port : "")
+        // spec-073: a Spring Boot app whose actuator lives on a separate management.server.port
+        // shows both — ":8080 · mgmt :8081" — so the operator sees one app, two sockets.
+        + (consumer.managementPort != null && consumer.managementPort !== consumer.port
+            ? " · mgmt :" + consumer.managementPort : "") });
     var axes = h("div", { class: "d-axes mt-2" },
       consumerAxis("RAM", consumer), consumerAxis("CPU", consumer), consumerAxis("Disk", consumer));
     var states = consumer._checkStates || [];

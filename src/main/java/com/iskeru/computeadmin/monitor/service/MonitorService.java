@@ -99,15 +99,24 @@ public class MonitorService {
      */
     public record AppPort(String appName, int port, String runtime,
                           String contextKey, String contextDisplay, List<String> contextScripts,
-                          String sourceNote, String confidence, String scriptFolder) {
+                          String sourceNote, String confidence, String scriptFolder,
+                          Integer managementPort) {
 
         public AppPort {
             contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
         }
 
+        /** The pre-073 nine-field item (single-port app: no separate management port). */
+        public AppPort(String appName, int port, String runtime,
+                       String contextKey, String contextDisplay, List<String> contextScripts,
+                       String sourceNote, String confidence, String scriptFolder) {
+            this(appName, port, runtime, contextKey, contextDisplay, contextScripts,
+                    sourceNote, confidence, scriptFolder, null);
+        }
+
         /** The bare three-field item (no resolved context) — old rows and docker-object items. */
         public AppPort(String appName, int port, String runtime) {
-            this(appName, port, runtime, null, null, List.of(), null, null, null);
+            this(appName, port, runtime, null, null, List.of(), null, null, null, null);
         }
     }
 
@@ -252,7 +261,8 @@ public class MonitorService {
                 items.add(new AppPort(appName.asText(), port.asInt(), text(node.get("runtime")),
                         text(node.get("contextKey")), text(node.get("contextDisplay")),
                         stringList(node.get("contextScripts")), text(node.get("sourceNote")),
-                        text(node.get("confidence")), text(node.get("scriptFolder"))));
+                        text(node.get("confidence")), text(node.get("scriptFolder")),
+                        intOrNull(node.get("managementPort"))));
             }
         }
     }
@@ -404,6 +414,11 @@ public class MonitorService {
     /** A nullable JSON text value ({@code null} for missing/null nodes). */
     private static String text(JsonNode node) {
         return node == null || node.isNull() ? null : node.asText();
+    }
+
+    /** A tolerant int read: {@code null} for a missing/null/non-integer value (spec-073). */
+    private static Integer intOrNull(JsonNode node) {
+        return node == null || node.isNull() || !node.canConvertToInt() ? null : node.asInt();
     }
 
     /** A tolerant enum read: {@code null} for a missing/null/unknown value. */

@@ -228,6 +228,14 @@ public class RunService {
         boolean needsFolder = referencesAppFolder(action);
         Map<String, String> foldersByItem = needsFolder ? contextFolders(action) : Map.of();
 
+        // A Spring Boot actuator endpoint probe (spec-073) binds a per-item `management-port`.
+        // Like `app-folder` it is NEVER caller-supplied: it is enriched server-side from the
+        // recipe's `app_port_list` side-data keyed by (appName, port), defaulting to the item's
+        // own port for the single-port case so single-port apps bind exactly as before. The
+        // endpoint probe targets the management port while process/footprint probes keep `port`.
+        boolean needsMgmt = referencesManagementPort(action);
+        Map<String, String> mgmtByItem = needsMgmt ? managementPorts(action) : Map.of();
+
         // Bind EVERY item first: each bind is the SAME fixed template with one item's
         // validated scalar values — discrete argv, never a shell loop (S4, per item).
         List<BoundItem> bound = new ArrayList<>();
@@ -235,6 +243,11 @@ public class RunService {
             Map<String, String> itemParams = new LinkedHashMap<>(baseParams);
             itemParams.put(ParamBinder.APP_NAME_COMPONENT, item.appName());
             itemParams.put(ParamBinder.PORT_COMPONENT, item.port());
+            if (needsMgmt) {
+                String mgmt = mgmtByItem.get(itemKey(item.appName(), item.port()));
+                itemParams.put(ParamBinder.MANAGEMENT_PORT_COMPONENT,
+                        mgmt != null ? mgmt : item.port());
+            }
             if (needsFolder) {
                 String folder = foldersByItem.get(itemKey(item.appName(), item.port()));
                 if (folder == null) {
@@ -311,6 +324,55 @@ public class RunService {
             }
         }
         return false;
+    }
+
+    /** Whether the action's argv references the per-item {@code management-port} component (spec-073). */
+    private static boolean referencesManagementPort(Action action) {
+        for (ArgToken token : action.getArgTokens()) {
+            if (token.getKind() == TokenKind.PARAM
+                    && ParamBinder.MANAGEMENT_PORT_COMPONENT.equals(token.getValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The management port per fan-out item, read from the recipe's un-audited
+     * {@code app_port_list} side-data (spec-073). Keyed by {@code itemKey(appName, port)}; the
+     * value is the item's stored {@code managementPort} (the separate {@code management.server.port}
+     * an actuator-merged Spring Boot app answers actuator on). An item with no stored management
+     * port is simply absent from the map — the fan-out then defaults its {@code management-port}
+     * component to the item's own {@code port}, so a single-port app binds identically to pre-073.
+     * Never surfaced to the client or MCP; bound only into the run's argv here.
+     */
+    private Map<String, String> managementPorts(Action action) {
+        Map<String, String> byItem = new LinkedHashMap<>();
+        String sideData = action.getRecipe().getAppPortList();
+        if (sideData == null || sideData.isBlank()) {
+            return byItem;
+        }
+        JsonNode root;
+        try {
+            root = json.readTree(sideData);
+        } catch (JsonProcessingException e) {
+            return byItem; // malformed side-data ⇒ no overrides; every item defaults to own port
+        }
+        if (!root.isArray()) {
+            return byItem;
+        }
+        for (JsonNode node : root) {
+            JsonNode appNode = node.get("appName");
+            JsonNode portNode = node.get("port");
+            JsonNode mgmtNode = node.get("managementPort");
+            if (appNode == null || appNode.isNull() || mgmtNode == null || mgmtNode.isNull()
+                    || !mgmtNode.canConvertToInt()) {
+                continue;
+            }
+            String port = portNode == null || portNode.isNull() ? "0" : portNode.asText();
+            byItem.put(itemKey(appNode.asText(), port), Integer.toString(mgmtNode.asInt()));
+        }
+        return byItem;
     }
 
     /**
