@@ -725,7 +725,7 @@ class AppMonitorDiscovererTest {
             case "cat /proc/3000/cmdline" -> ok("/usr/local/bin/mydaemon --serve");
             case "cat /proc/1000/cgroup", "cat /proc/2000/cgroup", "cat /proc/3000/cgroup" ->
                     ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             default -> notFound(); // curl -sf .../metrics → no Prometheus
         };
     }
@@ -739,7 +739,7 @@ class AppMonitorDiscovererTest {
             case "ss -ltnp" -> ok(ss);
             case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/orders");
             default -> notFound();
         };
@@ -753,7 +753,7 @@ class AppMonitorDiscovererTest {
             case "ss -ltnp" -> ok(ss);
             case "cat /proc/1000/cmdline" -> ok("java -jar /app/app.jar");
             case "cat /proc/1000/cgroup" -> ok("0::/docker/orders-api");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             default -> notFound();
         };
     }
@@ -779,7 +779,7 @@ class AppMonitorDiscovererTest {
             case "ss -ltnp" -> ok(ss);
             case "cat /proc/1000/cmdline" -> ok("java -Xmx384m -jar app.jar --spring.profiles.active=production");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             default -> notFound();
         };
     }
@@ -806,7 +806,7 @@ class AppMonitorDiscovererTest {
             case "cat /proc/1000/cmdline" ->
                     ok("java -javaagent:/opt/newrelic/newrelic.jar -cp /app/lib/common.jar -jar /app/orders.jar --server.port=8080");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             default -> notFound();
         };
     }
@@ -819,7 +819,7 @@ class AppMonitorDiscovererTest {
             case "ss -ltnp" -> ok(ss);
             case "cat /proc/1000/cmdline" -> ok("java -jar /opt/app.jar");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             case "readlink /proc/1000/cwd" -> ok("/opt/birthday-rsvp");
             default -> notFound();
         };
@@ -833,7 +833,7 @@ class AppMonitorDiscovererTest {
             case "ss -ltnp" -> ok(ss);
             case "cat /proc/1000/cmdline" -> ok("java -jar /srv/app/app.jar");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             case "readlink /proc/1000/cwd" -> ok("/srv/app");
             case "unzip -p /srv/app/app.jar META-INF/MANIFEST.MF" -> ok(String.join("\n",
                     "Manifest-Version: 1.0",
@@ -851,7 +851,7 @@ class AppMonitorDiscovererTest {
             case "ss -ltnp" -> ok(ss);
             case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
             case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
             case "readlink /proc/1000/cwd" -> ok("/opt/lab/orders/scripts");
             case "readlink -f /proc/1000/cwd" -> ok("/opt/lab/orders/scripts");
             default -> notFound();
@@ -869,8 +869,8 @@ class AppMonitorDiscovererTest {
             case "cat /proc/1001/cmdline" -> ok("java -jar /opt/billing.jar");
             case "cat /proc/1000/cgroup", "cat /proc/1001/cgroup" ->
                     ok("0::/user.slice/user-1000.slice/session-3.scope");
-            case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health",
-                 "curl -sf -m 2 http://127.0.0.1:8090/actuator/health" -> ok("{\"status\":\"UP\"}");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health",
+                 "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8090/actuator/health" -> ok("200");
             // Both scripts collapse to the same owning context /opt/lab/shop.
             case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/lab/shop/scripts");
             case "readlink /proc/1001/cwd", "readlink -f /proc/1001/cwd" -> ok("/opt/lab/shop");
@@ -947,7 +947,7 @@ class AppMonitorDiscovererTest {
                 case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
                 case "cat /proc/1000/cgroup", "cat /proc/2500/cgroup", "cat /proc/3500/cgroup" ->
                         ok("0::/user.slice/user-1000.slice/session-3.scope");
-                case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+                case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
                 case "readlink /proc/1000/cwd", "readlink -f /proc/1000/cwd" -> ok("/opt/orders");
                 // systemd: worker.service has a MainPID; nginx.service is a oneshot (MainPID 0).
                 case "systemctl list-units --type=service --state=running --no-legend --plain" -> ok(String.join("\n",
@@ -1083,7 +1083,7 @@ class AppMonitorDiscovererTest {
                 case "ss -ltnp" -> ok(ss);
                 case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
                 case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
-                case "curl -sf -m 2 http://127.0.0.1:8080/actuator/health" -> ok("{\"status\":\"UP\"}");
+                case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
                 default -> notFound();
             };
         };
