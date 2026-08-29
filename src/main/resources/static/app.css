@@ -124,6 +124,34 @@ p { margin: 0; }
 .userbox { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
 .userbox .email { color: var(--text-dim); }
 
+/* spec-065: the visual-identity switcher — a compact segmented control in the
+   topbar. Token-driven, so it re-skins with whatever identity is active. */
+.identity-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.identity-switch .seg-btn {
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.identity-switch .seg-btn:hover { color: var(--text); }
+.identity-switch .seg-btn.on {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+}
+
 /* spec-043: the "Menu" toggle only exists on the stacked (≤720px) shell. */
 .nav-toggle { display: none; }
 

@@ -4,6 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>compute-admin</title>
+  <!-- spec-065: stamp the stored visual identity on <html> BEFORE the stylesheets
+       load, so the first paint is already in the right skin (no flash-of-wrong-
+       identity). Whitelist the three known values; default/fallback is `current`. -->
+  <script>
+    (function () {
+      try {
+        var id = localStorage.getItem("ca.identity");
+        document.documentElement.dataset.identity =
+          (id === "iskeru" || id === "blueprint") ? id : "current";
+      } catch (e) {
+        document.documentElement.dataset.identity = "current";
+      }
+    })();
+  </script>
   <!-- spec-012: static JSON-driven shell. No framework, no build step. -->
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="app.css">
@@ -25,6 +39,14 @@
     </div>
 
     <header class="topbar">
+      <!-- spec-065: per-viewer visual-identity switcher. A first-class product
+           control (unlike the mockup's scaffolding shellbar). app.js wires the
+           clicks, persists ca.identity, and re-stamps <html data-identity>. -->
+      <div class="identity-switch" id="identity-switch" role="group" aria-label="Visual identity">
+        <button type="button" class="seg-btn" data-identity="current">Current</button>
+        <button type="button" class="seg-btn" data-identity="iskeru">Iskeru</button>
+        <button type="button" class="seg-btn" data-identity="blueprint">Blueprint</button>
+      </div>
       <div class="userbox">
         <span id="user-name"></span>
         <span id="user-email" class="email"></span>
@@ -43,6 +65,16 @@
     </nav>
 
     <main id="view" class="view" tabindex="-1"></main>
+
+    <!-- spec-065: blueprint identity's drafting title-block. A STATIC child of the
+         shell (sibling of brand/topbar/nav/view, after #view) so it survives the
+         per-route re-render of #view. Hidden for current/iskeru; blueprint reveals
+         it in a dedicated grid row. app.js fills the route + date cells. -->
+    <aside class="pf-titleblock" aria-hidden="true">
+      <div><span class="k">Project</span><span class="v">compute-admin</span></div>
+      <div><span class="k">View</span><span class="v" id="titleblock-route">—</span></div>
+      <div><span class="k">Date</span><span class="v" id="titleblock-date">—</span></div>
+    </aside>
   </div>
 
   <div id="modal-root"></div>

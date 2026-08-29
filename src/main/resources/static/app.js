@@ -3119,6 +3119,12 @@
     if (!Session.token()) { showLogin(); return; }
     showShell();
     var parsed = parseHash();
+    // spec-065: keep the blueprint title-block's "View" cell in sync with the
+    // route. It lives outside #view (which is re-rendered per navigation), so it
+    // is updated here rather than by any screen renderer. Hidden identities never
+    // show it; the write is cheap and harmless.
+    var routeCell = byId("titleblock-route");
+    if (routeCell) routeCell.textContent = parsed.path.replace(/^\//, "") || "machines";
     for (var i = 0; i < ROUTES.length; i++) {
       var m = parsed.path.match(ROUTES[i].re);
       if (m) {
@@ -3232,6 +3238,54 @@
       var open = nav.classList.toggle("nav--open");
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
     });
+  })();
+
+  // spec-065: per-viewer visual-identity switcher. The stored identity is already
+  // stamped on <html> pre-paint by the inline <head> script; here we reflect the
+  // active button and, on click, persist ca.identity + re-stamp so tokens flip
+  // live (no reload). All values are whitelisted; ca.identity follows the ca.*
+  // localStorage idiom (like ca.jwt / ca.user / ca.runs).
+  (function wireIdentitySwitch() {
+    var IDENTITIES = ["current", "iskeru", "blueprint"];
+    var group = byId("identity-switch");
+    if (!group) return;
+
+    function current() {
+      var stored = null;
+      try { stored = localStorage.getItem("ca.identity"); } catch (e) { /* ignore */ }
+      return IDENTITIES.indexOf(stored) >= 0 ? stored : "current";
+    }
+
+    function reflect(id) {
+      var buttons = group.querySelectorAll("button[data-identity]");
+      for (var i = 0; i < buttons.length; i++) {
+        var on = buttons[i].getAttribute("data-identity") === id;
+        buttons[i].classList.toggle("on", on);
+        buttons[i].setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    }
+
+    function apply(id) {
+      if (IDENTITIES.indexOf(id) < 0) return;
+      try { localStorage.setItem("ca.identity", id); } catch (e) { /* non-fatal */ }
+      document.documentElement.dataset.identity = id;
+      reflect(id);
+    }
+
+    group.addEventListener("click", function (e) {
+      var btn = e.target.closest ? e.target.closest("button[data-identity]") : null;
+      if (!btn) return;
+      apply(btn.getAttribute("data-identity"));
+    });
+
+    reflect(current());
+  })();
+
+  // spec-065: fill the blueprint title-block's static "Date" cell once at boot
+  // (the only non-route cell that would otherwise ship stale). A drafting stamp.
+  (function stampTitleblockDate() {
+    var cell = byId("titleblock-date");
+    if (cell) cell.textContent = new Date().toISOString().slice(0, 10);
   })();
 
   window.addEventListener("hashchange", route);
