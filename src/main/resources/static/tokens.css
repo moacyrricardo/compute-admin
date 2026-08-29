@@ -82,6 +82,23 @@
   --c-5: #d97706;
   --c-docker: #64748b;
   --c-system: #78716c;
+
+  /* --- identity contract (spec-065) --------------------------------------- */
+  /* Tokens the selectable-visual-identity skins read. Declared on base :root so
+     the default `current` identity needs no override; the iskeru / blueprint
+     blocks below redefine them. These values keep `current` pixel-identical to
+     spec-012 while tokenizing the five spots app.css used to hard-code. */
+  --accent-2: #0891b2;                                             /* second accent (= --accent for current) */
+  --accent-ink: #ffffff;                                           /* text ON the accent — the .btn--primary fix */
+  --accent-grad: var(--accent);                                    /* primary-button / brand fill; a real gradient only in iskeru */
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent); /* active-nav / soft accent wash */
+  --font-display: var(--font-sans);                                /* headings / brand face */
+  --btn-primary-shadow: none;                                      /* iskeru's gold glow */
+  --hair: 1px;                                                     /* hairline border width */
+  --terminal-bg: #06121a;
+  --terminal-ink: #d5e3ea;
+  --backdrop-modal: rgba(15, 23, 42, 0.55);
+  --backdrop-drawer: rgba(15, 23, 42, 0.45);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -94,6 +111,9 @@
     --text-dim: #94a3b8;
     --text-faint: #64748b;
     --accent: #22d3ee;
+    --accent-2: #22d3ee;
+    /* dark ink on the (bright) accent — was the .btn--primary dark @media override */
+    --accent-ink: #06121a;
 
     --s-ok: #4ade80;
     --s-warn: #fbbf24;
