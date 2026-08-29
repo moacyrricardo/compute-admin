@@ -1,3 +1,7 @@
+Status: doing
+Branch: moacyrricardo/bol-904-cpt-management-port-actuator-merge-status-aware-probe-spec
+Issue:  BOL-904
+
 # 073 — Management-port actuator merge + status-aware probe
 
 ## Context
