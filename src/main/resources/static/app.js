@@ -604,33 +604,56 @@
 
   // ----- Machine detail -----------------------------------------------------
 
+  /**
+   * spec-067: the composed per-machine dashboard (Screen C). Stacks the identity head,
+   * the tri-axis consumer footprint (the SAME makeFootprint the fleet Monitor uses, one
+   * machine, body-only), a searchable/filterable recipes-with-state list, and a two-column
+   * "Recent runs + SSH / connectivity" grid — all from existing reads, no server change.
+   *
+   * Leak fix (spec-067, a blocker): this screen is re-invoked IN PLACE — bypassing the
+   * router — from approvalSplit.onDone, the post-discovery re-render, toggleFamily and the
+   * review drawer's done(). The router's runViewCleanup only fires on router dispatch, so
+   * once the footprint panel wires a heartbeat ticker, an in-place re-mount would orphan the
+   * previous interval permanently. We therefore run any pending currentViewCleanup at entry,
+   * BEFORE the new render wires its own timer (spec-067 Implementation option (a)).
+   */
   function screenMachineDetail(p) {
     var mid = p.mid;
+    runViewCleanup();
     mountAsync(function () {
       return Promise.all([
         api("GET", "/machines/" + mid),
         api("GET", "/recipes?machineId=" + encodeURIComponent(mid)),
-        api("GET", "/machines/" + mid + "/discovery")
+        api("GET", "/machines/" + mid + "/discovery"),
+        api("GET", "/monitor?machineId=" + encodeURIComponent(mid)),
+        api("GET", "/ssh/public-key").catch(function () { return null; })
       ]).then(function (res) {
-        var machine = res[0], recipes = res[1], discovery = res[2];
+        var machine = res[0], recipes = res[1], discovery = res[2], mon = res[3], pubkey = res[4];
         return Promise.all(recipes.map(function (r) {
           return api("GET", "/recipes/" + r.id + "/actions").then(function (actions) {
             return { recipe: r, actions: actions };
           });
         })).then(function (groups) {
-          return { machine: machine, groups: groups, discovery: discovery };
+          return { machine: machine, groups: groups, discovery: discovery, mon: mon, pubkey: pubkey };
         });
       }).then(function (data) {
         var machine = data.machine;
-        var statusChip = chip(machine.status);
+
+        // Two status chips (identity head + SSH card) kept in sync: the Test button — moved
+        // into the SSH card (spec-067 Decision 2) — swaps BOTH from the /test result.
+        var chips = { head: chip(machine.status), card: chip(machine.status) };
+        function replaceChip(key, state) {
+          var fresh = chip(state);
+          if (chips[key].parentNode) chips[key].parentNode.replaceChild(fresh, chips[key]);
+          chips[key] = fresh;
+        }
         var testBtn = h("button", { class: "btn" }, "Test connection");
         testBtn.addEventListener("click", function () {
           testBtn.disabled = true;
           testBtn.textContent = "Testing…";
           api("POST", "/machines/" + mid + "/test").then(function (fresh) {
-            var freshChip = chip(fresh.status);
-            if (statusChip.parentNode) statusChip.parentNode.replaceChild(freshChip, statusChip);
-            statusChip = freshChip;
+            replaceChip("head", fresh.status);
+            replaceChip("card", fresh.status);
             toast("Connection " + humanize(fresh.status));
           }).catch(function (err) {
             toast(err.message);
@@ -639,31 +662,252 @@
             testBtn.textContent = "Test connection";
           });
         });
-        var groups = data.groups.length
-          ? data.groups.map(function (g) {
-              return h("div", { class: "section" },
-                h("div", { class: "row-between" },
-                  h("h2", { text: g.recipe.name }),
-                  h("span", { class: "tag", text: g.recipe.type })),
-                g.recipe.description ? h("p", { class: "small dim mt-2", text: g.recipe.description }) : null,
-                g.recipe.sourceBlueprintId ? h("p", { class: "xs faint mt-2",
-                  text: "from blueprint " + g.recipe.sourceBlueprintId + " v" + g.recipe.sourceBlueprintVersion }) : null,
-                actionsList(machine, g.recipe, g.actions));
-            })
-          : empty("No recipes yet. Run discovery to propose recipes for the services on this host.");
+
+        // ---- recipe filter bar (spec-067 Decision 4) --------------------
+        // A name/description/action substring query + type chips (distinct recipe types) +
+        // the two unconditional source chips (native / docker). Filtering is a client-side
+        // re-render of the groups container — no re-fetch (same posture as the Monitor lens).
+        var query = "";
+        var selType = {};
+        var selSource = {};
+        var typeValues = uniqSorted(data.groups.map(function (g) { return g.recipe.type; }));
+        var groupsBox = h("div");
+        var chipsRow = h("div", { class: "filter-chips mt-2" });
+        var searchInput = h("input", { class: "mono",
+          placeholder: "Filter recipes by name, description, or action…", "aria-label": "Filter recipes" });
+        searchInput.addEventListener("input", function () {
+          query = searchInput.value.trim().toLowerCase(); renderGroups();
+        });
+
+        function filterChip(label, on, title, onClick) {
+          return h("button", { type: "button",
+            class: "tag tag--filter" + (on ? " tag--on" : ""),
+            "aria-pressed": on ? "true" : "false", title: title || label, text: label, onclick: onClick });
+        }
+        function renderChipsRow() {
+          clear(chipsRow);
+          if (typeValues.length) {
+            chipsRow.appendChild(h("span", { class: "small dim", text: "Type" }));
+            typeValues.forEach(function (t) {
+              chipsRow.appendChild(filterChip(t, !!selType[t], "Show only " + t + " recipes",
+                function () { selType[t] = !selType[t]; renderChipsRow(); renderGroups(); }));
+            });
+          }
+          chipsRow.appendChild(h("span", { class: "small dim", style: "margin-left:12px", text: "Source" }));
+          ["native", "docker"].forEach(function (s) {
+            chipsRow.appendChild(filterChip(s, !!selSource[s],
+              "Show recipes with a " + s + " discovered consumer",
+              function () { selSource[s] = !selSource[s]; renderChipsRow(); renderGroups(); }));
+          });
+        }
+
+        // A group's source(s) derive from its RecipeView.appPortList runtimes (docker ⇒
+        // docker, else native; the server's own sourceOf). Empty appPortList — the majority
+        // (blueprint/custom, and the plain /recipes list path) — is "other / none": it
+        // matches NO source chip and is never hidden by one (spec-067 Decision 4).
+        function sourcesOf(g) {
+          var set = {};
+          (g.recipe.appPortList || []).forEach(function (item) {
+            set[(item.runtime && item.runtime.toLowerCase() === "docker") ? "docker" : "native"] = true;
+          });
+          return set;
+        }
+        function isOtherNone(g) { var s = sourcesOf(g); return !s.docker && !s.native; }
+        function selectedTypes() { return typeValues.filter(function (t) { return selType[t]; }); }
+        function selectedSources() { return ["native", "docker"].filter(function (s) { return selSource[s]; }); }
+        function matchesQuery(g) {
+          if (!query) return true;
+          var hay = (g.recipe.name || "") + " " + (g.recipe.description || "");
+          (g.actions || []).forEach(function (a) { hay += " " + (a.name || ""); });
+          return hay.toLowerCase().indexOf(query) >= 0;
+        }
+        function matchesType(g) {
+          var s = selectedTypes();
+          return !s.length || s.indexOf(g.recipe.type) >= 0;
+        }
+        function matchesSource(g) {
+          var sel = selectedSources();
+          if (!sel.length) return true;
+          if (isOtherNone(g)) return true;   // un-pre-filled majority: never silently hidden
+          var src = sourcesOf(g);
+          return sel.some(function (s) { return src[s]; });
+        }
+        function groupNode(g) {
+          return h("div", { class: "section" },
+            h("div", { class: "row-between" },
+              h("h2", { text: g.recipe.name }),
+              h("span", { class: "tag", text: g.recipe.type })),
+            g.recipe.description ? h("p", { class: "small dim mt-2", text: g.recipe.description }) : null,
+            g.recipe.sourceBlueprintId ? h("p", { class: "xs faint mt-2",
+              text: "from blueprint " + g.recipe.sourceBlueprintId + " v" + g.recipe.sourceBlueprintVersion }) : null,
+            actionsList(machine, g.recipe, g.actions));
+        }
+        function renderGroups() {
+          clear(groupsBox);
+          if (!data.groups.length) {
+            groupsBox.appendChild(empty("No recipes yet. Run discovery to propose recipes for the services on this host."));
+            return;
+          }
+          var visible = data.groups.filter(function (g) {
+            return matchesQuery(g) && matchesType(g) && matchesSource(g);
+          });
+          if (!visible.length) {
+            groupsBox.appendChild(empty("No recipes match the filter."));
+            return;
+          }
+          // With a source chip on, split the un-pre-filled majority under an "other / none"
+          // heading so turning on native/docker re-labels rather than hides them.
+          if (selectedSources().length) {
+            var sourced = visible.filter(function (g) { return !isOtherNone(g); });
+            var other = visible.filter(isOtherNone);
+            sourced.forEach(function (g) { groupsBox.appendChild(groupNode(g)); });
+            if (other.length) {
+              groupsBox.appendChild(h("h3", { class: "mt-4 dim",
+                text: "Other / none — no discovered source" }));
+              other.forEach(function (g) { groupsBox.appendChild(groupNode(g)); });
+            }
+          } else {
+            visible.forEach(function (g) { groupsBox.appendChild(groupNode(g)); });
+          }
+        }
+        renderChipsRow();
+        renderGroups();
+
+        var recipesSection = h("div", { class: "section" },
+          h("h2", { text: "Recipes & actions" }),
+          data.groups.length ? h("div", { class: "mt-2" }, searchInput) : null,
+          data.groups.length ? chipsRow : null,
+          groupsBox);
+
+        // ---- footprint (spec-067 Decision 1): the SAME makeFootprint the fleet Monitor
+        // uses, scoped to this one machine (?machineId=). Owner-scoped ⇒ absent machines[0]
+        // omits the section entirely.
+        var monMachine = (data.mon && data.mon.machines || [])[0] || null;
 
         return h("div", null,
           crumbs(link("#/machines", "Machines"),
             h("span", { text: machine.name })),
           pageHead(machine.name, machine.loginUser + "@" + machine.host + ":" + machine.port,
-            [statusChip, copyHostButton(machine), testBtn]),
+            [chips.head, copyHostButton(machine)]),
           h("div", { class: "row" }, (machine.tags || []).map(function (t) {
             return h("span", { class: "tag", text: t });
           })),
+          monMachine ? footprintPanel(monMachine) : null,
           discoverySection(p, mid, (data.discovery && data.discovery.families) || []),
-          groups);
+          recipesSection,
+          h("div", { class: "detail-split" },
+            recentRunsSection(mid),
+            sshCard(machine, data.pubkey, chips.card, testBtn)));
       });
     });
+  }
+
+  /**
+   * spec-067 Decision 1: the per-machine footprint panel. Builds one makeFootprint section
+   * (body-only — the pageHead already carries the identity + status chip) and drives it
+   * ONE-SHOT on mount, plus a "Run now" control that re-polls. There is NO standing poll
+   * interval (matching the fleet Monitor's default Single cadence); the only timer is a 1 s
+   * heartbeat that refreshes the relative "updated Ns ago" read-out. That ticker is
+   * registered with the router's runViewCleanup so navigating away — and the in-place
+   * re-mounts (which call runViewCleanup at screenMachineDetail entry) — never orphan it.
+   */
+  function footprintPanel(monMachine) {
+    var models = {};
+    models[monMachine.machineId] = buildConsumers(monMachine);
+    var fp = makeFootprint({
+      models: models,
+      // One machine: no app-name filter, so every named consumer is always shown and the
+      // card name renders as plain text (onToggleApp null). Lens/bucket stay at defaults —
+      // this page shows strictly less than the fleet Monitor for the machine (no DB lens,
+      // no bucket reveal); the full breakdown stays on #/monitor.
+      selectedNamed: function (m) { return models[m.machineId].filter(function (c) { return !c.bucket; }); },
+      noAppsOn: function () { return false; },
+      onToggleApp: null,
+      showHead: false
+    });
+    var section = fp.buildSection(monMachine);
+
+    var lastUpdated = null, heartbeatTimer = null, inFlight = false;
+    var updatedLabel = h("span", { class: "small dim", text: "not yet updated" });
+    var runNowBtn = h("button", { class: "btn btn--sm btn--primary" }, "Run now");
+    function tick() {
+      updatedLabel.textContent = lastUpdated
+        ? "updated " + Math.round((Date.now() - lastUpdated) / 1000) + "s ago"
+        : "not yet updated";
+    }
+    function cycle() {
+      if (inFlight) return;
+      inFlight = true; runNowBtn.disabled = true;
+      section.refresh()
+        .then(function () { lastUpdated = Date.now(); tick(); })
+        .catch(function () { /* per-section errors are shown in-section */ })
+        .then(function () { inFlight = false; runNowBtn.disabled = false; });
+    }
+    runNowBtn.addEventListener("click", cycle);
+    heartbeatTimer = setInterval(tick, 1000);
+    currentViewCleanup = function () {
+      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+    };
+    cycle();   // one-shot on mount
+
+    return h("div", { class: "section" },
+      h("div", { class: "row-between" },
+        h("h2", { text: "Footprint" }),
+        h("div", { class: "row" }, updatedLabel, runNowBtn)),
+      h("p", { class: "small dim",
+        text: "RAM / CPU / disk this host's consumers occupy, computed in your browser from the "
+          + "APPROVED monitor actions (spec-029) — one-shot on load, Run now re-polls. Approve the "
+          + "host-vital monitor actions to fill the axes." }),
+      section.node);
+  }
+
+  /**
+   * spec-067 Decision 2: the SSH / connectivity card. A .card with a kv list from the
+   * already-fetched MachineView (status chip + loginUser@host:port) plus the app-key
+   * identity from GET /ssh/public-key (key type parsed client-side + fingerprint). The
+   * Test-connection button lives in the footer. Handshake latency / last-probed rows need
+   * data that does not exist yet — spec-068 fills them into this same card.
+   */
+  function sshCard(machine, pubkey, statusChip, testBtn) {
+    var keyType = null;
+    if (pubkey && pubkey.publicKey) {
+      keyType = pubkey.publicKey.trim().split(/\s+/)[0] || null;   // e.g. "ssh-ed25519"
+    }
+    return h("div", { class: "card" },
+      h("h2", { text: "SSH / connectivity" }),
+      h("dl", { class: "kv mt-3" },
+        h("dt", { text: "Status" }), h("dd", null, statusChip),
+        h("dt", { text: "Target" }),
+        h("dd", { class: "mono", text: machine.loginUser + "@" + machine.host + ":" + machine.port }),
+        pubkey ? h("dt", { text: "App key" }) : null,
+        pubkey ? h("dd", { class: "mono",
+          text: (keyType ? keyType + " · " : "") + (pubkey.fingerprint || "") }) : null),
+      h("div", { class: "action-card-foot mt-3" }, copyHostButton(machine), testBtn));
+  }
+
+  /**
+   * spec-067 Decision 5: the this-browser Recent-runs slice. Runs.all() carries a
+   * machineId per entry (spec-005 has no server-side run list), so we filter to this
+   * machine and render the #/runs row idiom with the honest "launched from this browser"
+   * caveat. Server-backed history that survives the browser is spec-069, which swaps in
+   * behind this same section when/if it lands.
+   */
+  function recentRunsSection(mid) {
+    var mine = Runs.all().filter(function (r) { return r.machineId === mid; }).slice(0, 10);
+    var body = mine.length
+      ? h("ul", { class: "list" }, mine.map(function (r) {
+          return h("li", null, h("div", { class: "row-between" },
+            h("div", { class: "grow" },
+              link("#/runs/" + r.id, r.actionName || r.id, null),
+              h("p", { class: "small dim mt-2 mono", text: (r.host || "") + " · " + fmtTime(r.createdAt) })),
+            link("#/runs/" + r.id, "Open", "btn btn--sm")));
+        }))
+      : empty("No runs launched from this browser for this machine yet.");
+    return h("div", { class: "card" },
+      h("h2", { text: "Recent runs" }),
+      h("p", { class: "small dim",
+        text: "Launched from this browser (spec-005 has no server-side run list; spec-069 adds durable history)." }),
+      body);
   }
 
   /**
@@ -2646,9 +2890,13 @@
     var pill = up == null
       ? h("span", { class: "pill pill--unknown", text: "no data" })
       : h("span", { class: "pill pill--" + (up ? "up" : "down"), text: up ? "UP" : "DOWN" });
-    var name = h("button", { type: "button", class: "app-name-toggle",
-      title: "Filter the fleet to " + consumer.name, text: consumer.name,
-      onclick: function (e) { e.stopPropagation(); onToggle(consumer.name); } });
+    // spec-067: on the single-machine dashboard there is no fleet to filter, so the caller
+    // passes no onToggle and the name renders as plain text rather than a filter button.
+    var name = onToggle
+      ? h("button", { type: "button", class: "app-name-toggle",
+          title: "Filter the fleet to " + consumer.name, text: consumer.name,
+          onclick: function (e) { e.stopPropagation(); onToggle(consumer.name); } })
+      : h("span", { class: "app-name-static", text: consumer.name });
     var runtimeTag = h("span", { class: "tag mono",
       text: (consumer.runtime || (consumer.source === "DOCKER" ? "docker" : "process"))
         + (consumer.port != null ? " :" + consumer.port : "")
