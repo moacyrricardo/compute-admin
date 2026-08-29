@@ -1431,6 +1431,52 @@ class AppMonitorDiscovererTest {
         };
     }
 
+    @Test
+    void discover_ManagementPortPair_WithMatchingCmdlineHint_StillMerges() {
+        // A4-lite: -Dmanagement.server.port=8081 agrees with where actuator answered, so the
+        // pair still merges (the GET / discriminator remains the guard).
+        FakeSshExecutor ssh = new FakeSshExecutor(managementPortPairHint("8081"));
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("springboot monitor");
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::port, AppPortItem::managementPort)
+                .containsExactly(tuple(8080, 8081));
+    }
+
+    @Test
+    void discover_ManagementPortPair_WithContradictoryCmdlineHint_DoesNotMerge() {
+        // The cmdline names management :9000 but actuator answered on :8081 — a contradiction, so
+        // the pair is NOT merged; both records survive (D4 consistency check).
+        FakeSshExecutor ssh = new FakeSshExecutor(managementPortPairHint("9000"));
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        assertThat(recipes).extracting(ProposedRecipe::name)
+                .containsExactlyInAnyOrder("springboot monitor", "http app monitor");
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::port, AppPortItem::managementPort)
+                .containsExactly(tuple(8081, null));
+        assertThat(recipe(recipes, "http app monitor").appPortList())
+                .extracting(AppPortItem::port).containsExactly(8080);
+    }
+
+    /** The management-port pair with a -Dmanagement.server.port=<hintPort> on the cmdline (A4-lite). */
+    private Function<List<String>, ExecResult> managementPortPairHint(String hintPort) {
+        String header = "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process";
+        String traffic = "LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"java\",pid=1000,fd=10))";
+        String mgmt = "LISTEN 0 128 127.0.0.1:8081 0.0.0.0:* users:((\"java\",pid=1000,fd=11))";
+        String ss = String.join("\n", header, traffic, mgmt);
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar -Dmanagement.server.port=" + hintPort);
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8081/actuator/health" -> ok("200");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("404");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/" -> ok("200");
+            default -> notFound();
+        };
+    }
+
     private static ProposedRecipe recipe(List<ProposedRecipe> recipes, String name) {
         return recipes.stream().filter(r -> r.name().equals(name)).findFirst().orElseThrow();
     }

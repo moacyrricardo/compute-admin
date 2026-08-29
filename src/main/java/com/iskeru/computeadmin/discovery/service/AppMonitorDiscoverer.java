@@ -791,10 +791,14 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
 
     /**
      * The traffic sibling to merge with {@code mgmt} (spec-073 D4/D10), or null when the confidence
-     * gate does not pass. Among the PID's downgraded HTTP records: a {@code management.server.port}
-     * cmdline hint naming {@code mgmt.port()} confirms the merge without the discriminator (A4-lite,
-     * the sole HTTP sibling is the traffic port); otherwise exactly one sibling that answers
-     * {@code GET /} is the traffic port. Zero or several answering siblings ⇒ no merge.
+     * gate does not pass. The {@code GET /} discriminator is the <strong>hard guard</strong> (D10):
+     * a traffic sibling must actually answer HTTP, so a dead debug/JMX port is never mis-merged as
+     * the traffic port — this takes precedence over the A4-lite hint when the two would conflict.
+     * The {@code management.server.port} cmdline hint (D4) is applied as a <em>consistency check</em>:
+     * a hint naming a port other than where actuator answered contradicts the pairing ⇒ no merge.
+     * (The hint needs no discriminator-bypass role here: the management port is already the SPRINGBOOT
+     * record, excluded from the HTTP traffic candidates, so the discriminator alone handles 3+ ports.)
+     * Zero or several answering siblings ⇒ no merge — today's per-port emission is the fallback.
      */
     private Resolved chooseTrafficSibling(SshSession session, List<Resolved> group, Resolved mgmt,
                                           Map<Integer, Boolean> httpMemo) {
@@ -808,14 +812,14 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             return null;
         }
         Integer hint = mgmt.managementHint();
-        if (hint != null && hint == mgmt.port() && http.size() == 1) {
-            return http.get(0);
+        if (hint != null && hint != mgmt.port()) {
+            return null; // cmdline names a different management port than where actuator answered
         }
         Resolved answering = null;
         for (Resolved r : http) {
             if (httpMemo.computeIfAbsent(r.port(), p -> answersHttp(session, p))) {
                 if (answering != null) {
-                    return null; // two ports both answer GET / with no config hint — ambiguous
+                    return null; // two ports both answer GET / — ambiguous, no merge
                 }
                 answering = r;
             }
