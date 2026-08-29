@@ -249,7 +249,7 @@ p { margin: 0; }
 
 .tag--filter.tag--on {
   background: var(--accent);
-  color: var(--surface);
+  color: var(--accent-ink);   /* spec-065: ink-on-accent, tokenized like .btn--primary */
   border-color: transparent;
 }
 
@@ -273,14 +273,12 @@ p { margin: 0; }
 .btn:hover { background: var(--surface-2); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn--primary {
-  background: var(--accent);
+  background: var(--accent-grad);   /* spec-065: gradient only in iskeru; = --accent elsewhere */
   border-color: var(--accent);
-  color: #ffffff;
+  color: var(--accent-ink);         /* spec-065: was #ffffff + a dark @media override, now the --accent-ink token */
+  box-shadow: var(--btn-primary-shadow);
 }
-@media (prefers-color-scheme: dark) {
-  .btn--primary { color: #06121a; }
-}
-.btn--primary:hover { filter: brightness(1.05); background: var(--accent); }
+.btn--primary:hover { filter: brightness(1.05); background: var(--accent-grad); }
 .btn--danger { color: var(--s-bad); border-color: var(--s-bad); background: transparent; }
 .btn--danger:hover { background: var(--surface-2); }
 .btn--ok { color: var(--s-ok); border-color: var(--s-ok); background: transparent; }
@@ -382,8 +380,8 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 .terminal {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
-  background: #06121a;
-  color: #d5e3ea;
+  background: var(--terminal-bg);   /* spec-065: tokenized */
+  color: var(--terminal-ink);
   border-radius: var(--radius);
   padding: var(--sp-3);
   height: 360px;
@@ -448,7 +446,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(15, 23, 42, 0.55);
+  background: var(--backdrop-modal);   /* spec-065: tokenized */
   display: flex; align-items: center; justify-content: center;
   padding: var(--sp-4);
   z-index: 100;
@@ -650,7 +648,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: var(--backdrop-drawer);   /* spec-065: tokenized */
   display: flex;
   justify-content: flex-end;
   z-index: 150;
