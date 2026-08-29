@@ -1261,6 +1261,176 @@ class AppMonitorDiscovererTest {
         };
     }
 
+    // --- spec-073: management-port merge + status-aware actuator probe -------
+
+    @Test
+    void discover_ManagementPortPair_MergesToOneSpringbootWithManagementPort_SsOrderA() {
+        assertManagementPortPairMerges(managementPortPairStatus(false, "200"));
+    }
+
+    @Test
+    void discover_ManagementPortPair_MergesToOneSpringbootWithManagementPort_SsOrderB() {
+        // Same PID, the two listeners emitted in the reverse ss order - the post-hoc merge is
+        // order-independent, so it still collapses to one springboot record.
+        assertManagementPortPairMerges(managementPortPairStatus(true, "200"));
+    }
+
+    private void assertManagementPortPairMerges(Function<List<String>, ExecResult> box) {
+        FakeSshExecutor ssh = new FakeSshExecutor(box);
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        // One JVM, two sockets (traffic 8080 + management 8081) collapses to ONE springboot
+        // monitor keyed on the traffic port - never a duplicate http app monitor.
+        assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("springboot monitor");
+        ProposedRecipe springboot = recipe(recipes, "springboot monitor");
+        assertThat(springboot.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::managementPort)
+                .containsExactly(tuple("orders", 8080, 8081));
+        // The actuator endpoints bind the management-port component; the process probe keeps port.
+        assertThat(scriptOf(action(springboot, "health"))).contains("management-port");
+        assertThat(scriptOf(action(springboot, "process"))).doesNotContain("management-port");
+    }
+
+    @Test
+    void discover_ManagementPort503_StillMerges() {
+        // A health-DOWN (503) actuator is still an actuator (D2), so the pair still merges - the
+        // fix matters most exactly when the app is unhealthy.
+        FakeSshExecutor ssh = new FakeSshExecutor(managementPortPairStatus(false, "503"));
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        assertThat(recipes).extracting(ProposedRecipe::name).containsExactly("springboot monitor");
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::port, AppPortItem::managementPort)
+                .containsExactly(tuple(8080, 8081));
+    }
+
+    @Test
+    void discover_ManagementPort401_IsGatedSpringbootProposingHealthOnly() {
+        // A 401 actuator is present-but-gated (D6): classify springboot, note the gate, and
+        // propose health ONLY (no metrics/beans/info that would 401 by design).
+        FakeSshExecutor ssh = new FakeSshExecutor(managementPortPairStatus(false, "401"));
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        ProposedRecipe springboot = recipe(recipes, "springboot monitor");
+        assertThat(springboot.actions()).extracting(ProposedAction::name)
+                .containsExactly("health", "process", "ram", "cpu", "disk",
+                        "ram (sudo re-probe)", "disk (sudo re-probe)");
+        AppPortItem item = springboot.appPortList().get(0);
+        assertThat(item.managementPort()).isEqualTo(8081);
+        assertThat(item.sourceNote()).contains("actuator secured");
+    }
+
+    @Test
+    void discover_ActuatorOnOwnPortPlusDeadDebugPort_DoesNotMerge() {
+        // A java PID with actuator on its own port 8080 plus a dead 5005 debug port must NOT
+        // mis-merge as {traffic=5005, management=8080}: the GET / discriminator fails on 5005,
+        // so both records survive as today (D10).
+        FakeSshExecutor ssh = new FakeSshExecutor(actuatorPlusDeadDebugPort());
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        assertThat(recipes).extracting(ProposedRecipe::name)
+                .containsExactlyInAnyOrder("springboot monitor", "http app monitor");
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::port, AppPortItem::managementPort)
+                .containsExactly(tuple(8080, null));
+        assertThat(recipe(recipes, "http app monitor").appPortList())
+                .extracting(AppPortItem::port).containsExactly(5005);
+    }
+
+    @Test
+    void discover_TwoJvmsOfOneJar_DoNotMerge_PidIsTheMergeKey() {
+        // blue/green: two JVMs of one jar share appName AND context but are different PIDs, so
+        // the PID-keyed merge never collapses them (a context+appName key would be unsound).
+        FakeSshExecutor ssh = new FakeSshExecutor(twoJvmsOneJar());
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port)
+                .containsExactly(tuple("orders", 8080));
+        assertThat(recipe(recipes, "http app monitor").appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port)
+                .containsExactly(tuple("orders", 8090));
+    }
+
+    @Test
+    void discover_SsMultiPidUsersColumn_AttributesToLowestPid() {
+        // A shared listening socket lists every owning PID in an arbitrary order; the lowest
+        // (3000, the master) wins - so the app name derives from PID 3000's cmdline (D7).
+        FakeSshExecutor ssh = new FakeSshExecutor(ssMultiPidColumn());
+        List<ProposedRecipe> recipes = discoverer.discover(machine(), ssh.session());
+
+        assertThat(recipe(recipes, "springboot monitor").appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port)
+                .containsExactly(tuple("lowest", 8080));
+    }
+
+    /**
+     * One JVM (pid 1000) with a traffic port 8080 and a separate management.server.port 8081:
+     * actuator answers only on 8081 (status {@code actuatorCode}), 8080 is plain HTTP (the GET /
+     * discriminator). {@code reversed} emits the two ss rows in the opposite order.
+     */
+    private Function<List<String>, ExecResult> managementPortPairStatus(boolean reversed, String actuatorCode) {
+        String header = "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process";
+        String traffic = "LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"java\",pid=1000,fd=10))";
+        String mgmt = "LISTEN 0 128 127.0.0.1:8081 0.0.0.0:* users:((\"java\",pid=1000,fd=11))";
+        String ss = reversed ? String.join("\n", header, mgmt, traffic)
+                             : String.join("\n", header, traffic, mgmt);
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8081/actuator/health" -> ok(actuatorCode);
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("404");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/" -> ok("200");
+            default -> notFound();
+        };
+    }
+
+    /** One JVM with actuator on its own port 8080 and a dead JDWP debug port 5005 (D10). */
+    private Function<List<String>, ExecResult> actuatorPlusDeadDebugPort() {
+        String header = "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process";
+        String app = "LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"java\",pid=1000,fd=10))";
+        String debug = "LISTEN 0 1 127.0.0.1:5005 0.0.0.0:* users:((\"java\",pid=1000,fd=5))";
+        String ss = String.join("\n", header, app, debug);
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline" -> ok("java -jar /opt/orders.jar");
+            case "cat /proc/1000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
+            default -> notFound(); // 5005 answers neither actuator nor GET / (JDWP is not HTTP)
+        };
+    }
+
+    /** Two JVMs of one jar on different PIDs (blue 8080 has actuator, green 8090 does not). */
+    private Function<List<String>, ExecResult> twoJvmsOneJar() {
+        String header = "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process";
+        String blue = "LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"java\",pid=1000,fd=10))";
+        String green = "LISTEN 0 128 0.0.0.0:8090 0.0.0.0:* users:((\"java\",pid=2000,fd=10))";
+        String ss = String.join("\n", header, blue, green);
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/1000/cmdline", "cat /proc/2000/cmdline" -> ok("java -jar /opt/orders.jar");
+            case "cat /proc/1000/cgroup", "cat /proc/2000/cgroup" ->
+                    ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
+            default -> notFound();
+        };
+    }
+
+    /** A shared listening socket owned by three PIDs listed out of order; the lowest (3000) wins. */
+    private Function<List<String>, ExecResult> ssMultiPidColumn() {
+        String header = "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process";
+        String line = "LISTEN 0 128 0.0.0.0:8080 0.0.0.0:* users:((\"java\",pid=3002,fd=7),(\"java\",pid=3000,fd=8),(\"java\",pid=3001,fd=9))";
+        String ss = String.join("\n", header, line);
+        return argv -> switch (String.join(" ", argv)) {
+            case "ss -ltnp" -> ok(ss);
+            case "cat /proc/3000/cmdline" -> ok("java -jar /opt/lowest.jar");
+            case "cat /proc/3000/cgroup" -> ok("0::/user.slice/user-1000.slice/session-3.scope");
+            case "curl -s -m 2 -o /dev/null -w %{http_code} http://127.0.0.1:8080/actuator/health" -> ok("200");
+            default -> notFound();
+        };
+    }
+
     private static ProposedRecipe recipe(List<ProposedRecipe> recipes, String name) {
         return recipes.stream().filter(r -> r.name().equals(name)).findFirst().orElseThrow();
     }

@@ -528,6 +528,28 @@ class RunServiceTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void run_ActuatorFanOut_BindsManagementPortFromSideData_DefaultsToOwnPort() {
+        AppUser user = saveUser();
+        // spec-073: 'orders' has a separate management.server.port 8081 in the recipe's
+        // app_port_list side-data; 'billing' has none, so its actuator probe defaults to its
+        // own port 9090 (a single-port app binds exactly as before). The management port is
+        // enriched server-side — the client's run items carry only (appName, port).
+        String sideData = "[{\"appName\":\"orders\",\"port\":8080,\"managementPort\":8081},"
+                + "{\"appName\":\"billing\",\"port\":9090}]";
+        Seed seed = asUser(user, () -> seedActuatorProbeAction(sideData));
+        String items = "[{\"appName\":\"orders\",\"port\":8080},{\"appName\":\"billing\",\"port\":9090}]";
+
+        Run parent = asUser(user, () -> runService.run(seed.machineId(), seed.actionId(), Map.of("apps", items)));
+        awaitTerminal(parent.getId());
+
+        List<String> probedPorts = ssh.argvCalls.stream()
+                .filter(a -> !a.isEmpty() && "probe".equals(a.get(0)))
+                .map(a -> a.get(a.size() - 1)).toList();
+        assertThat(probedPorts).containsExactlyInAnyOrder("8081", "9090");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void childRuns_ListsFanOutChildrenByAppLabel_ScalarHasNone() {
         AppUser user = saveUser();
         Seed fanOut = asUser(user, () -> seedFanOutAction(true));
@@ -802,6 +824,27 @@ class RunServiceTest {
                 List.of(new ArgTokenInput(TokenKind.LITERAL, "du"),
                         new ArgTokenInput(TokenKind.LITERAL, "-sbx"),
                         new ArgTokenInput(TokenKind.PARAM, "app-folder")),
+                List.of(new ParamDefInput("apps", ParamKind.APP_PORT_LIST, null, null, null, null))));
+        recipeService.refreshDiscoveredAppPortList(recipe.getId(), sideData);
+        approvalService.submitForApproval(action.getId());
+        approvalService.approve(action.getId());
+        return new Seed(machine.getId(), action.getId());
+    }
+
+    /**
+     * A Spring Boot actuator endpoint MONITOR action (spec-073): a fixed template whose only
+     * bound value is the per-item {@code management-port}. The recipe's {@code app_port_list}
+     * side-data ({@code sideData}) supplies each item's {@code managementPort}; the run path
+     * enriches it server-side, defaulting to the item's own port when absent. Always approved.
+     */
+    private Seed seedActuatorProbeAction(String sideData) {
+        Machine machine = machineService.register(new RegisterMachineInput("host", "host", 22, "root"));
+        Recipe recipe = recipeService.create(new CreateRecipeInput(
+                machine.getId(), "springboot", "app actuator", RecipeType.MONITOR));
+        Action action = actionService.addAction(new AddActionInput(
+                recipe.getId(), "health", "actuator health", false,
+                List.of(new ArgTokenInput(TokenKind.LITERAL, "probe"),
+                        new ArgTokenInput(TokenKind.PARAM, "management-port")),
                 List.of(new ParamDefInput("apps", ParamKind.APP_PORT_LIST, null, null, null, null))));
         recipeService.refreshDiscoveredAppPortList(recipe.getId(), sideData);
         approvalService.submitForApproval(action.getId());
