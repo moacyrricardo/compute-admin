@@ -1,6 +1,6 @@
 # 067 — Machine-dashboard composition (Screen C)
 
-**Status:** todo · Linear [BOL-896](https://linear.app/iskeru/issue/BOL-896) · build branch `moacyrricardo/bol-896-cpt-067-machine-dashboard-composition` · **Part of concern 064 (mockup delivery).**
+**Status:** doing · Linear [BOL-896](https://linear.app/iskeru/issue/BOL-896) · build branch `moacyrricardo/bol-896-cpt-067-machine-dashboard-composition` · **Part of concern 064 (mockup delivery).**
 
 ## Context
 
