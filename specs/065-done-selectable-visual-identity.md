@@ -1,6 +1,6 @@
 # 065 — Selectable visual identity
 
-**Status:** doing · Linear [BOL-894](https://linear.app/iskeru/issue/BOL-894) · build branch `moacyrricardo/bol-894-cpt-065-selectable-visual-identity` · **Part of concern 064 (mockup delivery).**
+**Status:** done · Linear [BOL-894](https://linear.app/iskeru/issue/BOL-894) · build branch `moacyrricardo/bol-894-cpt-065-selectable-visual-identity` · **Part of concern 064 (mockup delivery).**
 
 ## Context
 
@@ -206,3 +206,47 @@ dark-mode check never runs.
 - **Mockup component rules are ported selectively.** Only the shell + the component accents listed
   above; screen-level composition (discovery cards, dashboard) belongs to 066/067, and the
   footprint/verb/app-badge forks those screens raise are 064's, not this spec's.
+
+## Implementation Notes
+
+Built on branch `moacyrricardo/bol-894-cpt-065-selectable-visual-identity` (Linear BOL-894),
+PR #99, base `main`. Presentation-only — no endpoint, DTO, or migration. **API Modules: none**,
+so no API Diff. **No version bump** (project policy; no `pom.xml` change).
+
+**How the build followed / differed from the spec.**
+
+- **Token contract, gating, and the five bypasses landed exactly as specified.** New tokens sit on
+  base `:root`; the two identity blocks are verbatim ports of `mockup:83–115`; the
+  `prefers-color-scheme:dark` block is re-scoped to
+  `:root:not([data-identity="iskeru"]):not([data-identity="blueprint"])`; `.btn--primary`,
+  `.btn--primary:hover`, `.terminal`, both backdrops, and `.tag--filter.tag--on` now read tokens.
+  The `.btn--primary` dark `@media` override was deleted and its `#06121a` ink moved into the gated
+  dark block as `--accent-ink`. The white-on-gold regression is closed at the source: iskeru's
+  `--accent-ink:#17130a` always wins because OS-dark no longer applies to iskeru.
+- **`.pf-titleblock` grid handling as specified** — blueprint extends the grid with a third
+  `"nav titleblock"` row (rows `auto 1fr auto`) so the element spans the view column; `current`/
+  `iskeru` keep the two-row grid with the element `display:none`. iskeru's ambient glow `inset` and
+  sticky `top` ported as `0` (not the mockup's `46px` scaffolding offset).
+- **Deviation — the title-block Date cell is filled once at boot** (today's date, ISO) rather than
+  being fully static. The spec says "no JS beyond filling the route cell"; a hard-coded date would
+  ship stale, so the boot stamp is a single extra `textContent` write on a hidden-by-default element.
+  The route ("View") cell is filled per navigation in `route()`, as specified.
+- **Robustness fix (found by the shared test harness).** `wireIdentitySwitch()` bails unless its
+  group element exposes `querySelectorAll`; the switcher requires a real element, and this keeps the
+  repo's `src/test/js/*.render-check.js` harnesses (which load the whole `app.js` against a minimal
+  DOM stub) working. Surfaced and fixed on-branch.
+
+**Change division (CONTRIBUTING.md).** Six commits, enabling refactor first so the behaviour reads
+as a pure delta: (1) `todo→doing` rename; (2) tokenize the five bypasses (behaviour-neutral for
+`current`); (3) identity token sets + OS-dark gating; (4) identity-scoped shell + component CSS;
+(5) switcher wiring (`index.html`/`app.js`/`app.css`); (6) render-check + the DOM-stub guard.
+Renames isolated; no behaviour-neutral prep bundled into a behaviour commit.
+
+**Tests.** New `src/test/js/selectable-visual-identity.render-check.js` (static-asset invariants +
+behavioural switcher/title-block checks). `mvn test` 387 green; all five prior render-checks green.
+
+**Deferred (unchanged from Known Gaps, owned by concern 064).** Per-identity ≤720px (iskeru mobile
+top-nav) — ships the conservative stacked fallback; self-hosted fonts — ships system stacks with the
+`--font-display` seam. **Remaining manual gate:** the live screenshot matrix (per-identity + modal
+backdrop + primary button under both OS modes) needs the headless `live-verify` agent and was not
+run in the automated build; the mechanism behind each check is proven at the source + unit level.
