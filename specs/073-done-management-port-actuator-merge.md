@@ -1,4 +1,4 @@
-Status: doing
+Status: done
 Branch: moacyrricardo/bol-904-cpt-management-port-actuator-merge-status-aware-probe-spec
 Issue:  BOL-904
 
@@ -127,3 +127,46 @@ Live-verify per the CLAUDE.md sshd-container recipe with a demo app run under `-
 - **Genuinely ambiguous two-HTTP PIDs.** A PID whose two ports both answer `GET /` with no actuator and
   no config hint (API + admin UI, gRPC-gateway pairs) is not merged — the confidence gate falls back to
   per-port emission by design.
+
+## Implementation Notes
+
+Built on branch `moacyrricardo/bol-904-cpt-management-port-actuator-merge-status-aware-probe-spec`
+(BOL-904), stacked on the spec-073 doc PR #94. Shipped as decided; the build followed the
+Implementation section closely, with these deltas worth recording:
+
+- **Status-aware probe realised as `httpStatus(session, port, path)`** returning the HTTP code (or
+  `null` on a connection/timeout failure, which `Probes.lines` surfaces as no output). `probeActuator`
+  maps it to `ACTUATOR|GATED|NONE`; `answersHttp` reuses it for the `GET /` discriminator. The old
+  `respondsToActuator` was removed. `respondsToMetrics` (FastAPI Prometheus) kept its `curl -sf` shape —
+  out of scope.
+- **D4/D10 refinement.** The `GET /` discriminator is the **unconditional** merge guard: a traffic
+  sibling must answer HTTP, so a dead debug/JMX port never mis-merges. The A4-lite cmdline hint (D6) is a
+  **consistency check** (a hint naming a port other than where actuator answered blocks the merge), not a
+  discriminator bypass — the spec's "confirm a merge without the `GET /` discriminator" wording was not
+  taken literally, because bypassing the discriminator on a hint alone reintroduces exactly the
+  dead-sibling mis-merge D10 forbids. In this architecture the management port is already the SPRINGBOOT
+  record (excluded from the HTTP traffic candidates), so the discriminator alone also handles the 3+-port
+  case; the hint's residual value is the consistency check. (Applied as an eval-stage fix.)
+- **D6 "health only" is recipe-level.** Because actions fan out over the whole app-port list, "propose
+  `health` only" is emitted when **every** app routed to the springboot family is gated (marked by the
+  `actuator secured` sourceNote); a mixed gated/ungated family keeps all four endpoints. Single-app
+  gated discoveries (the common case) get health-only as intended.
+- **`managementPort` plumbing** rode a nullable field on `AppPortItem` → serialised automatically by
+  `DiscoveryService.toJson` (Jackson record field, no `toJson` edit, no migration) → `MonitorService.AppPort`
+  / `RecipeDtos.AppPortView` / `MonitorDtos.appPortView` / `MonitorAppView` / `app.js` badge. Old
+  constructors were preserved as overloads so the docker/compose call sites and existing tests were
+  untouched.
+- **Actuator endpoints bind `management-port`** (new `actuatorProbe`); FastAPI/HTTP liveness and all
+  process/footprint probes keep `port`. `RunService` enriches `management-port` server-side from
+  `app_port_list` side-data keyed `(appName, port)`, defaulting to the item's own port — so single-port
+  apps bind identically and the D8 re-approval churn is confined to springboot endpoint actions.
+
+### Change division (vs CONTRIBUTING.md)
+
+One concern per commit, tree green at every commit: (1) `todo→doing` status flip; (2) ss-path lowest-PID
+fix (isolated prerequisite); (3) shared management-port plumbing (the enabling refactor, landed **before**
+the behaviour); (4) status-aware probe + PID-sibling merge (the behaviour delta) — the mechanical
+migration of the 12 existing actuator fixtures to the new probe-command shape rides with this commit that
+necessitates it, so the tree never goes red; (5) the new tests; (6) the D10 eval-hardening + its tests.
+Renames (the two status flips) are isolated. No version bump — the app is unversioned and the project's
+policy is **none**. API Modules = None (single deployable), so no API Diff.
