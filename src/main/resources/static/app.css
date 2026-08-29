@@ -767,6 +767,20 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
 .fw-badge--http       { color: var(--s-warn); border-color: var(--s-warn); }
 .fw-badge--generic    { color: var(--text-dim); }
 
+/* spec-067: the single-machine dashboard's static consumer name (no fleet to filter). */
+.app-name-static {
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+/* spec-067: the machine dashboard's two-column Recent-runs + SSH/connectivity row.
+   Token-only, no new colours; collapses to one column in the ≤480px phone block. */
+.detail-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--sp-3);
+}
+
 /* Fleet per-app card (spec-029): the app-name doubles as a filter toggle. */
 .app-name-toggle {
   background: none;
@@ -983,6 +997,7 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
   /* Dense grids / side-by-side rows stack to one column. */
   .app-cards { grid-template-columns: 1fr; }
   .action-cards { grid-template-columns: 1fr; }  /* spec-044: cards 1-up on phones */
+  .detail-split { grid-template-columns: 1fr; }  /* spec-067: runs + SSH 1-up on phones */
   .row-between { flex-direction: column; align-items: stretch; }
 
   /* Monitor filter + control clusters take their own full-width rows. */
