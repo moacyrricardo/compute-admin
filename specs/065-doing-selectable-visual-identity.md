@@ -1,6 +1,6 @@
 # 065 — Selectable visual identity
 
-**Status:** todo · Linear [BOL-894](https://linear.app/iskeru/issue/BOL-894) · build branch `moacyrricardo/bol-894-cpt-065-selectable-visual-identity` · **Part of concern 064 (mockup delivery).**
+**Status:** doing · Linear [BOL-894](https://linear.app/iskeru/issue/BOL-894) · build branch `moacyrricardo/bol-894-cpt-065-selectable-visual-identity` · **Part of concern 064 (mockup delivery).**
 
 ## Context
 
