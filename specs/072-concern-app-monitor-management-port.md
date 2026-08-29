@@ -1,5 +1,14 @@
 # 072 — App-monitor management-port & status-naive actuator detection
 
+> **WARNING — resolved by spec 073 (staged).** The option space was decided via a `/rich-html:decide`
+> surface: ship **A3** (post-hoc PID-sibling merge) **+ the status-aware 503/401 probe** **+ the
+> ss-path lowest-PID fix** now, as spec **073**; **A2** (full per-PID restructure) is deferred to its
+> **own near-term spec**, not an app-model fold-in. Non-loopback bind (Rider 2) and stale-record
+> retirement (spec-036) stay deferred. The A2 write-up below has been **corrected** per the per-PID
+> deep-dive: the named spec-062-D1 collision does not exist, the test-churn estimate was overstated,
+> and there is no already-planned app-model home for A2. This concern stays as the durable options
+> record; the decisions and their rationale live in spec 073.
+
 ## Problem
 
 The app-monitor discoverer (`AppMonitorDiscoverer`) classifies a listening service as a
@@ -78,14 +87,37 @@ runs. So an in-loop patch at :321-322 is not implementable — it **forces a pre
 collapses into A3**. (Most important structural finding.)
 
 ### A2 — PID-grouped resolution (restructure the loop)
-Rewrite `discover()` (:297-348) to group attributed listeners by PID, resolve once per PID, choose an
-identity port. **The correct long-term model** (app = process; ports = attributes; aligned with the
-055 app-model direction) — also kills adjacent noise for free (debug/JMX ports, v4/v6 twin binds,
-nginx `0.0.0.0:80`+`[::]:80`). **But high blast radius:** collides with spec-062 D1 null-PID survival
-(test `discover_BothLoopbackAndAnyBind_...`), changes spec-056 D5 fingerprint-confidence semantics
-(`service.defaultPort() == listener.port()`, :340), and churns a large fraction of the ~45 discoverer
-test fixtures that assert per-listener emission counts. **Right destination, wrong first step** —
-fold into a future app-model spec once merge semantics are proven.
+Rewrite `discover()` (:297-348) into a partition pass + a per-PID pass: build `Map<pid, List<Listener>>`
+from attributed listeners, classify/resolve-context/fingerprint once per PID, choose an identity port,
+and emit ONE `Resolved` carrying the port set + management port. **The correct long-term model** (app =
+process; ports = attributes) — also kills adjacent noise for free (debug/JMX ports, v4/v6 twin binds,
+nginx `0.0.0.0:80`+`[::]:80`), and is structurally robust to probe imperfection (grouping alone kills the
+duplication; a status-naive probe can only mislabel the family, never re-introduce the duplicate).
+
+**Re-graded by the per-PID deep-dive — the "high blast radius" fear was materially overstated:**
+- **No spec-062 D1 collision.** Unattributed/null-PID listeners are diverted *before* the resolve work
+  (:301-304) and reconciled in their own per-`(addr,port)` branch (:362-371) — they carry no PID, so
+  they can't enter a PID map. That branch is untouched; the two paths are already parallel.
+- **spec-056 D5 is a one-line refinement, not a break:** per group the confidence check becomes "any
+  owned port == catalog default" (:340) — observable only for a multi-port service PID (postgres +
+  a stats port), and arguably *more* correct. Existing tests are single-port and unaffected.
+- **Test churn is near-zero, not "a large fraction."** *Not one* of the 42 `AppMonitorDiscovererTest`
+  fixtures gives a PID more than one listening port, and every issued-command assertion is
+  order-insensitive (`contains`/`doesNotContain`). Realistic churn: ~0–3 existing edits + ~8–12
+  genuinely-new tests. The real cost is implementation-regression risk on a ~60-line hot loop, not
+  assertion churn.
+- **A missed prerequisite:** `parseSs` attributes a shared socket to the **first** PID in the
+  `users:((…))` column (:246, :674-676), and spec-062's lowest-PID rule lives only on the `/proc/net`
+  fallback path (:480-487). For a preforked server (nginx master+workers) grouping would be
+  nondeterministic — A2 needs the lowest-PID canonicalisation extended to the ss parse (a latent
+  inconsistency worth fixing regardless — see the resolving spec's ss-path fix).
+
+**Re-grade:** from "high blast radius — defer" to **"medium, decision-bound — sequence after A3 as its
+own near-term spec."** A2 subsumes A3's semantics entirely (the duplicate pair never forms) and every
+piece of A3 except its ~50-line merge pass is a verbatim-reusable prefix of A2, so A3-first is the
+better expected-value path — *not* an indefinite deferral. ("Fold into a future app-model spec" was
+wrong: the 055–063 epic is already **done**; only 060 (an MCP audit) is open — no such planned home
+exists, so A2 needs its own spec either way.)
 
 ### A3 — Post-hoc merge / reconciliation pass  *(recommended core)*
 Leave the per-listener loop untouched; after :348, run a merge pass over `resolved`: for each PID
@@ -181,8 +213,11 @@ memoized discriminator curl per merge candidate, and confines risk to a new pass
 Rider 1 is required for the merge to be correct and fixes a real misclassification on its own. The config
 hint is nearly free and resolves the only genuinely ambiguous case (3+ ports).
 
-**Defer:** A2's full PID-grouped model (future app-model spec — it also subsumes debug-port and v4/v6
-twin-record noise), Rider 2's host param (own S4 decision), and stale-record retirement (spec-036).
+**Defer:** A2's full PID-grouped model — as **its own near-term spec** (not "a future app-model spec":
+the 055–063 epic is already done, only 060/MCP-audit is open, so A2 has no planned home and needs its
+own number). It subsumes A3 and also fixes debug-port / v4/v6 twin-record noise and multi-port footprint
+double-count generally. Also defer Rider 2's host param (own S4 decision) and stale-record retirement
+(spec-036).
 
 ## Open Questions
 
