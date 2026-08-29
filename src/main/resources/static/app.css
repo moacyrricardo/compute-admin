@@ -148,6 +148,154 @@ p { margin: 0; }
   .view { padding: var(--sp-4); }
 }
 
+/* ------------------------------------------- identity-scoped shell (spec-065) */
+/* Each identity re-skins the same logical grid regions (brand/topbar/nav/view).
+   The layout remaps are gated to min-width:721px so that below the spec-043
+   stacked breakpoint every identity falls back to the current stacked shell —
+   visually conservative, never broken (iskeru's horizontal top-nav has no mobile
+   answer yet; deferred to concern 064). Purely-cosmetic component accents below
+   are un-gated: they never break the stacked layout. Ported from the 054 mockup
+   (mockup:142-212, 235-292). The .pf-titleblock is the only net-new DOM. */
+
+.pf-titleblock { display: none; }   /* mockup default; only blueprint reveals it */
+
+@media (min-width: 721px) {
+  /* --- iskeru: glassy sticky top-nav, spacious centered view (mockup:156-181) */
+  :root[data-identity="iskeru"] .shell {
+    position: relative;
+    grid-template-columns: auto 1fr auto;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "brand nav topbar"
+      "view  view view";
+  }
+  /* Fixed radial ambient glows behind the whole shell. inset/top ported as 0
+     (not the mockup's 46px, which only cleared its scaffolding shellbar — not
+     ported here, so 46px would leave a dead band + a gap under the header). */
+  :root[data-identity="iskeru"] .shell::before {
+    content: "";
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(760px 380px at 84% -6%, rgba(200, 127, 74, 0.16), transparent 60%),
+      radial-gradient(680px 360px at 4% 2%, rgba(217, 164, 65, 0.13), transparent 58%);
+  }
+  :root[data-identity="iskeru"] .brand,
+  :root[data-identity="iskeru"] .nav,
+  :root[data-identity="iskeru"] .topbar {
+    position: sticky; top: 0; z-index: 20;
+    height: 70px; align-items: center;
+    background: rgba(11, 13, 18, 0.72);
+    backdrop-filter: saturate(150%) blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  :root[data-identity="iskeru"] .brand {
+    border-right: none;
+    padding: 0 var(--sp-2) 0 var(--sp-8);
+    font-family: var(--font-display); letter-spacing: -0.01em;
+  }
+  :root[data-identity="iskeru"] .brand .dot {
+    width: 20px; height: 20px; border-radius: 7px;
+    background: var(--accent-grad);
+    box-shadow: 0 0 18px -2px rgba(217, 164, 65, 0.55);
+  }
+  :root[data-identity="iskeru"] .nav {
+    flex-direction: row; justify-content: center; gap: var(--sp-2);
+    border-right: none; padding: var(--sp-3);
+  }
+  :root[data-identity="iskeru"] .nav a { border-radius: 999px; font-weight: 500; }
+  :root[data-identity="iskeru"] .nav a.active {
+    background: var(--accent-soft); color: var(--accent);
+  }
+  :root[data-identity="iskeru"] .topbar { padding: 0 var(--sp-8) 0 var(--sp-2); }
+  :root[data-identity="iskeru"] .view {
+    position: relative; z-index: 1;
+    max-width: 1080px; margin: 0 auto; width: 100%;
+    padding: var(--sp-8) var(--sp-8) 80px;
+  }
+
+  /* --- blueprint: drafting sheet, grid paper, title-block row (mockup:184-212) */
+  :root[data-identity="blueprint"] .shell {
+    grid-template-columns: 220px 1fr;
+    /* extend the base two-row grid with a third `titleblock` row spanning the
+       view column, so the net-new .pf-titleblock lands there instead of CSS
+       grid's implicit-placement row (which would sit under the nav rail). */
+    grid-template-rows: auto 1fr auto;
+    grid-template-areas:
+      "brand topbar"
+      "nav   view"
+      "nav   titleblock";
+    background-image:
+      linear-gradient(rgba(47, 109, 246, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(47, 109, 246, 0.06) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  :root[data-identity="blueprint"] .pf-titleblock {
+    grid-area: titleblock;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    margin: 0 var(--sp-6) var(--sp-6);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-family: var(--font-mono); font-size: 11px;
+  }
+}
+
+/* Blueprint title-block cells (mockup:209-212). Un-gated: harmless when hidden. */
+:root[data-identity="blueprint"] .pf-titleblock > div {
+  padding: var(--sp-2) var(--sp-3);
+  border-right: 1px solid var(--border);
+}
+:root[data-identity="blueprint"] .pf-titleblock > div:last-child { border-right: 0; }
+:root[data-identity="blueprint"] .pf-titleblock .k {
+  display: block; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--text-faint); font-size: 9px;
+}
+:root[data-identity="blueprint"] .pf-titleblock .v {
+  display: block; color: var(--text); margin-top: 2px;
+}
+
+/* Blueprint cosmetics on the rail — mono, uppercase, inset-bar active (mockup:193-204) */
+:root[data-identity="blueprint"] .brand {
+  font-family: var(--font-mono); text-transform: uppercase;
+  letter-spacing: 0.12em; font-size: 13px;
+}
+:root[data-identity="blueprint"] .brand .dot { border-radius: 2px; }
+:root[data-identity="blueprint"] .nav a {
+  border-radius: 2px; text-transform: uppercase; letter-spacing: 0.09em;
+  font-size: 11.5px; font-weight: var(--fw-semibold); font-family: var(--font-mono);
+}
+:root[data-identity="blueprint"] .nav a.active {
+  background: transparent; color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Per-component identity accents (mockup:235-292): smallest set that reads true. */
+:root[data-identity="iskeru"] .card { padding: var(--sp-6); }
+:root[data-identity="iskeru"] .tag--filter.tag--on,
+:root[data-identity="iskeru"] .tag { border-radius: 999px; }
+:root[data-identity="iskeru"] input,
+:root[data-identity="iskeru"] select,
+:root[data-identity="iskeru"] textarea { background: var(--surface-2); }
+:root[data-identity="iskeru"] .btn--primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px -10px rgba(217, 164, 65, 0.85);
+  filter: none;
+}
+:root[data-identity="blueprint"] .card { position: relative; }
+/* Blueprint corner-tick registration marks on cards (mockup:238-243). */
+:root[data-identity="blueprint"] .card::before,
+:root[data-identity="blueprint"] .card::after {
+  content: ""; position: absolute; width: 7px; height: 7px;
+  pointer-events: none; border-color: var(--accent); border-style: solid; opacity: 0.55;
+}
+:root[data-identity="blueprint"] .card::before { left: -1px; top: -1px; border-width: 1px 0 0 1px; }
+:root[data-identity="blueprint"] .card::after { right: -1px; bottom: -1px; border-width: 0 1px 1px 0; }
+:root[data-identity="blueprint"] .chip {
+  border-radius: 2px; text-transform: uppercase; letter-spacing: 0.05em;
+}
+:root[data-identity="blueprint"] .btn {
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+
 /* -------------------------------------------------------------- headings --- */
 
 .page-head {
