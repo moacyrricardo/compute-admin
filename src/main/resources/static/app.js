@@ -651,7 +651,9 @@
         api("GET", "/machines/" + mid),
         api("GET", "/recipes?machineId=" + encodeURIComponent(mid)),
         api("GET", "/machines/" + mid + "/discovery"),
-        api("GET", "/monitor?machineId=" + encodeURIComponent(mid)),
+        // The footprint + SSH-key reads degrade to null (section/row omitted) rather than
+        // failing the whole dashboard — Decision 1: absent monitor scope ⇒ omit the footprint.
+        api("GET", "/monitor?machineId=" + encodeURIComponent(mid)).catch(function () { return null; }),
         api("GET", "/ssh/public-key").catch(function () { return null; })
       ]).then(function (res) {
         var machine = res[0], recipes = res[1], discovery = res[2], mon = res[3], pubkey = res[4];
