@@ -101,8 +101,12 @@
   --backdrop-drawer: rgba(15, 23, 42, 0.45);
 }
 
+/* The OS light/dark pair applies to `current` only (spec-065): a committed
+   identity (iskeru = always dark, blueprint = always light) must not let the OS
+   setting fight its skin, so the dark block is gated off those two. A pre-JS
+   missing attribute is treated as `current` and keeps today's behaviour. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-identity="iskeru"]):not([data-identity="blueprint"]) {
     --ground: #0b1220;
     --surface: #111827;
     --surface-2: #1e293b;
@@ -132,4 +136,100 @@
     --c-docker: #94a3b8;
     --c-system: #a8a29e;
   }
+}
+
+/* ========================================================================= */
+/*  SELECTABLE VISUAL IDENTITIES (spec-065)                                   */
+/*  Each identity is a complete product skin, not a light/dark toggle. Ported */
+/*  verbatim from specs/054-assets/mockup-compute-admin.html (mockup:83-115). */
+/*  `current` is the base :root above (+ its gated dark pair). These two are  */
+/*  committed modes: `color-scheme` pins native form controls / scrollbars.   */
+/* ========================================================================= */
+
+/* ---- iskeru — committed DARK, gold (mockup:83-99) ---------------------- */
+:root[data-identity="iskeru"] {
+  color-scheme: dark;
+
+  --ground: #0b0d12;
+  --surface: #141925;
+  --surface-2: #1a2030;
+  --border: #232a3a;
+  --text: #eef1f7;
+  --text-dim: #9aa3b6;
+  --text-faint: #6b7488;
+
+  --accent: #d9a441;
+  --accent-2: #c87f4a;
+  --accent-ink: #17130a;
+  --accent-grad: linear-gradient(135deg, #e0b052, #c87f4a);
+  --accent-soft: rgba(217, 164, 65, 0.13);
+
+  --s-ok: #34d399;
+  --s-warn: #fbbf24;
+  --s-bad: #f87171;
+  --s-info: #60a5fa;
+  --s-neutral: #6b7488;
+
+  --c-1: #818cf8;
+  --c-2: #2dd4bf;
+  --c-3: #c084fc;
+  --c-4: #fb7185;
+  --c-5: #fbbf24;
+  --c-docker: #94a3b8;
+  --c-system: #a8a29e;
+
+  --font-sans: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+
+  --radius: 16px;
+  --radius-sm: 10px;
+  --elevation: 0 14px 40px -16px rgba(0, 0, 0, 0.6);
+  --btn-primary-shadow: 0 10px 28px -12px rgba(217, 164, 65, 0.7);
+  --hair: 1px;
+
+  /* Black-based scrims: a slate-tinted rgba over #0b0d12 reads muddy. */
+  --backdrop-modal: rgba(0, 0, 0, 0.62);
+  --backdrop-drawer: rgba(0, 0, 0, 0.52);
+}
+
+/* ---- blueprint — committed LIGHT, drafting paper (mockup:101-114) ------- */
+:root[data-identity="blueprint"] {
+  color-scheme: light;
+
+  --ground: #eef2f6;
+  --surface: #fbfdff;
+  --surface-2: #e4eaf1;
+  --border: #c3d0de;
+  --text: #0f2137;
+  --text-dim: #436079;
+  --text-faint: #8399ad;
+
+  --accent: #2f6df6;
+  --accent-2: #2f6df6;
+  --accent-ink: #ffffff;
+
+  --s-ok: #15803d;
+  --s-warn: #b45309;
+  --s-bad: #b91c1c;
+  --s-info: #2f6df6;
+  --s-neutral: #64748b;
+
+  --c-1: #2563eb;
+  --c-2: #0e7490;
+  --c-3: #7c3aed;
+  --c-4: #b91c1c;
+  --c-5: #b45309;
+  --c-docker: #5b6b7d;
+  --c-system: #93a3b3;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-display: var(--font-sans);
+
+  --radius: 2px;
+  --radius-sm: 2px;
+  --elevation: none;
+  --btn-primary-shadow: none;
+  --hair: 1px;
 }
