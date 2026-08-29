@@ -1790,6 +1790,218 @@
     return actionApprovalHref(a) + "/run";
   }
 
+  /**
+   * spec-067: the shared per-machine footprint section factory. Extracted from the
+   * fleet Monitor (spec-034) so BOTH the Monitor route and the single-machine dashboard
+   * (Screen C) render the SAME axisMeter ×3 + consumerLegend + computeOther + Consumers
+   * `consumerCard` grid over one paint() path — no fork of the paint/poll code. It owns
+   * the six host denominator/usage maps and the four approved-host-vital polls
+   * (pollHost*). The caller injects `models`/`named` state, the `selectedNamed`/`noAppsOn`
+   * filter predicates and the app-name `onToggleApp` (a no-op on the one-machine page,
+   * where filtering the fleet to an app is meaningless — the name then renders as plain
+   * text), and drives the lens/bucket View through the returned `view` object. When
+   * `showHead` is false the section renders body-only — the machine dashboard's pageHead
+   * already carries the host@ident + status chip, so buildSection must not duplicate it.
+   *
+   * Returns { view, buildSection }.
+   */
+  function makeFootprint(cfg) {
+    var models = cfg.models;
+    var selectedNamed = cfg.selectedNamed;
+    var noAppsOn = cfg.noAppsOn || function () { return false; };
+    var onToggleApp = cfg.onToggleApp || null;
+    var showHead = cfg.showHead !== false;
+    // The two pure RE-RENDER toggles (spec-034): the View lens (apps|db) and the docker/
+    // system bucket reveals. The caller mutates these through this object and repaints.
+    var view = { lens: "apps", showDocker: false, showSystem: false };
+
+    var hostMemTotal = {};    // machineId → host total MB (the RAM-% denominator)
+    var hostCores = {};       // machineId → logical CPU count (docker CPU-% denominator, spec-037)
+    var hostDiskTotal = {};   // machineId → data-root FS total bytes (docker disk-% denominator, spec-037)
+    // Host USED readings (spec-041), the numerators of the OTHER/system segment: real
+    // RAM used MB, CPU-in-use %, and disk Use% — kept per machine alongside the totals.
+    var hostMemUsed = {};     // machineId → host used MB (free -m)
+    var hostCpuUsed = {};     // machineId → host CPU-in-use % (top -bn1: 100 − idle)
+    var hostDiskUsedPct = {}; // machineId → data-root Use% (df -h)
+
+    // ---- one machine's section (spec-034) ----------------------------
+    // The host panel is three segmented axisMeters + a legend; the body is either
+    // the consumer-card grid (Apps lens) or the datastore bands (Databases lens).
+    // paint() rebuilds the body from the consumers' CURRENT state, so a re-poll
+    // (which mutates those consumer objects in place) and a lens/bucket toggle
+    // both go through the same paint() — no duplicate render paths.
+    function buildSection(m) {
+      var all = models[m.machineId];
+      var synthOther = null;   // the client-synthesized OTHER/system consumer (spec-041)
+      var bodyWrap = h("div");
+      var node = showHead
+        ? h("section", { class: "section monitor-machine" },
+            h("div", { class: "row-between" },
+              h("div", { class: "grow" },
+                h("h2", { text: m.host }),
+                h("p", { class: "small dim mono", text: m.loginUser + "@" + m.host + ":" + m.port })),
+              chip(m.status)),
+            bodyWrap)
+        : h("section", { class: "section monitor-machine" }, bodyWrap);
+
+      function openDrawer(cid) {
+        if (synthOther && synthOther.id === cid) { openConsumerDrawer(m, synthOther); return; }
+        var c = all.filter(function (x) { return x.id === cid; })[0];
+        if (c) openConsumerDrawer(m, c);
+      }
+      function revealedBuckets() {
+        return all.filter(function (c) {
+          if (c.bucket === "DOCKER") return view.showDocker;
+          if (c.bucket === "SYSTEM") return view.showSystem;
+          return false;
+        });
+      }
+
+      function paint() {
+        clear(bodyWrap);
+        if (view.lens === "db") {
+          renderDbInto(bodyWrap, all.filter(function (c) { return !c.bucket; }), openDrawer);
+          return;
+        }
+        // Bars = the polled named consumers, then any revealed bucket, then the
+        // client-synthesized OTHER/system segment (spec-041) that carries the host's
+        // real unattributed usage; the genuinely-free tail stays hatched. The OTHER
+        // segment is shown BY DEFAULT so an app-less host reads as used, not idle.
+        var named = selectedNamed(m);
+        var mid = m.machineId;
+        var mt = hostMemTotal[mid], mu = hostMemUsed[mid];
+        var hostUsed = {
+          ram: (mt != null && mu != null && mt > 0) ? (mu / mt * 100) : null,
+          cpu: hostCpuUsed[mid] != null ? hostCpuUsed[mid] : null,
+          disk: hostDiskUsedPct[mid] != null ? hostDiskUsedPct[mid] : null
+        };
+        synthOther = computeOther(mid, hostUsed, named);
+        var buckets = revealedBuckets();
+        // One OTHER segment only: when we synthesize it, drop any server-provided
+        // SYSTEM bucket so system usage is never double-counted (spec-041 reconcile).
+        if (synthOther) buckets = buckets.filter(function (c) { return c.bucket !== "SYSTEM"; });
+        var bars = named.concat(buckets).concat(synthOther ? [synthOther] : []);
+        bodyWrap.appendChild(h("div", { class: "host-panel" },
+          axisMeter("RAM", bars, "ram", openDrawer),
+          axisMeter("CPU", bars, "cpu", openDrawer),
+          axisMeter("Disk", bars, "disk", openDrawer)));
+        bodyWrap.appendChild(consumerLegend(bars, openDrawer));
+        var cards = noAppsOn() ? [] : selectedNamed(m);
+        if (cards.length) {
+          bodyWrap.appendChild(h("h3", { class: "mt-4", text: "Consumers" }));
+          bodyWrap.appendChild(h("div", { class: "app-cards" },
+            cards.map(function (c) { return consumerCard(c, onToggleApp, openDrawer); })));
+        } else if (!noAppsOn() && !bars.length) {
+          bodyWrap.appendChild(h("p", { class: "small dim mt-3",
+            text: "No discovered consumers on this host." }));
+        }
+      }
+
+      // Host denominators first — RAM total (free -m), core count (nproc, spec-037),
+      // data-root FS total (df -h, spec-037) — then the two polls that fill the
+      // consumer axes: the native APP_PORT_LIST fan-out (RAM) and the param-free
+      // docker reads (RAM/CPU/disk, spec-037). All mutate the shared consumer
+      // objects in place, then paint() rebuilds from their current state.
+      function refresh() {
+        return Promise.all([pollHostTotal(m), pollHostCores(m), pollHostDiskTotal(m), pollHostCpuUsed(m)])
+          .then(function (res) {
+            var mem = res[0], disk = res[2];
+            if (mem != null) {
+              hostMemTotal[m.machineId] = mem.total;
+              if (mem.used != null) hostMemUsed[m.machineId] = mem.used;
+            }
+            if (res[1] != null) hostCores[m.machineId] = res[1];
+            if (disk != null) {
+              hostDiskTotal[m.machineId] = disk.total;
+              if (disk.usedPct != null) hostDiskUsedPct[m.machineId] = disk.usedPct;
+            }
+            if (res[3] != null) hostCpuUsed[m.machineId] = res[3];
+            var denom = {
+              ramMb: hostMemTotal[m.machineId],
+              cores: hostCores[m.machineId],
+              diskBytes: hostDiskTotal[m.machineId]
+            };
+            return Promise.all([
+              // spec-057: thread the root-FS denominator so the native disk axis divides
+              // by the SAME denom.diskBytes applyDockerReading uses (OTHER subtracts cleanly).
+              pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores, denom.diskBytes),
+              pollDockerConsumers(m, selectedNamed(m), denom)
+            ]);
+          }).then(paint);
+      }
+
+      paint();
+      return { node: node, refresh: refresh, paint: paint };
+    }
+
+    // Poll the machine's approved host-memory probe → { total, used } MB (spec-041:
+    // the used value, already computed by parseMem, is no longer dropped). The total
+    // is the RAM-% denominator; the used feeds the OTHER/system numerator.
+    function pollHostTotal(m) {
+      var mem = (m.hostActions || []).filter(function (a) {
+        return metricKind(a) === "memory" && a.approvalState === "APPROVED"
+          && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+      })[0];
+      if (!mem) return Promise.resolve(null);
+      return runAndCollect(m.machineId, mem.id, {}).then(function (r) {
+        var parsed = parseMem(r.stdout);
+        if (!parsed || !parsed.mem || !parsed.mem.total) return null;
+        return { total: parsed.mem.total, used: parsed.mem.used != null ? parsed.mem.used : null };
+      }).catch(function () { return null; });
+    }
+
+    // Poll the approved host CPU vital (top -bn1, metricKind "cpu"; re-added in
+    // spec-041) → host CPU-in-use %. Distinct from the `cores`/nproc denominator poll
+    // (found by name). null → the CPU OTHER axis degrades to — (honesty).
+    function pollHostCpuUsed(m) {
+      var cpu = (m.hostActions || []).filter(function (a) {
+        return metricKind(a) === "cpu" && a.approvalState === "APPROVED"
+          && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+      })[0];
+      if (!cpu) return Promise.resolve(null);
+      return runAndCollect(m.machineId, cpu.id, {}).then(function (r) {
+        return parseHostCpu(r.stdout);
+      }).catch(function () { return null; });
+    }
+
+    // Poll the approved `cores` host vital (nproc, spec-037) → logical CPU count,
+    // the denominator for the docker CPU axis. null → CPU degrades to — (honesty).
+    // Found by name (nproc/core) so it is never confused with the top -bn1 host CPU.
+    function pollHostCores(m) {
+      var cores = (m.hostActions || []).filter(function (a) {
+        var n = (a.name || "").toLowerCase();
+        return (n.indexOf("core") >= 0 || n.indexOf("nproc") >= 0)
+          && a.approvalState === "APPROVED" && !a.changedSinceApproval
+          && (a.paramDefs || []).length === 0;
+      })[0];
+      if (!cores) return Promise.resolve(null);
+      return runAndCollect(m.machineId, cores.id, {}).then(function (r) {
+        var m2 = (r.stdout || "").match(/\d+/);
+        var n = m2 ? parseInt(m2[0], 10) : null;
+        return (n && n > 0) ? n : null;
+      }).catch(function () { return null; });
+    }
+
+    // Poll the approved host `disk` vital (df -h, spec-037) → { total, usedPct }: the
+    // data-root filesystem total bytes (the `/` row as the /var/lib/docker proxy, the
+    // docker disk-axis denominator) plus its Use% (spec-041, the OTHER/system disk
+    // numerator). null → disk degrades to —.
+    function pollHostDiskTotal(m) {
+      var disk = (m.hostActions || []).filter(function (a) {
+        return metricKind(a) === "disk" && a.approvalState === "APPROVED"
+          && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
+      })[0];
+      if (!disk) return Promise.resolve(null);
+      return runAndCollect(m.machineId, disk.id, {}).then(function (r) {
+        var total = parseDfTotal(r.stdout);
+        if (total == null) return null;
+        return { total: total, usedPct: parseDfUsedPct(r.stdout) };
+      }).catch(function () { return null; });
+    }
+
+    return { view: view, buildSection: buildSection };
+  }
+
   function screenMonitor() {
     mountAsync(function () {
       return api("GET", "/monitor").then(function (dash) {
@@ -1803,17 +2015,9 @@
         // and never touch the poll set.
         var selectedTags = {};
         var selectedApps = {};   // app-name → true; plus the synthetic NO_APPS token
-        var lens = "apps";       // "apps" | "db"
-        var showDocker = false, showSystem = false;
         var cadence = "single";
-        var hostMemTotal = {};    // machineId → host total MB (the RAM-% denominator)
-        var hostCores = {};       // machineId → logical CPU count (docker CPU-% denominator, spec-037)
-        var hostDiskTotal = {};   // machineId → data-root FS total bytes (docker disk-% denominator, spec-037)
-        // Host USED readings (spec-041), the numerators of the OTHER/system segment: real
-        // RAM used MB, CPU-in-use %, and disk Use% — kept per machine alongside the totals.
-        var hostMemUsed = {};     // machineId → host used MB (free -m)
-        var hostCpuUsed = {};     // machineId → host CPU-in-use % (top -bn1: 100 − idle)
-        var hostDiskUsedPct = {}; // machineId → data-root Use% (df -h)
+        // spec-067: the lens/bucket View state and the six host denominator/usage maps
+        // now live in the shared makeFootprint factory (fp.view + its own closure).
 
         // The consumer spine (spec-032/034): every machine's apps re-expressed as
         // MonitorConsumerViews, joined to the 029 per-app rollup for the probe
@@ -1823,6 +2027,19 @@
         var models = {};
         machines.forEach(function (m) { models[m.machineId] = buildConsumers(m); });
         function named(mid) { return models[mid].filter(function (c) { return !c.bucket; }); }
+
+        // spec-067: the footprint sections (host axes + legend + Consumers grid) are built
+        // by the shared makeFootprint factory — the SAME one the single-machine dashboard
+        // uses. It owns the host denominator/usage maps + the four approved-host-vital polls;
+        // this fleet route injects its models, app-filter predicate and app-name toggle, and
+        // drives the lens/bucket View chips through fp.view.
+        var fp = makeFootprint({
+          models: models,
+          selectedNamed: function (m) { return selectedNamed(m); },
+          noAppsOn: function () { return noAppsOn(); },
+          onToggleApp: function (name) { toggleApp(name); },
+          showHead: true
+        });
 
         var allTags = uniqSorted(flatMap(machines, function (m) { return m.tags || []; }));
         var allApps = uniqSorted(flatMap(machines, function (m) {
@@ -1913,9 +2130,10 @@
         // The lens + bucket toggles re-slice already-polled data, so they only
         // repaint the existing sections — no re-poll (spec-034 §7).
         function repaint() { sections.forEach(function (s) { s.paint(); }); updateCounter(); }
-        function setLens(x) { lens = x; renderChips(); repaint(); }
+        function setLens(x) { fp.view.lens = x; renderChips(); repaint(); }
         function toggleBucket(which) {
-          if (which === "docker") showDocker = !showDocker; else showSystem = !showSystem;
+          if (which === "docker") fp.view.showDocker = !fp.view.showDocker;
+          else fp.view.showSystem = !fp.view.showSystem;
           renderChips(); repaint();
         }
 
@@ -1941,14 +2159,14 @@
           }
           // The View lens and the bucket Show chips (spec-034): pure re-render toggles.
           viewBar.appendChild(h("span", { class: "small dim", text: "View" }));
-          viewBar.appendChild(chipBtn("Apps", lens === "apps",
+          viewBar.appendChild(chipBtn("Apps", fp.view.lens === "apps",
             "Per-consumer cards on three axes", function () { setLens("apps"); }));
-          viewBar.appendChild(chipBtn("Databases", lens === "db",
+          viewBar.appendChild(chipBtn("Databases", fp.view.lens === "db",
             "Re-slice the same consumers by datastore role", function () { setLens("db"); }));
           viewBar.appendChild(h("span", { class: "small dim", style: "margin-left:12px", text: "Show" }));
-          viewBar.appendChild(chipBtn("docker bucket", showDocker,
+          viewBar.appendChild(chipBtn("docker bucket", fp.view.showDocker,
             "Reveal the unclassified docker bucket in the bars", function () { toggleBucket("docker"); }));
-          viewBar.appendChild(chipBtn("system / free", showSystem,
+          viewBar.appendChild(chipBtn("system / free", fp.view.showSystem,
             "Reveal the system + free remainder in the bars", function () { toggleBucket("system"); }));
         }
 
@@ -1972,7 +2190,7 @@
             return;
           }
           vm.forEach(function (mch) {
-            var sec = buildSection(mch);
+            var sec = fp.buildSection(mch);
             sections.push(sec);
             body.appendChild(sec.node);
           });
@@ -1987,179 +2205,6 @@
             .then(function () { lastUpdated = Date.now(); tickHeartbeat(); })
             .catch(function () { /* per-section errors are shown in-section */ })
             .then(function () { cycleInFlight = false; runNowBtn.disabled = false; });
-        }
-
-        // ---- one machine's section (spec-034) ----------------------------
-        // The host panel is three segmented axisMeters + a legend; the body is either
-        // the consumer-card grid (Apps lens) or the datastore bands (Databases lens).
-        // paint() rebuilds the body from the consumers' CURRENT state, so a re-poll
-        // (which mutates those consumer objects in place) and a lens/bucket toggle
-        // both go through the same paint() — no duplicate render paths.
-        function buildSection(m) {
-          var all = models[m.machineId];
-          var synthOther = null;   // the client-synthesized OTHER/system consumer (spec-041)
-          var bodyWrap = h("div");
-          var node = h("section", { class: "section monitor-machine" },
-            h("div", { class: "row-between" },
-              h("div", { class: "grow" },
-                h("h2", { text: m.host }),
-                h("p", { class: "small dim mono", text: m.loginUser + "@" + m.host + ":" + m.port })),
-              chip(m.status)),
-            bodyWrap);
-
-          function openDrawer(cid) {
-            if (synthOther && synthOther.id === cid) { openConsumerDrawer(m, synthOther); return; }
-            var c = all.filter(function (x) { return x.id === cid; })[0];
-            if (c) openConsumerDrawer(m, c);
-          }
-          function revealedBuckets() {
-            return all.filter(function (c) {
-              if (c.bucket === "DOCKER") return showDocker;
-              if (c.bucket === "SYSTEM") return showSystem;
-              return false;
-            });
-          }
-
-          function paint() {
-            clear(bodyWrap);
-            if (lens === "db") {
-              renderDbInto(bodyWrap, all.filter(function (c) { return !c.bucket; }), openDrawer);
-              return;
-            }
-            // Bars = the polled named consumers, then any revealed bucket, then the
-            // client-synthesized OTHER/system segment (spec-041) that carries the host's
-            // real unattributed usage; the genuinely-free tail stays hatched. The OTHER
-            // segment is shown BY DEFAULT so an app-less host reads as used, not idle.
-            var named = selectedNamed(m);
-            var mid = m.machineId;
-            var mt = hostMemTotal[mid], mu = hostMemUsed[mid];
-            var hostUsed = {
-              ram: (mt != null && mu != null && mt > 0) ? (mu / mt * 100) : null,
-              cpu: hostCpuUsed[mid] != null ? hostCpuUsed[mid] : null,
-              disk: hostDiskUsedPct[mid] != null ? hostDiskUsedPct[mid] : null
-            };
-            synthOther = computeOther(mid, hostUsed, named);
-            var buckets = revealedBuckets();
-            // One OTHER segment only: when we synthesize it, drop any server-provided
-            // SYSTEM bucket so system usage is never double-counted (spec-041 reconcile).
-            if (synthOther) buckets = buckets.filter(function (c) { return c.bucket !== "SYSTEM"; });
-            var bars = named.concat(buckets).concat(synthOther ? [synthOther] : []);
-            bodyWrap.appendChild(h("div", { class: "host-panel" },
-              axisMeter("RAM", bars, "ram", openDrawer),
-              axisMeter("CPU", bars, "cpu", openDrawer),
-              axisMeter("Disk", bars, "disk", openDrawer)));
-            bodyWrap.appendChild(consumerLegend(bars, openDrawer));
-            var cards = noAppsOn() ? [] : selectedNamed(m);
-            if (cards.length) {
-              bodyWrap.appendChild(h("h3", { class: "mt-4", text: "Consumers" }));
-              bodyWrap.appendChild(h("div", { class: "app-cards" },
-                cards.map(function (c) { return consumerCard(c, toggleApp, openDrawer); })));
-            } else if (!noAppsOn() && !bars.length) {
-              bodyWrap.appendChild(h("p", { class: "small dim mt-3",
-                text: "No discovered consumers on this host." }));
-            }
-          }
-
-          // Host denominators first — RAM total (free -m), core count (nproc, spec-037),
-          // data-root FS total (df -h, spec-037) — then the two polls that fill the
-          // consumer axes: the native APP_PORT_LIST fan-out (RAM) and the param-free
-          // docker reads (RAM/CPU/disk, spec-037). All mutate the shared consumer
-          // objects in place, then paint() rebuilds from their current state.
-          function refresh() {
-            return Promise.all([pollHostTotal(m), pollHostCores(m), pollHostDiskTotal(m), pollHostCpuUsed(m)])
-              .then(function (res) {
-                var mem = res[0], disk = res[2];
-                if (mem != null) {
-                  hostMemTotal[m.machineId] = mem.total;
-                  if (mem.used != null) hostMemUsed[m.machineId] = mem.used;
-                }
-                if (res[1] != null) hostCores[m.machineId] = res[1];
-                if (disk != null) {
-                  hostDiskTotal[m.machineId] = disk.total;
-                  if (disk.usedPct != null) hostDiskUsedPct[m.machineId] = disk.usedPct;
-                }
-                if (res[3] != null) hostCpuUsed[m.machineId] = res[3];
-                var denom = {
-                  ramMb: hostMemTotal[m.machineId],
-                  cores: hostCores[m.machineId],
-                  diskBytes: hostDiskTotal[m.machineId]
-                };
-                return Promise.all([
-                  // spec-057: thread the root-FS denominator so the native disk axis divides
-                  // by the SAME denom.diskBytes applyDockerReading uses (OTHER subtracts cleanly).
-                  pollConsumers(m.machineId, selectedNamed(m), denom.ramMb, denom.cores, denom.diskBytes),
-                  pollDockerConsumers(m, selectedNamed(m), denom)
-                ]);
-              }).then(paint);
-          }
-
-          paint();
-          return { node: node, refresh: refresh, paint: paint };
-        }
-
-        // Poll the machine's approved host-memory probe → { total, used } MB (spec-041:
-        // the used value, already computed by parseMem, is no longer dropped). The total
-        // is the RAM-% denominator; the used feeds the OTHER/system numerator.
-        function pollHostTotal(m) {
-          var mem = (m.hostActions || []).filter(function (a) {
-            return metricKind(a) === "memory" && a.approvalState === "APPROVED"
-              && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
-          })[0];
-          if (!mem) return Promise.resolve(null);
-          return runAndCollect(m.machineId, mem.id, {}).then(function (r) {
-            var parsed = parseMem(r.stdout);
-            if (!parsed || !parsed.mem || !parsed.mem.total) return null;
-            return { total: parsed.mem.total, used: parsed.mem.used != null ? parsed.mem.used : null };
-          }).catch(function () { return null; });
-        }
-
-        // Poll the approved host CPU vital (top -bn1, metricKind "cpu"; re-added in
-        // spec-041) → host CPU-in-use %. Distinct from the `cores`/nproc denominator poll
-        // (found by name). null → the CPU OTHER axis degrades to — (honesty).
-        function pollHostCpuUsed(m) {
-          var cpu = (m.hostActions || []).filter(function (a) {
-            return metricKind(a) === "cpu" && a.approvalState === "APPROVED"
-              && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
-          })[0];
-          if (!cpu) return Promise.resolve(null);
-          return runAndCollect(m.machineId, cpu.id, {}).then(function (r) {
-            return parseHostCpu(r.stdout);
-          }).catch(function () { return null; });
-        }
-
-        // Poll the approved `cores` host vital (nproc, spec-037) → logical CPU count,
-        // the denominator for the docker CPU axis. null → CPU degrades to — (honesty).
-        // Found by name (nproc/core) so it is never confused with the top -bn1 host CPU.
-        function pollHostCores(m) {
-          var cores = (m.hostActions || []).filter(function (a) {
-            var n = (a.name || "").toLowerCase();
-            return (n.indexOf("core") >= 0 || n.indexOf("nproc") >= 0)
-              && a.approvalState === "APPROVED" && !a.changedSinceApproval
-              && (a.paramDefs || []).length === 0;
-          })[0];
-          if (!cores) return Promise.resolve(null);
-          return runAndCollect(m.machineId, cores.id, {}).then(function (r) {
-            var m2 = (r.stdout || "").match(/\d+/);
-            var n = m2 ? parseInt(m2[0], 10) : null;
-            return (n && n > 0) ? n : null;
-          }).catch(function () { return null; });
-        }
-
-        // Poll the approved host `disk` vital (df -h, spec-037) → { total, usedPct }: the
-        // data-root filesystem total bytes (the `/` row as the /var/lib/docker proxy, the
-        // docker disk-axis denominator) plus its Use% (spec-041, the OTHER/system disk
-        // numerator). null → disk degrades to —.
-        function pollHostDiskTotal(m) {
-          var disk = (m.hostActions || []).filter(function (a) {
-            return metricKind(a) === "disk" && a.approvalState === "APPROVED"
-              && !a.changedSinceApproval && (a.paramDefs || []).length === 0;
-          })[0];
-          if (!disk) return Promise.resolve(null);
-          return runAndCollect(m.machineId, disk.id, {}).then(function (r) {
-            var total = parseDfTotal(r.stdout);
-            if (total == null) return null;
-            return { total: total, usedPct: parseDfUsedPct(r.stdout) };
-          }).catch(function () { return null; });
         }
 
         var head = h("div", { class: "page-head" },
