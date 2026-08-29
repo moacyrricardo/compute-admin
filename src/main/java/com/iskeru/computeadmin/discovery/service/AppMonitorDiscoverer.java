@@ -671,9 +671,9 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 continue;
             }
             String addr = canonAddr(endpoint.substring(0, endpoint.lastIndexOf(':')));
-            Matcher m = SS_PROC.matcher(line);
-            if (line.contains("users:((") && m.find()) {
-                out.add(new Listener(addr, port, m.group(2), m.group(1)));
+            Listener attributed = lowestPidListener(addr, port, line);
+            if (attributed != null) {
+                out.add(attributed);
             } else {
                 // spec-062 Decision 1: an unprivileged `ss` prints the process column only for the
                 // login user's own sockets; a foreign-owned LISTEN renders with a BLANK users
@@ -684,6 +684,32 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
         }
         return out;
+    }
+
+    /**
+     * The attributed {@link Listener} for an {@code ss} LISTEN line, canonicalised to the
+     * <strong>lowest</strong> PID in its {@code users:((…))} column (spec-073 D7). A preforked
+     * server (nginx master + workers, a JVM sharing a socket) renders every owning PID in that
+     * column; {@code ss} lists them in an arbitrary order, so taking the first is nondeterministic.
+     * Choosing the lowest PID — the master, which drives context derivation — matches the
+     * {@code /proc/net} fallback's rule ({@link #fallbackListeners}) and is a prerequisite for the
+     * PID-keyed management-port merge. Returns {@code null} for a blank/foreign users column.
+     */
+    private Listener lowestPidListener(String addr, int port, String line) {
+        if (!line.contains("users:((")) {
+            return null;
+        }
+        Matcher m = SS_PROC.matcher(line);
+        String bestPid = null;
+        String bestProcess = null;
+        while (m.find()) {
+            String pid = m.group(2);
+            if (bestPid == null || Long.parseLong(pid) < Long.parseLong(bestPid)) {
+                bestPid = pid;
+                bestProcess = m.group(1);
+            }
+        }
+        return bestPid == null ? null : new Listener(addr, port, bestPid, bestProcess);
     }
 
     private List<Listener> parseNetstat(List<String> lines) {
