@@ -50,6 +50,17 @@ public class ParamBinder {
     public static final String PORT_COMPONENT = "port";
 
     /**
+     * The per-item <strong>management-port</strong> component a Spring Boot actuator endpoint
+     * probe binds (spec-073): the {@code management.server.port} an actuator-merged app answers
+     * on, distinct from the traffic {@code port}. Like {@code app-folder} it is
+     * <strong>never supplied by the caller</strong> — the run path enriches it server-side from
+     * the recipe's {@code app_port_list} side-data keyed on {@code (appName, port)}, defaulting to
+     * the item's own {@code port} for the single-port case. Validated against the same
+     * {@code [PORT_MIN, PORT_MAX]} rule as {@code port} so it can never widen the S4 surface.
+     */
+    public static final String MANAGEMENT_PORT_COMPONENT = "management-port";
+
+    /**
      * The per-context <strong>app-folder</strong> component a footprint probe binds per item
      * (spec-057): the resolved context path the disk {@code du} probe walks. Unlike
      * {@code app-name}/{@code port} it is <strong>never supplied by the caller</strong> — the
@@ -147,7 +158,7 @@ public class ParamBinder {
      */
     public static boolean isAppPortComponent(String name) {
         return APP_NAME_COMPONENT.equals(name) || PORT_COMPONENT.equals(name)
-                || APP_FOLDER_COMPONENT.equals(name);
+                || APP_FOLDER_COMPONENT.equals(name) || MANAGEMENT_PORT_COMPONENT.equals(name);
     }
 
     /**
@@ -211,16 +222,16 @@ public class ParamBinder {
                 throw new ParamValidationException(
                         "app-folder '" + value + "' is not a valid absolute path");
             }
-        } else if (PORT_COMPONENT.equals(component)) {
+        } else if (PORT_COMPONENT.equals(component) || MANAGEMENT_PORT_COMPONENT.equals(component)) {
             int parsed;
             try {
                 parsed = Integer.parseInt(value.trim());
             } catch (NumberFormatException e) {
-                throw new ParamValidationException("port '" + value + "' is not an integer");
+                throw new ParamValidationException(component + " '" + value + "' is not an integer");
             }
             if (parsed < PORT_MIN || parsed > PORT_MAX) {
                 throw new ParamValidationException(
-                        "port '" + value + "' is out of range [" + PORT_MIN + ", " + PORT_MAX + "]");
+                        component + " '" + value + "' is out of range [" + PORT_MIN + ", " + PORT_MAX + "]");
             }
         } else {
             throw new ParamValidationException("Unknown app-port component '" + component + "'");

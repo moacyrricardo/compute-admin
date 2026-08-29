@@ -46,14 +46,35 @@ import java.util.List;
  * signal, and {@code null} for a record that was not fingerprint-matched. Un-audited
  * side-data — a labelling hint, never argv or hashed.
  *
- * <p>spec-025; context fields added in spec-055; {@code sourceNote}/{@code confidence} in spec-056.
+ * <p><strong>Management port (spec-073).</strong> {@code managementPort} is the separate
+ * {@code management.server.port} an actuator-merged Spring Boot app answers actuator on, when
+ * it differs from the {@code port} (the traffic port that is the record's identity). It is
+ * {@code null} for the overwhelming single-port case, where every endpoint probe binds the own
+ * {@code port}. Un-audited discovery side-data; the run path enriches it server-side per
+ * {@code (appName, port)} so the actuator endpoint probes target the management port while the
+ * process/footprint probes keep the traffic port.
+ *
+ * <p>spec-025; context fields added in spec-055; {@code sourceNote}/{@code confidence} in spec-056;
+ * {@code managementPort} in spec-073.
  */
 public record AppPortItem(String appName, int port, String runtime,
                           String scriptFolder, String contextKey, String contextDisplay,
-                          List<String> contextScripts, String sourceNote, String confidence) {
+                          List<String> contextScripts, String sourceNote, String confidence,
+                          Integer managementPort) {
 
     public AppPortItem {
         contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
+    }
+
+    /**
+     * The pre-073 nine-field item (single-port app): no separate management port, so actuator
+     * probes bind the own {@code port}. Kept so the docker/compose call sites are unchanged.
+     */
+    public AppPortItem(String appName, int port, String runtime,
+                       String scriptFolder, String contextKey, String contextDisplay,
+                       List<String> contextScripts, String sourceNote, String confidence) {
+        this(appName, port, runtime, scriptFolder, contextKey, contextDisplay,
+                contextScripts, sourceNote, confidence, null);
     }
 
     /**
@@ -61,6 +82,6 @@ public record AppPortItem(String appName, int port, String runtime,
      * context fields default to {@code null}/empty and no provenance/confidence is recorded.
      */
     public AppPortItem(String appName, int port, String runtime) {
-        this(appName, port, runtime, null, null, null, List.of(), null, null);
+        this(appName, port, runtime, null, null, null, List.of(), null, null, null);
     }
 }

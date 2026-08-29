@@ -241,12 +241,14 @@ public final class MonitorDtos {
      * catalog H8).
      */
     public record MonitorAppView(String machineId, String appName, String framework, String runtime,
-                                 int port, Boolean up, Integer rssMb, Integer hostMemTotalMb,
-                                 Integer memPctOfHost, List<MonitorActionView> checks, List<AppOpView> ops) {
+                                 int port, Integer managementPort, Boolean up, Integer rssMb,
+                                 Integer hostMemTotalMb, Integer memPctOfHost,
+                                 List<MonitorActionView> checks, List<AppOpView> ops) {
         public static MonitorAppView of(String machineId, AppPort app, String framework,
                                         List<MonitorActionView> checks, List<AppOpView> ops) {
             return new MonitorAppView(machineId, app.appName(), framework, app.runtime(), app.port(),
-                    null, null, null, null, List.copyOf(checks), List.copyOf(ops));
+                    app.managementPort(), null, null, null, null,
+                    List.copyOf(checks), List.copyOf(ops));
         }
     }
 
@@ -423,6 +425,6 @@ public final class MonitorDtos {
     static AppPortView appPortView(AppPort item) {
         return new AppPortView(item.appName(), item.port(), item.runtime(),
                 item.contextDisplay(), item.contextScripts(), item.sourceNote(),
-                item.confidence(), item.scriptFolder());
+                item.confidence(), item.scriptFolder(), item.managementPort());
     }
 }

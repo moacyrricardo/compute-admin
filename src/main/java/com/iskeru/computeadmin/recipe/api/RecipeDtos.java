@@ -103,15 +103,24 @@ public final class RecipeDtos {
      */
     public record AppPortView(String appName, int port, String runtime,
                               String contextDisplay, List<String> contextScripts,
-                              String sourceNote, String confidence, String scriptFolder) {
+                              String sourceNote, String confidence, String scriptFolder,
+                              Integer managementPort) {
 
         public AppPortView {
             contextScripts = contextScripts == null ? List.of() : List.copyOf(contextScripts);
         }
 
+        /** The pre-073 eight-field view (single-port app: no separate management port). */
+        public AppPortView(String appName, int port, String runtime,
+                           String contextDisplay, List<String> contextScripts,
+                           String sourceNote, String confidence, String scriptFolder) {
+            this(appName, port, runtime, contextDisplay, contextScripts,
+                    sourceNote, confidence, scriptFolder, null);
+        }
+
         /** The bare three-field item (no resolved context) — old rows and docker-object items. */
         public AppPortView(String appName, int port, String runtime) {
-            this(appName, port, runtime, null, List.of(), null, null, null);
+            this(appName, port, runtime, null, List.of(), null, null, null, null);
         }
     }
 

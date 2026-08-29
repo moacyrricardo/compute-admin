@@ -251,6 +251,9 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
     /** {@code -Dspring.application.name=orders}. */
     private static final Pattern SPRING_APP_NAME = Pattern.compile("-Dspring\\.application\\.name=([\\w.-]+)");
 
+    /** {@code -Dmanagement.server.port=8081} / {@code --management.server.port=8081} (spec-073 A4-lite). */
+    private static final Pattern MGMT_PORT = Pattern.compile("(?:-D|--)management\\.server\\.port=(\\d+)");
+
     /** A docker container reference inside a cgroup path, e.g. {@code /docker/orders} or {@code docker-<id>.scope}. */
     private static final Pattern CGROUP_DOCKER = Pattern.compile("docker[-/]([0-9A-Za-z_.-]+?)(?:\\.scope)?$");
 
@@ -315,12 +318,26 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             Runtime runtime = runtimeOf(session, listener.pid());
             String container = runtime == Runtime.DOCKER ? containerName(session, listener.pid()) : null;
             Family family = classify(listener.process(), cmdline);
-            // A java listener is only a springboot monitor if Actuator actually answers;
-            // otherwise its /actuator/* probes would all be dead. Fall back to an HTTP
-            // liveness monitor (GET / + process) — the actuator-less Spring Boot case.
-            if (family == Family.SPRINGBOOT && !respondsToActuator(session, listener.port())) {
-                family = Family.HTTP;
+            // A java listener is only a springboot monitor if Actuator actually answers on its
+            // own port; otherwise its /actuator/* probes would all be dead, so it falls back to
+            // an HTTP liveness monitor (GET / + process). The probe is status-aware (spec-073 D2):
+            // 2xx|503 ⇒ actuator answered; 401|403 ⇒ actuator present but auth-gated (stays
+            // springboot, D6); 404/other/timeout ⇒ not actuator ⇒ downgrade to HTTP.
+            boolean actuatorAnswered = false;
+            boolean gated = false;
+            if (family == Family.SPRINGBOOT) {
+                switch (probeActuator(session, listener.port())) {
+                    case ACTUATOR -> actuatorAnswered = true;
+                    case GATED -> {
+                        actuatorAnswered = true;
+                        gated = true;
+                    }
+                    case NONE -> family = Family.HTTP;
+                }
             }
+            // A4-lite (spec-073): a `-Dmanagement.server.port=`/`--management.server.port=` on the
+            // already-fetched cmdline corroborates a merge without the GET / discriminator.
+            Integer managementHint = managementPortHint(cmdline);
             String appName = appName(family, listener, cmdline, container, session);
             // cgroup-before-cwd guard (spec-055 / 054): a DOCKER PID's /proc/<pid>/cwd is an
             // overlayfs path, not a host context — never map it. Docker contexts come from
@@ -340,12 +357,22 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 confidence = service.defaultPort() == listener.port() ? "high" : "low";
             }
             String sourceNote = listeningSourceNote(runtime, listener.port());
+            if (gated) {
+                sourceNote = sourceNote + " · " + GATED_NOTE;
+            }
             resolved.add(new Resolved(family, appName, listener.port(), runtime.label, context,
-                    sourceNote, confidence));
+                    sourceNote, confidence, listener.pid(), null, actuatorAnswered, gated,
+                    managementHint));
             if (family == Family.FASTAPI && respondsToMetrics(session, listener.port())) {
                 prometheus = true;
             }
         }
+
+        // spec-073 A3: collapse a PID that owns both a SPRINGBOOT record (actuator answered on its
+        // own port M) and a downgraded HTTP record (traffic port T) into one SPRINGBOOT record
+        // (identity T, managementPort M). Runs before the non-listening/unattributed sweeps, which
+        // carry no PID-keyed merge state.
+        mergeManagementSiblings(session, resolved);
 
         // Non-listening sweep (spec-056 Decision 3 / 054 D4): union the workers, systemd
         // services, cron jobs and interpreter processes that own no listening socket, so the
@@ -397,7 +424,7 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                     ctx == null ? null : ctx.key(),
                     ctx == null ? null : ctx.display(),
                     ctx == null ? List.of() : siblingsByContext.getOrDefault(ctx.key(), List.of()),
-                    r.sourceNote(), r.confidence());
+                    r.sourceNote(), r.confidence(), r.managementPort());
             byFamily.computeIfAbsent(r.family(), f -> new ArrayList<>()).add(item);
         }
 
@@ -638,12 +665,166 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         return null;
     }
 
-    /** Whether the app answers Spring Boot Actuator on {@code /actuator/health} (HTTP 2xx). */
-    private boolean respondsToActuator(SshSession session, int port) {
-        // Same fixed read-only GET shape as the metrics probe; -f makes a 404/redirect
-        // fail so an actuator-less app yields no lines.
-        return !Probes.lines(session,
-                List.of("curl", "-sf", "-m", "2", "http://127.0.0.1:" + port + "/actuator/health")).isEmpty();
+    /** The three actuator outcomes the status-aware probe distinguishes (spec-073 D2). */
+    private enum ActuatorResult { ACTUATOR, GATED, NONE }
+
+    /**
+     * The status-aware actuator probe (spec-073 D2): {@code curl -s -m 2 -o /dev/null -w
+     * %{http_code}} against {@code /actuator/health}. Unlike the old {@code curl -sf} — which
+     * {@link Probes#lines} could not read a status from on a non-zero exit — this exits 0 for any
+     * HTTP response, so a non-2xx actuator is no longer misread as absent. Decision table:
+     * {@code 2xx | 503} ⇒ actuator (a health-DOWN app still has actuator, exactly when it matters);
+     * {@code 401 | 403} ⇒ actuator present but auth-gated (D6); {@code 404}/other, or a
+     * connection/timeout failure (no HTTP status) ⇒ not actuator.
+     */
+    private ActuatorResult probeActuator(SshSession session, int port) {
+        Integer code = httpStatus(session, port, "/actuator/health");
+        if (code == null) {
+            return ActuatorResult.NONE;
+        }
+        if ((code >= 200 && code <= 299) || code == 503) {
+            return ActuatorResult.ACTUATOR;
+        }
+        if (code == 401 || code == 403) {
+            return ActuatorResult.GATED;
+        }
+        return ActuatorResult.NONE;
+    }
+
+    /**
+     * Whether a port actually serves HTTP — the {@code GET /} discriminator (spec-073 D10): a
+     * java PID with actuator on its own port 8080 plus a dead 5005 debug port must NOT merge as
+     * {@code {traffic=5005, management=8080}}, so a traffic candidate is merged only when it
+     * answers HTTP. A dead/non-HTTP port yields a connection/timeout failure (no status) ⇒ false.
+     */
+    private boolean answersHttp(SshSession session, int port) {
+        Integer code = httpStatus(session, port, "/");
+        return code != null && code >= 100 && code <= 599;
+    }
+
+    /**
+     * The HTTP status a fixed read-only {@code curl} sees for {@code http://127.0.0.1:<port><path>},
+     * or {@code null} when curl could not complete an HTTP exchange (connection refused, timeout,
+     * non-HTTP peer) — those exit non-zero, so {@link Probes#lines} yields no output. The loopback
+     * host stays fixed (the non-loopback case is deferred, ARCH S4).
+     */
+    private Integer httpStatus(SshSession session, int port, String path) {
+        List<String> out = Probes.lines(session, List.of("curl", "-s", "-m", "2",
+                "-o", "/dev/null", "-w", "%{http_code}", "http://127.0.0.1:" + port + path));
+        if (out.isEmpty()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(out.get(0).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** The management port named on a cmdline by {@code -D/--management.server.port=} (A4-lite), or null. */
+    private Integer managementPortHint(String cmdline) {
+        Matcher m = MGMT_PORT.matcher(cmdline);
+        if (m.find()) {
+            try {
+                return Integer.parseInt(m.group(1));
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The A3 post-hoc PID-sibling merge pass (spec-073). Groups the listener-resolved records by
+     * PID — the ONLY sound merge key, since blue/green runs two JVMs of one jar that share both
+     * context and appName — and, for a PID that owns exactly one actuator-answering SPRINGBOOT
+     * record (management port M) plus a downgraded HTTP record (traffic port T), collapses the pair
+     * into one SPRINGBOOT record: identity T, {@code managementPort = M}. The merge is
+     * confidence-gated (D4): it fires only on positive evidence — a {@code management.server.port}
+     * cmdline hint naming M, or the {@code GET /} discriminator confirming T serves HTTP. With no
+     * positive signal (a dead debug/JMX sibling, an ambiguous multi-actuator PID) both records are
+     * left as-is — today's per-port emission is the explicit degenerate case.
+     */
+    private void mergeManagementSiblings(SshSession session, List<Resolved> resolved) {
+        Map<String, List<Resolved>> byPid = new LinkedHashMap<>();
+        for (Resolved r : resolved) {
+            if (r.pid() != null) {
+                byPid.computeIfAbsent(r.pid(), k -> new ArrayList<>()).add(r);
+            }
+        }
+        Map<Integer, Boolean> httpMemo = new HashMap<>();
+        for (List<Resolved> group : byPid.values()) {
+            if (group.size() < 2) {
+                continue;
+            }
+            Resolved mgmt = soleActuatorSpringboot(group);
+            if (mgmt == null) {
+                continue; // no — or an ambiguous multiple — actuator record ⇒ no merge
+            }
+            Resolved traffic = chooseTrafficSibling(session, group, mgmt, httpMemo);
+            if (traffic == null) {
+                continue;
+            }
+            String note = traffic.sourceNote() + " · management :" + mgmt.port()
+                    + (mgmt.gated() ? " · " + GATED_NOTE : "");
+            Resolved merged = new Resolved(Family.SPRINGBOOT, traffic.appName(), traffic.port(),
+                    traffic.runtime(), traffic.context(), note, traffic.confidence(),
+                    traffic.pid(), mgmt.port(), true, mgmt.gated(), traffic.managementHint());
+            resolved.set(resolved.indexOf(mgmt), merged);
+            resolved.remove(traffic);
+        }
+    }
+
+    /** The single SPRINGBOOT record in {@code group} that answered actuator on its own port, or null when 0/≥2. */
+    private Resolved soleActuatorSpringboot(List<Resolved> group) {
+        Resolved found = null;
+        for (Resolved r : group) {
+            if (r.family() == Family.SPRINGBOOT && r.actuatorAnswered() && r.managementPort() == null) {
+                if (found != null) {
+                    return null; // ambiguous: two actuator-answering springboot ports on one PID
+                }
+                found = r;
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The traffic sibling to merge with {@code mgmt} (spec-073 D4/D10), or null when the confidence
+     * gate does not pass. The {@code GET /} discriminator is the <strong>hard guard</strong> (D10):
+     * a traffic sibling must actually answer HTTP, so a dead debug/JMX port is never mis-merged as
+     * the traffic port — this takes precedence over the A4-lite hint when the two would conflict.
+     * The {@code management.server.port} cmdline hint (D4) is applied as a <em>consistency check</em>:
+     * a hint naming a port other than where actuator answered contradicts the pairing ⇒ no merge.
+     * (The hint needs no discriminator-bypass role here: the management port is already the SPRINGBOOT
+     * record, excluded from the HTTP traffic candidates, so the discriminator alone handles 3+ ports.)
+     * Zero or several answering siblings ⇒ no merge — today's per-port emission is the fallback.
+     */
+    private Resolved chooseTrafficSibling(SshSession session, List<Resolved> group, Resolved mgmt,
+                                          Map<Integer, Boolean> httpMemo) {
+        List<Resolved> http = new ArrayList<>();
+        for (Resolved r : group) {
+            if (r.family() == Family.HTTP) {
+                http.add(r);
+            }
+        }
+        if (http.isEmpty()) {
+            return null;
+        }
+        Integer hint = mgmt.managementHint();
+        if (hint != null && hint != mgmt.port()) {
+            return null; // cmdline names a different management port than where actuator answered
+        }
+        Resolved answering = null;
+        for (Resolved r : http) {
+            if (httpMemo.computeIfAbsent(r.port(), p -> answersHttp(session, p))) {
+                if (answering != null) {
+                    return null; // two ports both answer GET / — ambiguous, no merge
+                }
+                answering = r;
+            }
+        }
+        return answering;
     }
 
     /** Whether the FastAPI app exposes a Prometheus {@code /metrics} endpoint (HTTP 2xx). */
@@ -671,9 +852,9 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 continue;
             }
             String addr = canonAddr(endpoint.substring(0, endpoint.lastIndexOf(':')));
-            Matcher m = SS_PROC.matcher(line);
-            if (line.contains("users:((") && m.find()) {
-                out.add(new Listener(addr, port, m.group(2), m.group(1)));
+            Listener attributed = lowestPidListener(addr, port, line);
+            if (attributed != null) {
+                out.add(attributed);
             } else {
                 // spec-062 Decision 1: an unprivileged `ss` prints the process column only for the
                 // login user's own sockets; a foreign-owned LISTEN renders with a BLANK users
@@ -684,6 +865,32 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             }
         }
         return out;
+    }
+
+    /**
+     * The attributed {@link Listener} for an {@code ss} LISTEN line, canonicalised to the
+     * <strong>lowest</strong> PID in its {@code users:((…))} column (spec-073 D7). A preforked
+     * server (nginx master + workers, a JVM sharing a socket) renders every owning PID in that
+     * column; {@code ss} lists them in an arbitrary order, so taking the first is nondeterministic.
+     * Choosing the lowest PID — the master, which drives context derivation — matches the
+     * {@code /proc/net} fallback's rule ({@link #fallbackListeners}) and is a prerequisite for the
+     * PID-keyed management-port merge. Returns {@code null} for a blank/foreign users column.
+     */
+    private Listener lowestPidListener(String addr, int port, String line) {
+        if (!line.contains("users:((")) {
+            return null;
+        }
+        Matcher m = SS_PROC.matcher(line);
+        String bestPid = null;
+        String bestProcess = null;
+        while (m.find()) {
+            String pid = m.group(2);
+            if (bestPid == null || Long.parseLong(pid) < Long.parseLong(bestPid)) {
+                bestPid = pid;
+                bestProcess = m.group(1);
+            }
+        }
+        return bestPid == null ? null : new Listener(addr, port, bestPid, bestProcess);
     }
 
     private List<Listener> parseNetstat(List<String> lines) {
@@ -1278,10 +1485,17 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         List<ProposedAction> actions = new ArrayList<>();
         switch (family) {
             case SPRINGBOOT -> {
-                actions.add(endpointProbe("health", "Spring Boot liveness/readiness (/actuator/health).", "/actuator/health"));
-                actions.add(endpointProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"));
-                actions.add(endpointProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"));
-                actions.add(endpointProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"));
+                // spec-073: the actuator endpoints target the management port (bound per item from
+                // side-data, defaulting to the traffic port), so an app with a separate
+                // `management.server.port` probes actuator on the right socket. When every routed
+                // app is auth-gated (401/403, D6), only `health` is proposed — shipping
+                // metrics/beans/info probes that 401 by design is dishonest.
+                actions.add(actuatorProbe("health", "Spring Boot liveness/readiness (/actuator/health).", "/actuator/health"));
+                if (!allGated(apps)) {
+                    actions.add(actuatorProbe("metrics", "JVM + HTTP metrics (/actuator/metrics).", "/actuator/metrics"));
+                    actions.add(actuatorProbe("beans", "Wired beans (/actuator/beans).", "/actuator/beans"));
+                    actions.add(actuatorProbe("info", "Build/runtime facts (/actuator/info).", "/actuator/info"));
+                }
                 actions.add(processProbe("process", "Threads/fds/liveness from /proc (process-probe supplement)."));
                 actions.addAll(footprintProbes());
             }
@@ -1324,6 +1538,30 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
                 List.of(literal("sh"), literal("-c"), literal(script),
                         literal("sh"), param(ParamBinder.PORT_COMPONENT)),
                 List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /**
+     * A Spring Boot actuator endpoint probe (spec-073): the same fixed {@code curl} template as
+     * {@link #endpointProbe}, but its bound port is the per-item {@link ParamBinder#MANAGEMENT_PORT_COMPONENT}
+     * — the {@code management.server.port} an actuator-merged app answers on, enriched server-side
+     * from side-data (defaulting to the traffic port for a single-port app). Only the actuator
+     * endpoints move to the management port; the FastAPI/HTTP liveness probes stay on {@code port}.
+     */
+    private ProposedAction actuatorProbe(String name, String description, String path) {
+        String script = "curl -s -m 2 \"http://127.0.0.1:$1" + path + "\"";
+        return new ProposedAction(name, description, false,
+                List.of(literal("sh"), literal("-c"), literal(script),
+                        literal("sh"), param(ParamBinder.MANAGEMENT_PORT_COMPONENT)),
+                List.of(appPortList(APP_LIST_PARAM)));
+    }
+
+    /** The sourceNote marker a 401/403 auth-gated actuator carries (spec-073 D6). */
+    private static final String GATED_NOTE = "actuator secured";
+
+    /** Whether every app routed to the springboot family is auth-gated (D6: propose {@code health} only). */
+    private boolean allGated(List<AppPortItem> apps) {
+        return !apps.isEmpty() && apps.stream()
+                .allMatch(a -> a.sourceNote() != null && a.sourceNote().contains(GATED_NOTE));
     }
 
     /** A fixed process-probe action driven by {@link #PROCESS_PROBE_SCRIPT}, port as {@code $1}. */
@@ -1460,6 +1698,19 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
      * common service.
      */
     private record Resolved(Family family, String appName, int port, String runtime,
-                            ContextMapper.Context context, String sourceNote, String confidence) {
+                            ContextMapper.Context context, String sourceNote, String confidence,
+                            String pid, Integer managementPort, boolean actuatorAnswered,
+                            boolean gated, Integer managementHint) {
+
+        /**
+         * The pre-073 seven-field record for the non-listening / unattributed sweeps, which carry
+         * no PID-keyed merge state: no {@code pid}/{@code managementPort}, no actuator/gate/hint
+         * signal. The listening loop uses the full constructor so its records can merge (D4).
+         */
+        private Resolved(Family family, String appName, int port, String runtime,
+                         ContextMapper.Context context, String sourceNote, String confidence) {
+            this(family, appName, port, runtime, context, sourceNote, confidence,
+                    null, null, false, false, null);
+        }
     }
 }
