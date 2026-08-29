@@ -3248,7 +3248,10 @@
   (function wireIdentitySwitch() {
     var IDENTITIES = ["current", "iskeru", "blueprint"];
     var group = byId("identity-switch");
-    if (!group) return;
+    // Requires a real element (querySelectorAll/addEventListener); degrade to a
+    // no-op otherwise. The pre-paint <head> stamp has already applied the stored
+    // identity, so a missing switcher never leaves the page unskinned.
+    if (!group || typeof group.querySelectorAll !== "function") return;
 
     function current() {
       var stored = null;

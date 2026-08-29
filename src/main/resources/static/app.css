@@ -451,7 +451,7 @@ p { margin: 0; }
 .btn--primary {
   background: var(--accent-grad);   /* spec-065: gradient only in iskeru; = --accent elsewhere */
   border-color: var(--accent);
-  color: var(--accent-ink);         /* spec-065: was #ffffff + a dark @media override, now the --accent-ink token */
+  color: var(--accent-ink);         /* spec-065: was a hard-coded white + a dark @media override, now the --accent-ink token */
   box-shadow: var(--btn-primary-shadow);
 }
 .btn--primary:hover { filter: brightness(1.05); background: var(--accent-grad); }
