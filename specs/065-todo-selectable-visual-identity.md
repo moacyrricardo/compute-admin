@@ -18,13 +18,16 @@ But two structural facts block a drop-in port:
 - **There is no `data-theme` anywhere.** Light/dark is pure `@media (prefers-color-scheme: dark)`
   (`tokens.css:87–115`). An identity that commits to one mode (Iskeru = always dark, Blueprint =
   always light) must **gate** that media block, or the OS setting fights the identity.
-- **Four spots bypass the tokens.** `.btn--primary` hard-codes `color:#ffffff` (`app.css:275–279`)
+- **Five spots bypass the tokens.** `.btn--primary` hard-codes `color:#ffffff` (`app.css:275–279`)
   plus a dark-mode override `color:#06121a` (`app.css:280–282`); `.terminal` hard-codes
   `background:#06121a; color:#d5e3ea` (`app.css:385–386`); the modal and drawer backdrops hard-code
-  slate scrims `rgba(15,23,42,.55)` / `rgba(15,23,42,.45)` (`app.css:451`, `app.css:645`). The
-  button one is load-bearing: Iskeru's accent is gold `#d9a441` with dark ink `#17130a`
-  (`mockup:86`) — on an OS-light machine the un-gated rules render **white-on-gold** primary
-  buttons.
+  slate scrims `rgba(15,23,42,.55)` / `rgba(15,23,42,.45)` (`app.css:451`, `app.css:653`); and
+  `.tag--filter.tag--on` hard-codes the same ink-on-accent pattern, `background:var(--accent);
+  color:var(--surface)` (`app.css:250–254`). The button one is load-bearing: Iskeru's accent is
+  gold `#d9a441` with dark ink `#17130a` (`mockup:86`) — on an OS-light machine the un-gated rules
+  render **white-on-gold** primary buttons. The tag one survives all three identities today only
+  by luck (`--surface` happens to read as usable ink-on-accent in each); it is the same pattern and
+  will drift the next time an identity's accent/surface pair changes.
 
 The mockup also gives each identity its own **shell personality** over the same logical regions
 the app already has (`brand / topbar / nav / view`, `app.css:52–60`, `index.html:17–46`): Current
@@ -48,7 +51,7 @@ build screens *on top of* whatever identity is active; they do not depend on thi
    (light `:root` + dark media block). `iskeru` is a **committed dark** theme; `blueprint` a
    **committed light** one — for those two the `prefers-color-scheme:dark` block must not apply.
    The dark block at `tokens.css:87` is re-scoped to `current` only.
-3. **The four hard-coded spots become tokens first** (the enabling fix), then identity-scoped
+3. **The five hard-coded spots become tokens first** (the enabling fix), then identity-scoped
    shell CSS re-skins the existing regions. Blueprint's title-block is the **only** net-new DOM.
 4. **Switcher lives in the product topbar** (`index.html:27–33`), next to `.userbox` — a
    first-class product control, unlike the mockup's scaffolding shellbar (which is not ported).
@@ -73,7 +76,7 @@ New tokens, added to the base `:root` so `current` needs no other change (values
 | `--btn-primary-shadow` | `none` | iskeru's gold glow (`mockup:97`) |
 | `--hair` | `1px` | hairline border width (declared per-identity in `mockup:80/98/114`; contract token so blueprint can stay hairline if radius/borders ever thicken elsewhere) |
 | `--terminal-bg` / `--terminal-ink` | `#06121a` / `#d5e3ea` | tokenizes `app.css:385–386` |
-| `--backdrop-modal` / `--backdrop-drawer` | `rgba(15,23,42,.55)` / `rgba(15,23,42,.45)` | tokenizes `app.css:451`, `app.css:645` |
+| `--backdrop-modal` / `--backdrop-drawer` | `rgba(15,23,42,.55)` / `rgba(15,23,42,.45)` | tokenizes `app.css:451`, `app.css:653` |
 
 Then two override blocks, verbatim ports of `mockup:83–99` and `mockup:101–115` (palette,
 semantics, categorical `--c-*`, fonts, `--radius:16px/10px` vs `2px/2px`, elevations,
@@ -100,29 +103,60 @@ identities ignore the OS. The current-dark block additionally sets `--accent-ink
   (`mockup:274–279` is the reference). **Delete** the `@media` override at `app.css:280–282` — it
   moves into the gated dark token block above. Without this, iskeru on an OS-light machine renders
   white-on-gold primaries.
+- `app.css:283` `.btn--primary:hover { filter: brightness(1.05); background: var(--accent); }` —
+  the `background: var(--accent)` here overrides `--accent-grad` the instant the pointer arrives,
+  flattening iskeru's gradient primary button back to a flat fill on hover. Change it to
+  `background: var(--accent-grad)` (or port iskeru's explicit hover override, `mockup:279`:
+  `body[data-identity="iskeru"] .btn--primary:hover{background:var(--accent-grad);}`, plus the lift
+  `transform`/`box-shadow` at `mockup:276–277` as part of the per-identity accent pass below).
 - `app.css:385–386` → `background:var(--terminal-bg); color:var(--terminal-ink)`.
-- `app.css:451` → `background:var(--backdrop-modal)`; `app.css:645` →
+- `app.css:451` → `background:var(--backdrop-modal)`; `app.css:653` →
   `background:var(--backdrop-drawer)`. Iskeru overrides both to a black-based scrim
   (slate-tinted rgba over `#0b0d12` reads muddy).
+- `app.css:250–254` `.tag--filter.tag--on` `color:var(--surface)` → `color:var(--accent-ink)` — the
+  fifth bypass (see Context); same ink-on-accent pattern as `.btn--primary`, tokenized for the same
+  reason.
 
 ### Identity-scoped shell CSS (app.css)
 
 The app's shell already exposes the mockup's regions as grid areas
-(`"brand topbar" / "nav view"`, `app.css:52–60`); identities re-skin by re-mapping, scoped
-`:root[data-identity="…"] .shell …`:
+(`"brand topbar" / "nav view"`, `app.css:52–60`); identities re-skin by re-mapping (blueprint also
+extends, for the title-block row below), scoped `:root[data-identity="…"] .shell …`:
 
 - **iskeru** (`mockup:156–181`): `grid-template-columns:auto 1fr auto;
   grid-template-areas:"brand nav topbar" "view view view"`; brand/nav/topbar sticky, glassy
-  (`rgba(11,13,18,.72)` + `backdrop-filter:blur`, `mockup:170`); `.nav` horizontal, pill links,
+  (`rgba(11,13,18,.72)` + `backdrop-filter:blur`, `mockup:166–170`); `.nav` horizontal, pill links,
   active = `--accent-soft`+`--accent` (`mockup:176–178`); `.shell` gains the fixed radial ambient
-  glows (`mockup:160–165`); `.view` centered `max-width:1080px`.
+  glows (`mockup:160–165`); `.view` centered `max-width:1080px`. The mockup's ambient-glow `inset`
+  and sticky `top` are both `46px` (`mockup:161`, `mockup:169`) only to clear its scaffolding
+  shellbar, which this spec does not port (Decision 4) — port both as `0` instead of `46px`, else
+  there's a 46px dead band above the glow and a 46px gap under the sticky header.
 - **blueprint** (`mockup:184–212`): keeps the rail layout; `.shell` gets the 22px grid-paper
   `background-image` (`mockup:188–191`); `.brand`/`.nav a` go mono-uppercase-letterspaced
   (`mockup:195,201–204`), active link = inset accent bar, no fill (`mockup:203–204`); cards get the
   corner-tick `::before/::after` registration marks (`mockup:238–243`).
-- **`.pf-titleblock`** — one net-new element appended inside `#view`'s parent in `index.html`
-  (static, three `k/v` cells: project / machine-or-route / date idiom per `mockup:206–212`),
-  `display:none` except under blueprint (`mockup:140`). No JS beyond filling the route cell.
+- **`.pf-titleblock`** — one net-new element, a **static child of `.shell`** in `index.html`
+  (a sibling of `.brand` / `.topbar` / `nav#nav` / `main#view`, placed after `main#view`) with its
+  own `grid-area` (static, three `k/v` cells: project / machine-or-route / date idiom per
+  `mockup:206–212`). It cannot be an un-areaed fifth child: `.shell`'s base `grid-template-areas`
+  (`"brand topbar" "nav view"`, `app.css:52–60`) covers only two rows over two columns, so a child
+  with no `grid-area` falls into CSS grid's implicit-placement algorithm and lands in a stray
+  auto-generated row — under the nav rail, first column only, not spanning the view column the
+  mockup's title-block reads across. To avoid that, blueprint's identity-scoped shell CSS **extends
+  the grid rather than only re-mapping it**: it adds a `titleblock` row to both
+  `grid-template-areas` (e.g. `"brand topbar" "nav view" "nav titleblock"`, spanning the view
+  column) and `grid-template-rows` (`auto 1fr auto`), and gives `.pf-titleblock`
+  `grid-area: titleblock`. `current` and `iskeru` leave it `display:none` (the mockup default,
+  `mockup:140`) and keep the two-row grid. No JS beyond filling the route cell.
+
+  This is a deliberate departure from the mockup's own placement: there, `.pf-titleblock` sits
+  **in-column, at the end of each screen section** — `.pf-view` opens at `mockup:484`, and the
+  block itself appears at the end of screen A (`mockup:571`) and screen C (`mockup:923`), with
+  `margin-top:34px` (`mockup:207`) — not as a shell-level row. That per-screen placement is not
+  copied because `app.js` re-renders `#view` wholesale per route; anything placed *inside* `#view`
+  would be wiped on every navigation. Pinning the title-block to the shell, outside `#view`, is the
+  placement that survives routing; the tradeoff is that it reads as a persistent shell fixture
+  rather than a per-screen drafting stamp.
 - Per-component identity accents (chip/tag/input radius swaps, iskeru gradient `.btn--primary`
   hover lift) port from the `body[data-identity=…]` component rules (`mockup:235–292`) as
   needed — smallest set that makes each skin read true; not a pixel clone.
@@ -148,7 +182,10 @@ No JS unit surface worth mocking; verification is the live-capture route: one sc
 identity of the machines list + one modal open (backdrop token) + one primary button per identity
 under **both** OS modes (4 combos for `current`, iskeru/blueprint proven OS-invariant). The
 white-on-gold regression is the explicit check: iskeru + OS-light + `.btn--primary` must render
-dark-ink-on-gold.
+dark-ink-on-gold. The OS-dark half of the `current` combos needs the live-verify agent's headless
+Firefox to actually report `prefers-color-scheme: dark` — set the `ui.systemUsesDarkTheme` profile
+pref (or emulate it via CDP/RDP) before that capture, or it silently falls back to OS-light and the
+dark-mode check never runs.
 
 ## Known Gaps
 
