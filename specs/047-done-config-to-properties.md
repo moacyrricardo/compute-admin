@@ -1,7 +1,7 @@
 # 047 — Config to `.properties` (drop YAML)
 
 **Status:** done · branch `moacyrricardo/spec-047-config-to-properties` · no Linear issue
-(blocked; tracked as `spec-047`). Graduated from concern [045](./045-todo-arch-cleanups.md) §3.
+(blocked; tracked as `spec-047`). Graduated from concern [045](./045-concern-arch-cleanups.md) §3.
 
 ## Context
 
@@ -55,4 +55,4 @@ all green).
 
 ## Related
 
-concern [045](./045-todo-arch-cleanups.md) (§3), spec-035 (`application-demo.properties`).
+concern [045](./045-concern-arch-cleanups.md) (§3), spec-035 (`application-demo.properties`).

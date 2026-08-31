@@ -25,7 +25,7 @@ four different strata of the codebase, each with a different readiness:
    the rich `AppPortItem` fields client-side, and today the DTO strips them:
    `MonitorDtos.AppPortView` is `(appName, port, runtime)` (`monitor/api/MonitorDtos.java:392`) and
    `RecipeDtos.RecipeView` carries no `appPortList` at all (`recipe/api/RecipeDtos.java:58`).
-   Spec **063** (authored, **built — PR #88, open** — `063-todo-native-consumer-and-context-dto.md`) widens exactly
+   Spec **063** (authored, **built — PR #88, open** — `063-done-native-consumer-and-context-dto.md`) widens exactly
    that seam plus the native-consumer channel. It is referenced here, not reopened.
 3. **Net-new backend.** Screen C's facts strip (OS · kernel · uptime · cores · RAM · arch,
    mockup ~:792-799) and SSH panel (handshake age/latency, key fingerprint, mockup ~:909-921) have
@@ -61,7 +61,7 @@ to this concern.
 
 | Child | Role | Stratum | Readiness |
 |---|---|---|---|
-| **[063](063-todo-native-consumer-and-context-dto.md)** (built, PR #88) | Native-consumer channel + rich-field DTO exposure — the model→view seam | server DTO (read-only) | **built** — BOL-892, PR #88 open, stacked on the 055-062 integration branch. Not rewritten here. |
+| **[063](063-done-native-consumer-and-context-dto.md)** (built, PR #88) | Native-consumer channel + rich-field DTO exposure — the model→view seam | server DTO (read-only) | **built** — BOL-892, PR #88 open, stacked on the 055-062 integration branch. Not rewritten here. |
 | **065** | Selectable visual identity — port the mockup's identity-token architecture (Current/Iskeru/Blueprint) onto `tokens.css`/`app.css`; a persisted identity switch | presentation | **now** — no data dependency; pure token/CSS work over the existing component classes |
 | **066** | Context-grouped discovery UI — **the 059-followup** (063 D5): 059 Surface 1 context cards + source notes + sibling scripts + approve-to-add rows, Surface-2 context grouping | presentation | **blocked by 063** — consumes `AppPortView`'s widened fields and `RecipeView.appPortList` |
 | **067** | Machine-dashboard composition — recompose `screenMachineDetail` (`app.js` ~:607, today crumbs + pageHead + tags + discovery + recipe groups only) into mockup screen C: facts strip, per-machine tri-axis footprint (reusing Monitor's `axisMeter`/`consumerLegend`/`computeOther`, `app.js` ~:2436-2500), recipes, runs, SSH panel | presentation | **now** — layout + reuse; the 068 facts section is omitted until 068 lands, and runs degrade to the local `ca.runs` cache until 069 |
@@ -89,7 +89,7 @@ and build nothing that presumes an answer.
    / `RAM 512 MB` / `CPU 24%` on the `/opt/lab/payments-api` card, ~:623). **059 Decision 1 says the
    opposite**: "Per-context **disk/RAM/CPU footprint is not shown on discovery cards** — those
    numbers are a product of the monitor poll loop (Surface 2), not of the one-shot discovery SSH
-   sweep" (`059-todo-app-model-ui.md:46-50`; restated at 059:113-117, and echoed by 063's Known
+   sweep" (`059-done-app-model-ui.md:46-50`; restated at 059:113-117, and echoed by 063's Known
    Gaps :117-119). Either 059 D1 stands (066 keeps discovery cards identity-only and links to
    Monitor) or it is explicitly revised (066 renders poll-sourced badges on discovery cards, with
    the staleness semantics that implies). **Interim (so 066 is not blocked on this fork): 066 builds
@@ -121,6 +121,6 @@ and build nothing that presumes an answer.
    (documented, `app.js` ~:86-88) state.
 
 **Cross-references:** [054](054-concern-lightweight-app-model.md) (source concern; owns the mockup
-asset) · [059](059-todo-app-model-ui.md) (the shipped UI slice whose Decision 1 is fork 1) ·
-[063](063-todo-native-consumer-and-context-dto.md) (the seam; blocks 066) ·
+asset) · [059](059-done-app-model-ui.md) (the shipped UI slice whose Decision 1 is fork 1) ·
+[063](063-done-native-consumer-and-context-dto.md) (the seam; blocks 066) ·
 [012](012-done-web-ui-and-design-system.md) (the design system 065 re-architects into identities).

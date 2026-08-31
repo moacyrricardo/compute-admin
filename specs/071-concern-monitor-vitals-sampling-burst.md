@@ -3,7 +3,7 @@
 ## Problem
 
 The monitor page renders **no CPU / memory / disk** against a real, rate-limited host.
-The cause is **not** discovery (that is [070](./070-todo-ssh-session-reuse.md)) but the
+The cause is **not** discovery (that is [070](./070-done-ssh-session-reuse.md)) but the
 **run/poll path** the monitor UI uses to sample vitals — a distinct, higher-cadence
 connection burst that `070`'s per-discovery `withSession` scope cannot touch.
 

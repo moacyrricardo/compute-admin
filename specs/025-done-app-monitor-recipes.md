@@ -2,7 +2,7 @@
 
 > **Status:** done. Branch `moacyrricardo/monitoring-021-025` (PR #35). Linear
 > BLOCKED — commits use `spec-025`. Graduated from concern
-> [020](./020-todo-machine-monitoring.md). **Depends on
+> [020](./020-concern-machine-monitoring.md). **Depends on
 > [022](./022-done-monitoring-foundations.md)** (`RecipeType.MONITOR`, the
 > `APP_PORT_LIST` param + fan-out run mode, the `appName`/`runtime` convention and
 > the double-detection link) and transitively **[021](./021-done-discovery-idempotency.md)**.

@@ -36,14 +36,14 @@ Implemented faithfully, with these notes:
 
 Spec-029 gave the fleet Monitor a single resource axis — **mem-% of host**, per app
 (`clientMemPct` = RSS ÷ host total). The docker-monitoring work
-([concern 030](./030-todo-docker-container-monitoring.md)) and the Monitor UI/UX
-redesign ([034](./034-todo-fleet-monitor-ui-redesign.md)) both need a richer, shared
+([concern 030](./030-concern-docker-container-monitoring.md)) and the Monitor UI/UX
+redesign ([034](./034-done-fleet-monitor-ui-redesign.md)) both need a richer, shared
 shape that neither can own alone:
 
 - **three axes** — RAM, CPU, disk — for every monitored thing, each expressed as a
   **% of its host**, so a machine reads as 100 % and every consumer is a share of it;
 - a single **consumer** abstraction that a native process (spec-025) and a docker
-  compose project ([033](./033-todo-docker-container-discovery.md)) both map onto;
+  compose project ([033](./033-done-docker-container-discovery.md)) both map onto;
 - vocabulary the UI slices by: **role** (app / database / other), **source**
   (native / docker), **dedication** (dedicated / shared, for datastores), and the
   synthetic **bucket** consumers (`docker` unclassified, `system` remainder).

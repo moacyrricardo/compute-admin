@@ -6,7 +6,7 @@
 
 Concern [054](054-concern-lightweight-app-model.md) locked a purely-mechanical model of *what an
 app is* (its five "Decisions taken", 2026-08-27) and the 055–060 epic graduates it into buildable
-code. Spec [055](055-todo-app-model-foundations.md) fixed the **record schema** and the
+code. Spec [055](055-done-app-model-foundations.md) fixed the **record schema** and the
 **resolution seam** (`discovery/service/ContextMapper`, the `{scriptFolder, contextKey,
 contextDisplay}` extension of `AppPortItem`, and the D1/D2 identity rules). **This spec owns the
 Discovery stage** — the sweeps that *produce* the records `ContextMapper` maps. It reconciles with

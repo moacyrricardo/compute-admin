@@ -9,7 +9,7 @@ put dockerized-DB sizing in scope now — logical (`docker exec … pg_database_
 physical (data-volume `du`) — and **deferred standalone (non-docker) DB sizing to its own
 spec** ("same SQL, different transport later"; 054:116-119, report `054-assets/lightweight-app-model-report.html:448`).
 This is that spec. It sizes non-docker **postgres / mysql / mariadb** by running the **same
-logical size queries** as the dockerized path (spec [057](057-todo-app-footprint-probing.md)) but over
+logical size queries** as the dockerized path (spec [057](057-done-app-footprint-probing.md)) but over
 a **host-side transport** — peer/ident auth for postgres (`sudo -u postgres psql`) and config-file
 credentials for mysql/mariadb (`~/.my.cnf`, or the root-readable `debian-sys-maint` account in
 `/etc/mysql/debian.cnf`) — plus a **physical data-directory `du`**. It reconciles with the

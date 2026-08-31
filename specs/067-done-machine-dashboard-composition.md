@@ -38,7 +38,7 @@ key solely on the MCP/setup surfaces.
 Sibling boundaries: the **facts strip** (OS/kernel/uptime/cores/RAM/arch, mockup `:792`) needs data
 that does not exist and is **068**; server-backed run history is **069** (optional); the
 context-grouped discovery regroup of `data.groups` is **066** (now unblocked —
-[063](063-todo-native-consumer-and-context-dto.md) is **done** on main: `RecipeView.appPortList`,
+[063](063-done-native-consumer-and-context-dto.md) is **done** on main: `RecipeView.appPortList`,
 `AppPortView.runtime`, and `AppPortView.managementPort` all ship, `recipe/api/RecipeDtos.java:65`,
 `:104`); the visual identity is **065**. Design forks the mockup opens against settled decisions
 (verb badges on action rows — no verb field in the model, 053/060 scope; declared apps — 053,

@@ -2,7 +2,7 @@
 
 **Status:** done · branch `moacyrricardo/spec-046-unified-error-model` · no Linear issue
 (blocked; tracked as `spec-046`). Graduated from concern
-[045](./045-todo-arch-cleanups.md) §1 + §2.
+[045](./045-concern-arch-cleanups.md) §1 + §2.
 
 ## Context
 
@@ -89,5 +89,5 @@ green (283 tests); `grep "implements ExceptionMapper"` → 0. The 59 direct
 
 ## Related
 
-concern [045](./045-todo-arch-cleanups.md) (§1 + §2), ARCH.md (layering), spec-004 (gate —
+concern [045](./045-concern-arch-cleanups.md) (§1 + §2), ARCH.md (layering), spec-004 (gate —
 untouched).

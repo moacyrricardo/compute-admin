@@ -3,7 +3,7 @@
 > **Status:** done. Branch `moacyrricardo/spec-026-app-ops` (stacked on the
 > monitoring branch `moacyrricardo/monitoring-021-025`, #35). Linear BLOCKED —
 > commits use `spec-026`. Graduated from concern
-> [020](./020-todo-machine-monitoring.md). **Depends on
+> [020](./020-concern-machine-monitoring.md). **Depends on
 > [022](./022-done-monitoring-foundations.md)** (the reserved `app-name` param and its
 > `ParamBinder.APP_NAME_PATTERN`) and **[024](./024-done-monitor-ui-dashboard.md)** /
 > **[025](./025-done-app-monitor-recipes.md)** (the app cards these ops attach to).

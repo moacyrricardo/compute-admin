@@ -2,10 +2,10 @@
 
 > **Status:** done. Branch `moacyrricardo/monitoring-021-025` (PR #35). Linear
 > BLOCKED — commits use `spec-022`. This is the **decisions spec** graduated from
-> concern [020](./020-todo-machine-monitoring.md): it pins the shared model that
+> concern [020](./020-concern-machine-monitoring.md): it pins the shared model that
 > every monitor recipe (023, 025) and the app-ops facade (026) and the dashboard
 > (024) build on. No UI and no specific recipes here.
-> **Depends on [021](./021-todo-discovery-idempotency.md)** (re-discovery must
+> **Depends on [021](./021-done-discovery-idempotency.md)** (re-discovery must
 > reconcile, or the dashboard shows duplicate app cards).
 
 ## Implementation notes (as-built)

@@ -1,6 +1,6 @@
 # 011 — User accounts, authentication & ownership
 
-> **⚠ Authentication mechanism superseded by [spec 014](./014-todo-email-password-auth.md).**
+> **⚠ Authentication mechanism superseded by [spec 014](./014-done-email-password-auth.md).**
 > The Google Sign-In parts of this spec — `POST /auth/google`,
 > `GoogleIdTokenService`/`DevGoogleIdTokenService`, and the `AppUser.googleSub`
 > field/column — are **replaced by email + password** registration/login in 014.

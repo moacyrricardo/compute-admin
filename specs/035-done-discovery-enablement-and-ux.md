@@ -3,9 +3,9 @@
 > **Status: done.** Branch `moacyrricardo/spec-035-discovery-enablement-and-ux`
 > (Linear blocked for this repo — no issue id; `spec-035` commit subjects).
 
-> Closes doubt **(1)** of [concern 030](./030-todo-docker-container-monitoring.md)
+> Closes doubt **(1)** of [concern 030](./030-concern-docker-container-monitoring.md)
 > (should docker discovery be gated behind `docker ps` being allowed?). Gates the
-> [docker discoverer](./033-todo-docker-container-discovery.md) and generalises to the
+> [docker discoverer](./033-done-docker-container-discovery.md) and generalises to the
 > existing `NGINX`/`DOCKER`/`DATABASE`/`CRON`/`SYSTEMD` discoverers (spec-006/026).
 > Independent of the axes/UI work (032/034); sequence it after 033 so there is a docker
 > discoverer to gate.

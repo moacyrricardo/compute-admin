@@ -2,7 +2,7 @@
 
 **Status:** done · branch `moacyrricardo/spec-048-release-pipeline` · no Linear issue
 (blocked; tracked as `spec-048`). Graduated from concern
-[045](./045-todo-arch-cleanups.md) §4.
+[045](./045-concern-arch-cleanups.md) §4.
 
 ## Context
 
@@ -63,5 +63,5 @@ Faithful to the decision. Notable resolutions of the spec's open choices:
 
 ## Related
 
-concern [045](./045-todo-arch-cleanups.md) (§4), `.github/workflows/tests.yml` (spec CI,
+concern [045](./045-concern-arch-cleanups.md) (§4), `.github/workflows/tests.yml` (spec CI,
 PR #52), the `demo/` harness README (overlapping run docs), CONTRIBUTING.md.

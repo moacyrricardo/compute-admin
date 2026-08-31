@@ -4,13 +4,13 @@
 > on `moacyrricardo/spec-032-monitoring-axes-foundations` (merge after spec-032). No
 > Flyway migration and no new `RecipeType` — see "Divergences" below.
 
-> Resolves [concern 030](./030-todo-docker-container-monitoring.md) (docker-native
+> Resolves [concern 030](./030-concern-docker-container-monitoring.md) (docker-native
 > monitoring). Builds on the consumer contract in
-> [032](./032-todo-monitoring-axes-foundations.md), the discovery idempotency of
+> [032](./032-done-monitoring-axes-foundations.md), the discovery idempotency of
 > [021](./021-done-discovery-idempotency.md), and the app-monitor routing of
 > [025](./025-done-app-monitor-recipes.md). The **per-family enablement gate** that
 > decides *whether* docker discovery may probe at all is
-> [035](./035-todo-discovery-enablement-and-ux.md); this spec assumes it is enabled.
+> [035](./035-done-discovery-enablement-and-ux.md); this spec assumes it is enabled.
 
 ## Context
 

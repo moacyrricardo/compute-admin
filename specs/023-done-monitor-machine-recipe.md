@@ -2,7 +2,7 @@
 
 > **Status:** done. Branch `moacyrricardo/monitoring-021-025`. Linear BLOCKED —
 > commits use `spec-023`. Graduated from concern
-> [020](./020-todo-machine-monitoring.md). **Depends on
+> [020](./020-concern-machine-monitoring.md). **Depends on
 > [022](./022-done-monitoring-foundations.md)** (`RecipeType.MONITOR`,
 > classification convention) and transitively **[021](./021-done-discovery-idempotency.md)**
 > (so re-discovery reconciles the universal host monitor instead of duplicating it).

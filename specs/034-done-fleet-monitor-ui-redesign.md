@@ -39,9 +39,9 @@ Implemented faithfully to the mock and the seven decisions, with these notes:
   (241 tests, incl. the ArchTests / `GateArchTest`) stayed green.
 
 > Builds on the consumer contract in
-> [032](./032-todo-monitoring-axes-foundations.md) and evolves the fleet dashboard of
+> [032](./032-done-monitoring-axes-foundations.md) and evolves the fleet dashboard of
 > [029](./029-done-fleet-monitoring.md). Renders richer once
-> [033](./033-todo-docker-container-discovery.md) lands, but is buildable against
+> [033](./033-done-docker-container-discovery.md) lands, but is buildable against
 > 032 with native data alone. **Design reference:**
 > [`docs/fleet-resource-mock.html`](../docs/fleet-resource-mock.html) — an interactive
 > mock in the real spec-012 design system (reviewed 2026-07); this spec is its written

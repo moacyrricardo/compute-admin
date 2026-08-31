@@ -2,11 +2,11 @@
 
 > **Status:** done. Branch `moacyrricardo/monitoring-021-025`. Linear BLOCKED —
 > commits use `spec-024`. Graduated from concern
-> [020](./020-todo-machine-monitoring.md). **Depends on
+> [020](./020-concern-machine-monitoring.md). **Depends on
 > [022](./022-done-monitoring-foundations.md)** (classification + fan-out output
 > labelling) and **≥1 monitor recipe** — built after/with
 > [023](./023-done-monitor-machine-recipe.md); app cards come alive once
-> [025](./025-todo-app-monitor-recipes.md) lands. A working interactive mock of
+> [025](./025-done-app-monitor-recipes.md) lands. A working interactive mock of
 > exactly this dashboard exists; the layout below matches it.
 
 ## Implementation notes
