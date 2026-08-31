@@ -1,6 +1,6 @@
 # 066 — Context-grouped discovery UI (059-followup)
 
-**Status:** doing · Linear [BOL-895](https://linear.app/iskeru/issue/BOL-895) · build branch `moacyrricardo/bol-895-cpt-066-context-grouped-discovery-ui` · **Part of concern 064 (mockup delivery).** **Builds on 063 (done)** — the DTO seam this spec renders — and lands **after sibling 067** (Screen C), which owns the recipe-list composition and the filter bar this spec re-homes over context cards.
+**Status:** done · Linear [BOL-895](https://linear.app/iskeru/issue/BOL-895) · build branch `moacyrricardo/bol-895-cpt-066-context-grouped-discovery-ui` · **Part of concern 064 (mockup delivery).** **Builds on 063 (done)** — the DTO seam this spec renders — and lands **after sibling 067** (Screen C), which owns the recipe-list composition and the filter bar this spec re-homes over context cards.
 
 ## Context
 
@@ -88,3 +88,42 @@ New CSS is limited to context-card layout (path header / source-note sub-line / 
 - **Declared apps (mockup's DECLARED card, `:748`) are 053 scope, unbuilt** — no declared-context card renders until that model exists (a 064 fork). (Distinct from the `port == 0` declared-only *item* in D1, which 066 does render.)
 - **`contextKey` is never fetched or rendered** (063 D3): the UI keys on `contextDisplay`; the internal S9-secret dedup key stays server-side (no DTO carries it — `MonitorConsumerView` gains member `(appName, port)` pairs, never `contextKey`).
 - **Visual identity is 065**: these cards render in the existing spec-012 slate/teal system; the rounded iskeru skin is not this spec's work.
+
+## Implementation Notes
+
+Built on branch `moacyrricardo/bol-895-cpt-066-context-grouped-discovery-ui` (PR #100), five
+logical commits after the `todo→doing` flip: BLOCKER-1 server, BLOCKER-2 server, Surface-2
+client, Surface-1 client + tests, and an eval fix. All six Decisions are implemented; the full
+`mvn test` suite (394) and all eight `node` render-checks are green.
+
+**How the build differed from the spec:**
+
+- **Decision 5 relocation — deliberate deviation.** The spec says 066 relocates the
+  discovery-pre-filled action rows *out of* 067's flat recipe grid *into* context cards. The
+  build renders the discovery panel as context cards (the discovery panel previously had **no**
+  grouped proposal list at all, so the discovery *rendering* is fully relocated) but leaves
+  067's "Recipes & actions" grid as the **complete recipe registry** rather than deleting the
+  pre-filled recipes from it. Rationale: 067 deliberately shipped that grid as the registry, and
+  removing monitor recipes from it is a UX-regression risk the terse Decision 5 may not have
+  intended. To avoid the discovery panel duplicating the whole registry, `contextDiscovery` is
+  scoped to **pre-filled recipes only** (a non-empty `appPortList`); the blueprint/custom
+  majority stays exclusively in the registry. This scoping was an eval-stage fix.
+
+- **BLOCKER 1 parser placement.** The recipe-read parser is a small `@Component`
+  (`recipe/service/AppPortListParser`) injected into `RecipeRS`, rather than a static helper —
+  it needs the shared `ObjectMapper` bean. It lives in the `recipe` module (deliberate
+  duplication of the private monitor parser) so the lower module never calls up into `monitor`.
+
+- **BLOCKER 2 membership shape.** Member pairs are carried as a new `ConsumerMemberView(appName,
+  port)` on `MonitorConsumerView` (fed from a new `MonitorService.MemberPort` on
+  `NativeConsumerData`). Members are populated for **every** `NativeConsumerData` — context
+  groups *and* context-less singletons — so the client poll path is uniform; a singleton simply
+  degenerates to a one-member fold (identical to the pre-066 per-app behaviour, F4).
+
+- **Confidence label.** Rendered as a neutral `.tag` reading "high confidence" (text, never a
+  chip — chip semantics stay reserved for approval states, per Decision 1 / WCAG house rule).
+
+- **Client tests** live in a new `src/test/js/context-grouped-discovery.render-check.js` (the
+  059 harness idiom, run via `node <file>`; not wired into `mvn`), covering both surfaces.
+
+- **No version bump** (project policy: none). `pom.xml` stays `0.1.0-SNAPSHOT`.
