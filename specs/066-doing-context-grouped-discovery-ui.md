@@ -1,6 +1,6 @@
 # 066 — Context-grouped discovery UI (059-followup)
 
-**Status:** todo · Linear [BOL-895](https://linear.app/iskeru/issue/BOL-895) · build branch `moacyrricardo/bol-895-cpt-066-context-grouped-discovery-ui` · **Part of concern 064 (mockup delivery).** **Builds on 063 (done)** — the DTO seam this spec renders — and lands **after sibling 067** (Screen C), which owns the recipe-list composition and the filter bar this spec re-homes over context cards.
+**Status:** doing · Linear [BOL-895](https://linear.app/iskeru/issue/BOL-895) · build branch `moacyrricardo/bol-895-cpt-066-context-grouped-discovery-ui` · **Part of concern 064 (mockup delivery).** **Builds on 063 (done)** — the DTO seam this spec renders — and lands **after sibling 067** (Screen C), which owns the recipe-list composition and the filter bar this spec re-homes over context cards.
 
 ## Context
 
