@@ -803,7 +803,7 @@
             return h("span", { class: "tag", text: t });
           })),
           monMachine ? footprintPanel(monMachine) : null,
-          discoverySection(p, mid, (data.discovery && data.discovery.families) || []),
+          discoverySection(p, mid, (data.discovery && data.discovery.families) || [], machine, data.groups),
           recipesSection,
           h("div", { class: "detail-split" },
             recentRunsSection(mid),
@@ -998,13 +998,217 @@
     }).catch(function (err) { toast(err.message); });
   }
 
+  /** The trailing path segment of a logical script/context path (spec-066 card display). */
+  function basename(path) {
+    if (path == null) return "";
+    var s = String(path).replace(/\/+$/, "");
+    var i = s.lastIndexOf("/");
+    return i >= 0 ? s.slice(i + 1) : s;
+  }
+
+  /**
+   * spec-066 Decision 3: regroup the recipe channel (`data.groups`, now carrying a populated
+   * `appPortList` per BLOCKER 1) by each recipe's `appPortList[].contextDisplay`. Returns the
+   * ordered distinct contexts (each with its collapsed source-note/confidence/sibling-scripts,
+   * its member items, and the recipe groups whose actions belong to it) plus the `ungrouped`
+   * fallback: recipes with an empty or wholly context-less `appPortList` (old rows / no pre-fill),
+   * which render like today's flat groups so the regroup hides no data (063 tolerant-reader).
+   */
+  function groupByContext(groups) {
+    var byDisplay = {};
+    var order = [];
+    var ungrouped = [];
+    (groups || []).forEach(function (g) {
+      var apl = (g.recipe && g.recipe.appPortList) || [];
+      var displays = [];
+      apl.forEach(function (item) {
+        if (item.contextDisplay && displays.indexOf(item.contextDisplay) < 0) {
+          displays.push(item.contextDisplay);
+        }
+      });
+      if (!displays.length) { ungrouped.push(g); return; }
+      displays.forEach(function (display) {
+        var ctx = byDisplay[display];
+        if (!ctx) {
+          ctx = byDisplay[display] = { display: display, sourceNote: null, confidence: null,
+            scripts: [], items: [], groups: [] };
+          order.push(display);
+        }
+        apl.forEach(function (item) {
+          if (item.contextDisplay !== display) return;
+          if (!ctx.sourceNote && item.sourceNote) ctx.sourceNote = item.sourceNote;
+          if (!ctx.confidence && item.confidence) ctx.confidence = item.confidence;
+          (item.contextScripts || []).forEach(function (s) {
+            var b = basename(s);
+            if (b && ctx.scripts.indexOf(b) < 0) ctx.scripts.push(b);
+          });
+          ctx.items.push(item);
+        });
+        if (ctx.groups.indexOf(g) < 0) ctx.groups.push(g);
+      });
+    });
+    // Stable, deterministic order (Known Gap: tolerate a lingering stale-duplicate probe row-set).
+    order.sort();
+    return { contexts: order.map(function (d) { return byDisplay[d]; }), ungrouped: ungrouped };
+  }
+
+  /**
+   * spec-066 / 073: the per-item port line. `:T` for a single-port app, `:T · mgmt :M` for an
+   * actuator-merged Spring Boot app whose management port differs (mirroring the Monitor badge).
+   * A declared-only item (sentinel `port == 0`, spec-056) has no listening socket, so it renders
+   * a "no listening port" label with no port line (Decision 1).
+   */
+  function contextPortLine(item) {
+    if (!item.port) return h("span", { class: "small dim", text: "no listening port" });
+    var text = ":" + item.port;
+    if (item.managementPort != null && item.managementPort !== item.port) {
+      text += " · mgmt :" + item.managementPort;
+    }
+    return h("span", { class: "small mono", text: text });
+  }
+
+  /**
+   * spec-066 Decision 1: one context card — identity + structure only (footprint stays on the
+   * Monitor route, 059 D1 / concern-064 Open Question). The `contextDisplay` path in the mono
+   * idiom, the `sourceNote` as a dim sub-line, a neutral text confidence label (never a chip —
+   * chip semantics are reserved for approval states), the sibling-script basenames, the member
+   * items' port lines (declared-only labelled), then one row per proposed action carrying the
+   * existing spec-044 `approvalSplit` control (Decision 2 — no new endpoint).
+   */
+  function contextCard(machine, ctx) {
+    var head = h("div", { class: "ctx-head" },
+      h("code", { class: "command mono ctx-path", text: ctx.display }),
+      ctx.confidence ? h("span", { class: "tag", title: "fingerprint confidence",
+        text: ctx.confidence + " confidence" }) : null);
+    var sub = ctx.sourceNote ? h("p", { class: "small dim mt-2", text: ctx.sourceNote }) : null;
+    var scripts = ctx.scripts.length
+      ? h("p", { class: "small faint mt-2", text: "scripts: " + ctx.scripts.join(" · ") }) : null;
+    var items = ctx.items.length
+      ? h("div", { class: "ctx-items mt-2" }, ctx.items.map(function (item) {
+          return h("div", { class: "ctx-item" },
+            h("span", { class: "mono", text: item.appName }),
+            contextPortLine(item));
+        }))
+      : null;
+    var rows = [];
+    ctx.groups.forEach(function (g) {
+      (g.actions || []).forEach(function (a) {
+        rows.push(h("div", { class: "ctx-action action-card" },
+          h("div", { class: "row-between" },
+            h("strong", { class: "grow", text: a.name }),
+            h("div", { class: "row" }, chip(a.approvalState), a.sudo ? sudoBadge() : null)),
+          a.description ? h("p", { class: "small dim mt-2", text: a.description }) : null,
+          h("div", { class: "action-card-foot mt-3" }, approvalSplit(machine, g.recipe, a))));
+      });
+    });
+    var actions = rows.length ? h("div", { class: "ctx-actions mt-3" }, rows)
+      : empty("No proposed actions in this context yet.");
+    return h("div", { class: "card ctx-card" }, head, sub, scripts, items, actions);
+  }
+
+  /**
+   * spec-066 Decision 3/5: the context-grouped discovery list, re-homing 067's type/source
+   * filter bar (Decision 4) over the cards. A context card shows when it holds at least one
+   * action whose recipe type is selected AND whose member runtime matches the source filter
+   * (`recipeMatchesSources`). The ungrouped fallback (empty/context-less recipes) lists under an
+   * "other / none" heading and is NEVER hidden by a source toggle (red-team F2 / 067 D4 verbatim).
+   */
+  function contextDiscovery(machine, groups) {
+    var grouped = groupByContext(groups);
+    if (!grouped.contexts.length && !grouped.ungrouped.length) return null;
+
+    var selType = {}, selSource = {};
+    var typeValues = uniqSorted(grouped.contexts.reduce(function (acc, ctx) {
+      ctx.groups.forEach(function (g) { acc.push(g.recipe.type); });
+      return acc;
+    }, grouped.ungrouped.map(function (g) { return g.recipe.type; })));
+    var cardsBox = h("div", { class: "ctx-cards mt-3" });
+    var chipsRow = h("div", { class: "filter-chips mt-2" });
+
+    function selectedTypes() { return typeValues.filter(function (t) { return selType[t]; }); }
+    function selectedSources() { return ["native", "docker"].filter(function (s) { return selSource[s]; }); }
+    function ctxMatchesType(ctx) {
+      var s = selectedTypes();
+      return !s.length || ctx.groups.some(function (g) { return s.indexOf(g.recipe.type) >= 0; });
+    }
+    function ctxMatchesSource(ctx) {
+      var s = selectedSources();
+      return !s.length || ctx.groups.some(function (g) { return recipeMatchesSources(g.recipe, s); });
+    }
+    function groupMatchesType(g) {
+      var s = selectedTypes();
+      return !s.length || s.indexOf(g.recipe.type) >= 0;
+    }
+
+    function filterChip(label, on, title, onClick) {
+      return h("button", { type: "button",
+        class: "tag tag--filter" + (on ? " tag--on" : ""),
+        "aria-pressed": on ? "true" : "false", title: title || label, text: label, onclick: onClick });
+    }
+    function renderChipsRow() {
+      clear(chipsRow);
+      if (typeValues.length) {
+        chipsRow.appendChild(h("span", { class: "small dim", text: "Type" }));
+        typeValues.forEach(function (t) {
+          chipsRow.appendChild(filterChip(t, !!selType[t], "Show only " + t + " contexts",
+            function () { selType[t] = !selType[t]; renderChipsRow(); renderCards(); }));
+        });
+      }
+      chipsRow.appendChild(h("span", { class: "small dim", style: "margin-left:12px", text: "Source" }));
+      ["native", "docker"].forEach(function (s) {
+        chipsRow.appendChild(filterChip(s, !!selSource[s],
+          "Show contexts with a " + s + " discovered member",
+          function () { selSource[s] = !selSource[s]; renderChipsRow(); renderCards(); }));
+      });
+    }
+
+    function renderCards() {
+      clear(cardsBox);
+      var visibleCtx = grouped.contexts.filter(function (ctx) {
+        return ctxMatchesType(ctx) && ctxMatchesSource(ctx);
+      });
+      visibleCtx.forEach(function (ctx) { cardsBox.appendChild(contextCard(machine, ctx)); });
+      // The ungrouped remainder: never hidden by a source chip (F2); the type chip still applies.
+      var otherGroups = grouped.ungrouped.filter(groupMatchesType);
+      if (otherGroups.length) {
+        cardsBox.appendChild(h("h3", { class: "mt-4 dim",
+          text: "Other / none — no discovered context" }));
+        otherGroups.forEach(function (g) {
+          cardsBox.appendChild(h("div", { class: "section" },
+            h("div", { class: "row-between" },
+              h("h2", { text: g.recipe.name }),
+              h("span", { class: "tag", text: g.recipe.type })),
+            g.recipe.description ? h("p", { class: "small dim mt-2", text: g.recipe.description }) : null,
+            actionsList(machine, g.recipe, g.actions)));
+        });
+      }
+      if (!visibleCtx.length && !otherGroups.length) {
+        cardsBox.appendChild(empty("No discovered contexts match the filter."));
+      }
+    }
+
+    renderChipsRow();
+    renderCards();
+
+    return h("div", { class: "ctx-discovery mt-4" },
+      h("div", { class: "row-between" },
+        h("h3", { text: "Discovered contexts" }),
+        h("span", { class: "small dim",
+          text: "Grouped by app context — approve a proposed action to add its recipe. Live footprint is on the Monitor route." })),
+      chipsRow, cardsBox);
+  }
+
   /**
    * The per-machine Discovery panel (spec-035): a family toggle list plus, for any
    * guarded family, its one-line capability note (docker: root-equivalent). Enabling a
    * family only lets its discoverers probe and propose — every proposed action still
    * needs approval to run, so the toggles sit above the recipe/proposal groups below.
+   *
+   * <p>spec-066: below the family bar, the discovery-pre-filled proposals render as
+   * context cards (Screen B) grouped by discovery context, with 067's type/source filter
+   * bar re-homed over them.
    */
-  function discoverySection(p, mid, families) {
+  function discoverySection(p, mid, families, machine, groups) {
     var chips = families.map(function (f) {
       return h("button", {
         type: "button",
@@ -1052,7 +1256,8 @@
           + "Enabling a family only lets it propose recipes; every proposed action still needs "
           + "approval to run." }),
       chips.length ? h("div", { class: "filter-chips mt-2" }, chips) : empty("No discoverer families."),
-      notes);
+      notes,
+      contextDiscovery(machine, groups));
   }
 
   /** PUT the flipped family enablement, then re-render the detail to reflect the new state. */
