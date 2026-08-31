@@ -1,6 +1,7 @@
 package com.iskeru.computeadmin.recipe.api;
 
 import com.iskeru.computeadmin.auth.api.Secured;
+import com.iskeru.computeadmin.recipe.service.AppPortListParser;
 import com.iskeru.computeadmin.recipe.service.RecipeService;
 import com.iskeru.computeadmin.recipe.service.RecipeService.CreateRecipeInput;
 import jakarta.ws.rs.BadRequestException;
@@ -31,9 +32,11 @@ import java.util.List;
 public class RecipeRS {
 
     private final RecipeService recipeService;
+    private final AppPortListParser appPortListParser;
 
-    public RecipeRS(RecipeService recipeService) {
+    public RecipeRS(RecipeService recipeService, AppPortListParser appPortListParser) {
         this.recipeService = recipeService;
+        this.appPortListParser = appPortListParser;
     }
 
     @POST
@@ -51,7 +54,13 @@ public class RecipeRS {
         if (machineId == null || machineId.isBlank()) {
             throw new BadRequestException("machineId is required");
         }
-        return recipeService.listForMachine(machineId).stream().map(RecipeDtos.RecipeView::of).toList();
+        // spec-066 (BLOCKER 1): populate each recipe's appPortList by parsing its stored
+        // app_port_list CLOB into the shared AppPortView records so the machine-detail
+        // Discovery panel can re-group the proposed actions by discovery context. 063 added
+        // the two-arg RecipeView.of hook and left it unused; this is its main-code caller.
+        return recipeService.listForMachine(machineId).stream()
+                .map(recipe -> RecipeDtos.RecipeView.of(recipe, appPortListParser.parse(recipe.getAppPortList())))
+                .toList();
     }
 
     @GET
