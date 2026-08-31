@@ -3,19 +3,19 @@
 > **GRADUATED (2026-07).** This concern has been resolved into six build-ready
 > specs — it stays the **umbrella concern of record** (the problem framing and the
 > Q1/Q2 decisions below remain the rationale), but the *how* now lives in:
-> - **[021](./021-todo-discovery-idempotency.md)** — discovery idempotency
+> - **[021](./021-done-discovery-idempotency.md)** — discovery idempotency
 >   (reconcile, don't duplicate; resolves backlog **H2**) — **prerequisite, build first**.
-> - **[022](./022-todo-monitoring-foundations.md)** — foundations: `RecipeType.MONITOR`
+> - **[022](./022-done-monitoring-foundations.md)** — foundations: `RecipeType.MONITOR`
 >   classification, the `appName`/`runtime` label convention (+ double-detection
 >   link), the `APP_PORT_LIST` param + **fan-out run mode** (the S4-safe piece), and
 >   run-row pruning (extends spec-013 eviction). *Pins Q1 + Q2.*
-> - **[023](./023-todo-monitor-machine-recipe.md)** — the universal `monitor machine`
+> - **[023](./023-done-monitor-machine-recipe.md)** — the universal `monitor machine`
 >   host-vitals recipe (cpu/ram+swap/disk).
-> - **[024](./024-todo-monitor-ui-dashboard.md)** — the dashboard: host panel +
+> - **[024](./024-done-monitor-ui-dashboard.md)** — the dashboard: host panel +
 >   per-app cards, client-side polling (single·5s·30s·1m·5m), per-app detail drawer.
-> - **[025](./025-todo-app-monitor-recipes.md)** — the app-monitor family
+> - **[025](./025-done-app-monitor-recipes.md)** — the app-monitor family
 >   (springboot·fastapi·generic), discovery-routed by classification.
-> - **[026](./026-todo-app-ops-recipes.md)** — app-ops as a label **facade** over
+> - **[026](./026-done-app-ops-recipes.md)** — app-ops as a label **facade** over
 >   existing runtime recipes (restart/logs/redeploy); + optional `SystemdDiscoverer`;
 >   follow-mode logs flagged as blocked on a new **run-cancellation** engine addition.
 >

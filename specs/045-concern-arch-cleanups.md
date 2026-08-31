@@ -2,10 +2,10 @@
 
 > **⚠ GRADUATED (2026-07-14) — this concern is resolved.** The recommendation below was
 > accepted and split into three specs:
-> - **[046](./046-todo-unified-error-model.md) `unified-error-model`** — §1 + §2 (extend
+> - **[046](./046-done-unified-error-model.md) `unified-error-model`** — §1 + §2 (extend
 >   `WebApplicationException` via a shared `AppException`, delete the 19 mappers).
-> - **[047](./047-todo-config-to-properties.md) `config-to-properties`** — §3.
-> - **[048](./048-todo-release-pipeline.md) `release-pipeline`** — §4.
+> - **[047](./047-done-config-to-properties.md) `config-to-properties`** — §3.
+> - **[048](./048-done-release-pipeline.md) `release-pipeline`** — §4.
 >
 > The "options open" framing is **superseded**: **§1 is decided as Option 1** (Option 2 / a
 > clean `service/`↔web boundary is deferred to a separate future `service-web-boundary`

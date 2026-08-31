@@ -1,12 +1,12 @@
 # 030 — Docker container monitoring
 
 > **RESOLVED (2026-07) → specs 032–035.** The options below were decided into four
-> specs: **[032](./032-todo-monitoring-axes-foundations.md)** (the RAM/CPU/disk consumer
-> model), **[033](./033-todo-docker-container-discovery.md)** (docker-native discovery via
+> specs: **[032](./032-done-monitoring-axes-foundations.md)** (the RAM/CPU/disk consumer
+> model), **[033](./033-done-docker-container-discovery.md)** (docker-native discovery via
 > compose-project labels — resolves the core concern; datastore classification = option B;
 > springboot-in-docker shown once = doubt (b), unified lens),
-> **[034](./034-todo-fleet-monitor-ui-redesign.md)** (the monitor UI/UX redesign incl. the
-> databases lens), and **[035](./035-todo-discovery-enablement-and-ux.md)** (per-family
+> **[034](./034-done-fleet-monitor-ui-redesign.md)** (the monitor UI/UX redesign incl. the
+> databases lens), and **[035](./035-done-discovery-enablement-and-ux.md)** (per-family
 > discovery enablement, docker off by default — resolves doubt (1), *not* the
 > recipe-depends-on-recipe framing). This file stays as the problem framing; the *how* now
 > lives in those specs.
