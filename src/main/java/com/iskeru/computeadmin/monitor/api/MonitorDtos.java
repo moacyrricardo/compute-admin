@@ -11,6 +11,7 @@ import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.DockerConsumerData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.DockerServiceData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MachineMonitors;
+import com.iskeru.computeadmin.monitor.service.MonitorService.MemberPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.MonitorRecipe;
 import com.iskeru.computeadmin.monitor.service.MonitorService.NativeConsumerData;
 import com.iskeru.computeadmin.monitor.service.MonitorService.OpsAction;
@@ -279,7 +280,7 @@ public final class MonitorDtos {
     public record MonitorConsumerView(String id, String name, ConsumerRole role, ConsumerSource source,
                                       Integer ram, Integer cpu, Integer disk, Dedication dedication,
                                       String owner, List<String> usedBy, Bucket bucket,
-                                      List<ConsumerServiceView> services) {
+                                      List<ConsumerServiceView> services, List<ConsumerMemberView> members) {
         /**
          * The native-app consumer (spec-032/025): an {@link ConsumerRole#APP} whose
          * {@code source} is read from the discoverer's {@code runtime} label ({@code
@@ -291,7 +292,8 @@ public final class MonitorDtos {
          */
         public static MonitorConsumerView ofNativeApp(AppPort app) {
             return new MonitorConsumerView(app.appName(), app.appName(), ConsumerRole.APP,
-                    sourceOf(app.runtime()), null, null, null, null, null, null, null, List.of());
+                    sourceOf(app.runtime()), null, null, null, null, null, null, null, List.of(),
+                    List.of());
         }
 
         /** {@code docker} runtime ⇒ {@link ConsumerSource#DOCKER}; anything else ⇒ NATIVE. */
@@ -310,8 +312,16 @@ public final class MonitorDtos {
          * present, honest null otherwise); a native consumer has no docker services.
          */
         public static MonitorConsumerView ofNativeConsumer(NativeConsumerData n) {
+            // spec-066 (F1): carry each member's (appName, port) through so the client fans the
+            // footprint poll out per member and null-aware-sums the readings into the context's
+            // three axes — a per-context consumer (id/name = contextDisplay) matches no single app
+            // in the per-app rollup, so without this it polls nothing and renders all axes as —.
+            List<ConsumerMemberView> members = new ArrayList<>();
+            for (MemberPort m : n.members()) {
+                members.add(new ConsumerMemberView(m.appName(), m.port()));
+            }
             return new MonitorConsumerView(n.name(), n.name(), n.role(), n.source(),
-                    null, null, null, null, null, null, null, List.of());
+                    null, null, null, null, null, null, null, List.of(), members);
         }
 
         /**
@@ -331,8 +341,17 @@ public final class MonitorDtos {
             }
             return new MonitorConsumerView(d.name(), d.name(), d.role(), ConsumerSource.DOCKER,
                     null, null, null, d.dedication(), d.owner(),
-                    d.usedBy() == null ? null : List.copyOf(d.usedBy()), d.bucket(), services);
+                    d.usedBy() == null ? null : List.copyOf(d.usedBy()), d.bucket(), services, List.of());
         }
+    }
+
+    /**
+     * One member of a context-grouped native consumer (spec-066): the {@code (appName, port)}
+     * the client fans its footprint probe out over. Only the native-consumer channel populates
+     * it; docker consumers and context-less native singletons carry an empty list. It never
+     * carries the S9-secret {@code contextKey}.
+     */
+    public record ConsumerMemberView(String appName, int port) {
     }
 
     /**

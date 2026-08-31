@@ -1,15 +1,19 @@
 package com.iskeru.computeadmin.monitor;
 
+import com.iskeru.computeadmin.monitor.api.MonitorDtos.ConsumerMemberView;
+import com.iskeru.computeadmin.monitor.api.MonitorDtos.MonitorConsumerView;
 import com.iskeru.computeadmin.monitor.model.ConsumerRole;
 import com.iskeru.computeadmin.monitor.model.ConsumerSource;
 import com.iskeru.computeadmin.monitor.service.MonitorService;
 import com.iskeru.computeadmin.monitor.service.MonitorService.AppPort;
+import com.iskeru.computeadmin.monitor.service.MonitorService.MemberPort;
 import com.iskeru.computeadmin.monitor.service.MonitorService.NativeConsumerData;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * The native-consumer channel (spec-063) as a pure function of the parsed
@@ -88,6 +92,35 @@ class NativeConsumerChannelTest {
 
         // The docker-cgroup item routes to the docker channel; only the native process survives.
         assertThat(consumers).extracting(NativeConsumerData::name).containsExactly("orders");
+    }
+
+    @Test
+    void nativeConsumersFrom_CarriesEachMembersAppNamePortPair() {
+        // spec-066 (F1): the context's members carry their own (appName, port) — including the
+        // declared-only worker (port 0) — so the client can fan the footprint poll out per member.
+        AppPort web = item("orders", 8080, "process", "ctx-1", "/opt/orders", "low");
+        AppPort worker = item("orders-worker", 0, "systemd", "ctx-1", "/opt/orders", null);
+
+        NativeConsumerData c = MonitorService.nativeConsumersFrom(List.of(web, worker)).get(0);
+
+        assertThat(c.members()).extracting(MemberPort::appName, MemberPort::port)
+                .containsExactly(tuple("orders", 8080), tuple("orders-worker", 0));
+    }
+
+    @Test
+    void ofNativeConsumer_CopiesMemberPairsOntoTheWireConsumer() {
+        // spec-066 (F1): ofNativeConsumer must carry the member (appName, port) pairs through —
+        // a per-context consumer's id/name is the contextDisplay, which matches no single app, so
+        // without these pairs the client poll drops it (all axes render —).
+        AppPort web = item("orders", 8080, "process", "ctx-1", "/opt/orders", "low");
+        AppPort worker = item("orders-worker", 7000, "systemd", "ctx-1", "/opt/orders", null);
+        NativeConsumerData n = MonitorService.nativeConsumersFrom(List.of(web, worker)).get(0);
+
+        MonitorConsumerView view = MonitorConsumerView.ofNativeConsumer(n);
+
+        assertThat(view.id()).isEqualTo("/opt/orders");
+        assertThat(view.members()).extracting(ConsumerMemberView::appName, ConsumerMemberView::port)
+                .containsExactly(tuple("orders", 8080), tuple("orders-worker", 7000));
     }
 
     @Test
