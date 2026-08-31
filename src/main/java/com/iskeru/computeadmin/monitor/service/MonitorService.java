@@ -132,7 +132,19 @@ public class MonitorService {
      */
     public record NativeConsumerData(String name, ConsumerRole role, ConsumerSource source,
                                      String contextKey, String contextDisplay, String confidence,
-                                     List<String> appNames) {
+                                     List<String> appNames, List<MemberPort> members) {
+    }
+
+    /**
+     * One context member's pollable identity: the {@code (appName, port)} pair the client fans
+     * its footprint probe out over (spec-066, red-team F1). Carried on {@link NativeConsumerData}
+     * — and copied onto the wire consumer — so a context-grouped native consumer (whose id/name is
+     * the {@code contextDisplay}, matching no single app) can still poll: the browser aggregates the
+     * per-member readings into the context's three axes. A self-describing membership source, chosen
+     * over re-deriving ports from the monitor payload's per-name enumeration (not guaranteed post-063)
+     * or splitting the {@code contextDisplay} string.
+     */
+    public record MemberPort(String appName, int port) {
     }
 
     /**
@@ -353,12 +365,17 @@ public class MonitorService {
     private static NativeConsumerData nativeConsumer(String name, String contextKey, String display,
                                                      List<AppPort> group) {
         List<String> appNames = new ArrayList<>();
+        List<MemberPort> members = new ArrayList<>();
         String confidence = null;
         boolean datastore = false;
         for (AppPort app : group) {
             if (!appNames.contains(app.appName())) {
                 appNames.add(app.appName());
             }
+            // spec-066 (F1): carry each member's (appName, port) so the client can fan the poll
+            // out per member and sum the readings into the context's axes. Declared-only items
+            // (port == 0) are still carried — the client renders them but skips the poll (no socket).
+            members.add(new MemberPort(app.appName(), app.port()));
             if (app.confidence() != null && (confidence == null || "high".equalsIgnoreCase(app.confidence()))) {
                 confidence = app.confidence();
             }
@@ -368,7 +385,7 @@ public class MonitorService {
         }
         ConsumerRole role = datastore ? ConsumerRole.DATABASE : ConsumerRole.APP;
         return new NativeConsumerData(name, role, ConsumerSource.NATIVE, contextKey, display,
-                confidence, appNames);
+                confidence, appNames, members);
     }
 
     /**
