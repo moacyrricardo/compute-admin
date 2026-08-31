@@ -2713,6 +2713,29 @@
     var hueIdx = 0;
     return (m.consumers || []).map(function (c) {
       var app = appsByName[c.id] || appsByName[c.name] || null;
+      // spec-066 (F1): a context-grouped native consumer (id = name = contextDisplay) matches no
+      // single app in the per-app rollup, so it carries its own member (appName, port) pairs. Bind
+      // each member to its per-app checks (a context's members share the recipe's fan-out actions,
+      // so any resolvable member yields them) and expose the members so the poll can fan out per
+      // member and null-aware-sum the readings (applyConsumerReading). A member with the sentinel
+      // port 0 is declared-only — kept for identity but not pollable.
+      var memberModels = (c.members || []).map(function (mem) {
+        var ma = appsByName[mem.appName] || null;
+        return { appName: mem.appName, port: mem.port, checks: ma ? (ma.checks || []) : [] };
+      });
+      var memberChecks = null, memberRuntime = null, memberPort = null, memberMgmt = null;
+      for (var mi = 0; mi < memberModels.length; mi++) {
+        if (memberModels[mi].checks.length) { memberChecks = memberModels[mi].checks; break; }
+      }
+      if (memberModels.length) {
+        var firstApp = appsByName[memberModels[0].appName] || null;
+        memberRuntime = firstApp ? firstApp.runtime : null;
+        memberMgmt = firstApp ? firstApp.managementPort : null;
+        // Any non-zero member port makes the consumer pollable (pollConsumers filters on port).
+        for (var pj = 0; pj < memberModels.length; pj++) {
+          if (memberModels[pj].port) { memberPort = memberModels[pj].port; break; }
+        }
+      }
       var model = {
         id: c.id,
         name: c.name,
@@ -2727,10 +2750,11 @@
         disk: c.disk,
         services: c.services || [],
         framework: app ? (app.framework || "generic") : (c.role === "DATABASE" ? "datastore" : "generic"),
-        runtime: app ? app.runtime : null,
-        port: app ? app.port : null,
-        managementPort: app ? app.managementPort : null,
-        checks: app ? (app.checks || []) : [],
+        runtime: app ? app.runtime : memberRuntime,
+        port: app ? app.port : memberPort,
+        managementPort: app ? app.managementPort : memberMgmt,
+        checks: app ? (app.checks || []) : (memberChecks || []),
+        members: memberModels,
         ops: app ? (app.ops || []) : []
       };
       if (model.bucket === "SYSTEM") model._hue = "--c-system";
@@ -3061,7 +3085,15 @@
         if (chk.sudo) return;
         if (!appPortListParamName(chk)) return;
         var g = groups[chk.id] || (groups[chk.id] = { action: chk, apps: [], seen: {} });
-        if (!g.seen[c.name]) { g.seen[c.name] = true; g.apps.push({ appName: c.name, port: c.port }); }
+        // spec-066 (F1): a context-grouped consumer fans the probe out over each of its member
+        // (appName, port) pairs; a context-less/singleton consumer keeps its single (name, port).
+        // Declared-only members (port 0) have no socket to probe and are skipped.
+        var probeApps = (c.members && c.members.length)
+          ? c.members : [{ appName: c.name, port: c.port }];
+        probeApps.forEach(function (mem) {
+          if (!mem.port) return;
+          if (!g.seen[mem.appName]) { g.seen[mem.appName] = true; g.apps.push({ appName: mem.appName, port: mem.port }); }
+        });
       });
     });
     var ids = Object.keys(groups);
@@ -3091,19 +3123,26 @@
    * silent 0).
    */
   function applyConsumerReading(c, outputs, hostTotal, cores, diskBytes) {
+    // spec-066 (F1/F3): fold each check over EVERY member of the consumer. A context-grouped
+    // native consumer null-aware-sums PSS/CPU/du across its member apps into the context's three
+    // axes; a single-app or context-less consumer degenerates to exactly today's one-app fold
+    // (members falls back to the consumer's own (name, port)). A member contributes du only where
+    // it has attributable disk, so an all-native context with no member du leaves disk — (F3).
+    var members = (c.members && c.members.length)
+      ? c.members : [{ appName: c.name, port: c.port }];
     var livenessUp = null, processUp = null, rssMb = null, pssMb = null, ramLow = false;
     var cpuRaw = null, duBytes = null, diskLow = false, rows = [];
     (c.checks || []).forEach(function (chk) {
-      var res = outputs && outputs[chk.id] && outputs[chk.id][c.name];
       var kind = checkKind(chk);
-      var state = "na";
-      if (res) {
+      var responded = false, anyListenerUp = false, anyLivenessUp = false, sawDu = false;
+      members.forEach(function (mem) {
+        var res = outputs && outputs[chk.id] && outputs[chk.id][mem.appName];
+        if (!res) return;
+        responded = true;
         if (kind === "process") {
           var rss = parseRssMb(res.stdout);
           if (rss != null) rssMb = (rssMb == null ? 0 : rssMb) + rss;
-          var listener = !!(res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout));
-          processUp = listener;
-          state = listener ? "up" : "down";
+          if (res.stdout && res.stdout.indexOf("no listener") < 0 && /VmRSS/i.test(res.stdout)) anyListenerUp = true;
         } else if (kind === "ram") {
           // Honest RAM: PSS summed to the context (spec-057). On procfs denial the probe
           // falls back to VmRSS + a low-confidence label — a ≤ upper bound, never the same
@@ -3115,27 +3154,33 @@
             if (rrss != null) { pssMb = (pssMb == null ? 0 : pssMb) + rrss; ramLow = true; }
           }
           if (ramConfidenceLow(res.stdout)) ramLow = true;
-          state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
+          if (res.stdout && res.stdout.indexOf("no listener") < 0) anyListenerUp = true;
         } else if (kind === "cpu") {
           // A RATE now (spec-057), not the lifetime average: Δ jiffies over the measured Δt.
           var pct = parseStatTicks(res.stdout);
           if (pct != null) cpuRaw = (cpuRaw == null ? 0 : cpuRaw) + pct;
-          state = res.stdout && res.stdout.indexOf("no listener") < 0 ? "up" : "down";
+          if (res.stdout && res.stdout.indexOf("no listener") < 0) anyListenerUp = true;
         } else if (kind === "disk") {
           // Native disk footprint (spec-057), finally attributed: root-FS bytes / the same
           // root-FS denominator docker uses, so it subtracts cleanly from OTHER (spec-041).
           var b = parseDuBytes(res.stdout);
-          if (b != null) duBytes = (duBytes == null ? 0 : duBytes) + b;
+          if (b != null) { duBytes = (duBytes == null ? 0 : duBytes) + b; sawDu = true; }
           // du-timeout degrade (spec-057 Decision 6): the value is a labelled LOWER bound, so
           // flag it — the axis still fills, but 059 badges it low, as RAM's RSS fallback is.
           if (res.stdout && res.stdout.indexOf("disk_confidence=low") >= 0) diskLow = true;
-          state = b != null ? "up" : "na";
         } else if (kind === "liveness") {
-          livenessUp = res.exit === 0;
-          state = livenessUp ? "up" : "down";
+          if (res.exit === 0) anyLivenessUp = true;
         } else {
-          state = res.exit === 0 ? "up" : "down";
+          if (res.exit === 0) anyListenerUp = true;
         }
+      });
+      var state = "na";
+      if (responded) {
+        if (kind === "process") { processUp = anyListenerUp; state = anyListenerUp ? "up" : "down"; }
+        else if (kind === "ram" || kind === "cpu") { state = anyListenerUp ? "up" : "down"; }
+        else if (kind === "disk") { state = sawDu ? "up" : "na"; }
+        else if (kind === "liveness") { livenessUp = anyLivenessUp; state = anyLivenessUp ? "up" : "down"; }
+        else { state = anyListenerUp ? "up" : "down"; }
       }
       rows.push({ name: chk.name, state: state });
     });
@@ -3291,6 +3336,17 @@
     var services = (c.services || []).length
       ? [h("h3", { class: "mt-4", text: "Services" }), h("div", { class: "mt-2" }, c.services.map(serviceRow))]
       : null;
+    // spec-066: a context-grouped native consumer aggregates several member apps — list them so
+    // the drawer shows what the axes sum over (a single-app context lists just itself).
+    var memberApps = (c.members || []).length > 1
+      ? [h("h3", { class: "mt-4", text: "Member apps" }),
+         h("p", { class: "small dim mt-2",
+           text: "The RAM / CPU / disk axes above sum the footprint across these apps in the context." }),
+         h("div", { class: "run-chip-row mt-2" }, c.members.map(function (mem) {
+           return h("span", { class: "tag mono",
+             text: mem.appName + (mem.port ? " :" + mem.port : " · no listening port") });
+         }))]
+      : null;
     var responded = (c._checkStates || []).filter(function (r) { return r.state !== "na"; });
     var probes = responded.length
       ? [h("h3", { class: "mt-4", text: "Probes" }),
@@ -3319,7 +3375,7 @@
       h("div", { class: "d-axes mt-4" },
         confMeter("RAM", c, (c._rssMb != null ? mibText(c._rssMb) + " RSS" : null)),
         meter("CPU", c.cpu), diskMeter),
-      otherNote, owner, services, probes, compose);
+      otherNote, owner, services, memberApps, probes, compose);
     var backdrop = h("div", { class: "drawer-backdrop", onclick: function (e) {
       if (e.target === backdrop) closeDrawer();
     } }, drawer);
