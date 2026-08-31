@@ -1047,3 +1047,16 @@ input[type="checkbox"], input[type="radio"] { width: auto; }
   from { transform: translateY(100%); }
   to   { transform: translateY(0); }
 }
+
+/* spec-066: context-grouped discovery cards (Screen B). Identity + structure only —
+   the tri-axis footprint stays on the Monitor route (059 D1). Built from existing
+   tokens; the mockup's .dbadge / rounded iskeru skin is 065, not ported here. */
+.ctx-discovery { display: block; }
+.ctx-cards { display: flex; flex-direction: column; gap: var(--sp-3); }
+.ctx-card { display: flex; flex-direction: column; }
+.ctx-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.ctx-path { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.ctx-items { display: flex; flex-direction: column; gap: var(--sp-1); }
+.ctx-item { display: flex; align-items: baseline; gap: var(--sp-2); }
+.ctx-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--sp-3); }
+.ctx-action { background: var(--surface-2, var(--surface)); }
