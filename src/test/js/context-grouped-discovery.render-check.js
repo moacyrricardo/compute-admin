@@ -20,7 +20,7 @@ src = src.replace(
   "  window.addEventListener(\"hashchange\", route);\n  route();\n})();",
   "  window.addEventListener(\"hashchange\", route);\n" +
   "  globalThis.__ca = { groupByContext, contextCard, contextPortLine, basename," +
-  " buildConsumers, applyConsumerReading, consumerLegend };\n})();"
+  " contextDiscovery, buildConsumers, applyConsumerReading, consumerLegend };\n})();"
 );
 if (src.indexOf("globalThis.__ca") < 0) { console.error("FAIL: could not inject test hook"); process.exit(1); }
 
@@ -116,6 +116,19 @@ assert(cardText.indexOf("high confidence") >= 0, "confidence renders as a neutra
 assert(cardText.indexOf("no listening port") >= 0, "the declared-only member renders its 'no listening port' label");
 assert(cardText.indexOf("Submit") >= 0, "a DRAFT action row carries the spec-044 approvalSplit primary (Submit)");
 assert(cardText.indexOf("Review & approve") >= 0, "a first-time PENDING action row routes through Review & approve (approvalSplit)");
+
+// ==================================================================== 3b ==
+// contextDiscovery scopes the discovery panel to pre-filled proposals ONLY: an
+// empty-appPortList blueprint/custom recipe belongs to the recipe registry, not the discovery
+// panel, so it must NOT leak into the "other / none" remainder here (avoids duplicating the whole
+// registry). A context-less pre-filled recipe DOES render under "other / none".
+const panel = ca.contextDiscovery(machine, [ordersProbe, contextless, blueprint]);
+const panelText = txt(panel);
+assert(panelText.indexOf("/opt/orders") >= 0, "the discovery panel shows the resolved context card");
+assert(panelText.indexOf("legacy monitor") >= 0, "a context-less pre-filled recipe lists under other/none");
+assert(panelText.indexOf("nginx blueprint") < 0,
+  "an empty-appPortList blueprint recipe must NOT appear in the discovery panel (registry-only)");
+assert(panelText.indexOf("Other / none") >= 0, "the ungrouped remainder carries the 'other / none' heading");
 
 // ======================================================================= 4 ==
 // Surface 2: a per-context native consumer polls its member apps. buildConsumers binds the members

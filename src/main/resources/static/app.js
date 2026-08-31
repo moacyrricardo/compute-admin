@@ -1114,7 +1114,14 @@
    * "other / none" heading and is NEVER hidden by a source toggle (red-team F2 / 067 D4 verbatim).
    */
   function contextDiscovery(machine, groups) {
-    var grouped = groupByContext(groups);
+    // Only discovery-pre-filled recipes (a non-empty appPortList) belong in the discovery panel —
+    // the blueprint/custom majority (empty appPortList) stays in the recipe registry below, never
+    // dumped into the "other / none" remainder here. The ungrouped fallback is therefore the
+    // pre-filled-but-context-less recipes (old rows / un-mapped), rendered like today's flat groups.
+    var preFilled = (groups || []).filter(function (g) {
+      return ((g.recipe && g.recipe.appPortList) || []).length > 0;
+    });
+    var grouped = groupByContext(preFilled);
     if (!grouped.contexts.length && !grouped.ungrouped.length) return null;
 
     var selType = {}, selSource = {};
