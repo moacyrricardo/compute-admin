@@ -97,6 +97,26 @@ final class ServiceCatalog {
         return null;
     }
 
+    /**
+     * The catalog row a <strong>well-known listening port</strong> fingerprints to (spec-075 A1),
+     * the port-based mirror of {@link #fingerprintByProcess} used on the app-monitor
+     * <em>unattributed</em> path — where {@code /proc} is unreadable so there is no process name to
+     * match. Matches a row's {@code defaultPort} ({@code 5432} → postgres, {@code 3306} → mysql —
+     * the mysql row wins over the mariadb alias, matching {@link #fingerprintByProcess}); nginx
+     * additionally owns {@code 443}. {@code null} for a port no catalog row claims (e.g. an app on
+     * {@code 8090}). A pure lookup; the {@code 22}/{@code 53} non-app skip-set lives in the
+     * discoverer (they are infrastructure, not catalog services), never here.
+     */
+    static Service fingerprintByPort(int port) {
+        for (Service service : ROWS) {
+            if (service.defaultPort() == port
+                    || ("nginx".equals(service.name()) && port == 443)) {
+                return service;
+            }
+        }
+        return null;
+    }
+
     private static Service rowForSegment(String segment) {
         String name = switch (segment) {
             case "postgres", "postgresql" -> "postgres";
