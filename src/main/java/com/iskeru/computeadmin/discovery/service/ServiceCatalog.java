@@ -1,5 +1,7 @@
 package com.iskeru.computeadmin.discovery.service;
 
+import com.iskeru.computeadmin.recipe.model.RecipeType;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,6 +69,36 @@ final class ServiceCatalog {
         return null;
     }
 
+    /**
+     * The typed family {@link RecipeType} a fingerprinted well-known service folds under
+     * (spec-075 B2): nginx → {@link RecipeType#NGINX}, every database engine → {@link
+     * RecipeType#DATABASE}. {@code null} for an app name that is not a catalogued service. The name
+     * is matched both as the <em>canonical</em> catalog row name (the A1 port path stamps the record
+     * {@code appName = service.name()}, e.g. {@code mysql}) <strong>and</strong> via {@link
+     * #fingerprintByProcess} so the attributed listening path's daemon spellings ({@code postmaster}/
+     * {@code mysqld}/{@code mariadbd}) fold too — either way a well-known service is represented once
+     * under its own family recipe.
+     */
+    static RecipeType foldFamilyFor(String appName) {
+        if (appName == null) {
+            return null;
+        }
+        Service match = null;
+        for (Service service : ROWS) {
+            if (service.name().equals(appName)) {
+                match = service;
+                break;
+            }
+        }
+        if (match == null) {
+            match = fingerprintByProcess(appName, null);
+        }
+        if (match == null) {
+            return null;
+        }
+        return "nginx".equals(match.name()) ? RecipeType.NGINX : RecipeType.DATABASE;
+    }
+
     private static boolean matches(String haystack, String name) {
         return switch (name) {
             case "postgres" -> haystack.contains("postgres") || haystack.contains("postmaster");
@@ -92,6 +124,26 @@ final class ServiceCatalog {
             Service row = rowForSegment(segment);
             if (row != null) {
                 return row;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The catalog row a <strong>well-known listening port</strong> fingerprints to (spec-075 A1),
+     * the port-based mirror of {@link #fingerprintByProcess} used on the app-monitor
+     * <em>unattributed</em> path — where {@code /proc} is unreadable so there is no process name to
+     * match. Matches a row's {@code defaultPort} ({@code 5432} → postgres, {@code 3306} → mysql —
+     * the mysql row wins over the mariadb alias, matching {@link #fingerprintByProcess}); nginx
+     * additionally owns {@code 443}. {@code null} for a port no catalog row claims (e.g. an app on
+     * {@code 8090}). A pure lookup; the {@code 22}/{@code 53} non-app skip-set lives in the
+     * discoverer (they are infrastructure, not catalog services), never here.
+     */
+    static Service fingerprintByPort(int port) {
+        for (Service service : ROWS) {
+            if (service.defaultPort() == port
+                    || ("nginx".equals(service.name()) && port == 443)) {
+                return service;
             }
         }
         return null;

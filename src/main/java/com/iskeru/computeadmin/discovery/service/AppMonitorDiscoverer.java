@@ -238,6 +238,14 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
             "ls -l /proc/[0-9]*/fd 2>/dev/null | awk '/^\\/proc\\// {sub(/:$/,\"\"); split($0,a,\"/\"); pid=a[3]}"
                     + " /socket:\\[/ {print \"F\", pid, $NF}'");
 
+    /**
+     * Non-app infrastructure ports the port-based fingerprint fallback recognises and
+     * <strong>skips entirely</strong> on the unattributed path (spec-075 A1): {@code 22} (ssh) and
+     * {@code 53} (systemd-resolved/dns). They are infrastructure, not apps, so they emit neither a
+     * fingerprinted service record nor the anonymous {@code app-<port>} degrade.
+     */
+    private static final Set<Integer> INFRA_SKIP_PORTS = Set.of(22, 53);
+
     /** The fixed packaged-binary prefixes an {@code exe} target under is <em>not</em> a deploy folder (spec-062 D3). */
     private static final Set<String> PACKAGED_BINARY_ROOTS = Set.of(
             "/usr", "/bin", "/sbin", "/lib", "/lib64", "/snap");
@@ -389,6 +397,26 @@ public class AppMonitorDiscoverer implements RecipeDiscoverer {
         Set<String> emittedUnattributed = new HashSet<>();
         for (Listener u : unattributed) {
             if (claimedKeys.contains(u.key()) || !emittedUnattributed.add(u.key())) {
+                continue;
+            }
+            // spec-075 A1: recognise non-app infrastructure ports (ssh 22, dns 53) and skip them
+            // entirely — neither a service record nor an anonymous app-<port> degrade.
+            if (INFRA_SKIP_PORTS.contains(u.port())) {
+                continue;
+            }
+            // spec-075 A1: a well-known listening port gets a catalog service identity + its catalog
+            // context (no PID to verify against, so the catalog default data dir stands) at LOW
+            // confidence — a port guess, never high. Both nginx :80 and :443 then resolve to the same
+            // contextKey (the nginx data dir), so spec-066 collapses them into one context card,
+            // instead of two anonymous app-<port> records. An attributed listener already kept its
+            // real process fingerprint above — this never overrides a readable process.
+            ServiceCatalog.Service service = ServiceCatalog.fingerprintByPort(u.port());
+            if (service != null) {
+                resolved.add(new Resolved(Family.GENERIC, service.name(), u.port(),
+                        Runtime.PROCESS.label, resolveContextForDir(session, service.dataDir()),
+                        "unattributed listener · discovered via port :" + u.port()
+                                + " · fingerprinted " + service.name() + " by port",
+                        "low"));
                 continue;
             }
             resolved.add(new Resolved(Family.GENERIC, sanitize(null, u.port()), u.port(),

@@ -1,3 +1,7 @@
+Status: done
+Branch: moacyrricardo/bol-905-cpt-cross-family-service-port-identity-dedup-spec-075
+Issue:  BOL-905
+
 # 075 — Cross-family service-port identity & dedup
 
 **Graduated from concern [074](074-concern-discovery-signal-to-noise.md) (issues A + B).** Decides
@@ -85,3 +89,34 @@ no port-based fallback.
   process always wins over the port fallback.
 - **Orthogonal to spec-073** (management-port/actuator merge) and to 074 issues **C** (systemd flood →
   036) and **D** (monitor shows only enabled → 040) — none are in scope here.
+
+## Implementation Notes
+
+Built on `moacyrricardo/bol-905-…` (Linear **BOL-905**), PR #101. The build followed the spec's
+A1 + B2 decision; how it differed / decisions made while coding:
+
+- **A1 context uses the catalog *default* dir, no verify step.** The spec said the fingerprinted
+  record gets "its catalog context … exactly like the process-fingerprint branch." The
+  process-fingerprint branch runs a *verify* pass (`verifiedDataDir` — `PGDATA`/`MYSQL_DATADIR` env
+  override, `nginx -T` modal root), but that path has a PID; the **unattributed** path by definition
+  has none, so there is nothing to verify against. The implementation passes
+  `resolveContextForDir(session, service.dataDir())` — the catalog default (`/var/www`,
+  `/var/lib/postgresql`, …). Both nginx `:80`/`:443` therefore share the same `contextKey`, which is
+  all A1 needs for the spec-066 collapse.
+- **B2 folds *attributed* services too, not only the A1-identified ones.** The spec's Implementation
+  bullet wrote "relocate the A1-identified `(addr,port)` items", but the Decision framed it as "fold a
+  fingerprinted **well-known service**." `ServiceCatalog.foldFamilyFor` therefore matches both the
+  canonical catalog name (what A1 stamps) *and* the attributed listening path's daemon spellings
+  (`postmaster`/`mysqld`/`mariadbd`, via `fingerprintByProcess`), so an attributed nginx/DB is deduped
+  under its family recipe as well. Strictly a superset of the required behaviour; low-risk because the
+  relocated `app_port_list` is un-audited side-data.
+- **`reconcileCrossFamily` is a package-private pure transform** on `List<ProposedRecipe>` returning a
+  small `CrossFamilyReconciled(proposals, forceRefreshEmpty)` record, so it is unit-tested in isolation
+  (`CrossFamilyReconcileTest`) without a Spring slice. `forceRefreshEmpty` is the one wrinkle not
+  spelled out in the spec: a generic monitor whose *only* items were relocated would otherwise keep a
+  stale persisted list on re-discovery, so persist refreshes it to `[]` when flagged (spec-021
+  idempotency).
+- **Tests:** the pre-existing `discover_ForeignFallbackSocket_SurvivesAsNullPidPort` used port `5432`
+  incidentally; since `5432` now fingerprints by port, the fixture was retargeted to a non-catalog port
+  (`6000`) so it keeps proving null-PID survival without conflating A1. The spec-066 render-check gained
+  a spec-075 block (nginx `:80`+`:443` → one card). No version bump (project policy: none).
