@@ -280,7 +280,7 @@ public class DiscoveryService {
 
     /** A proposal's within-machine identity (its reconcile triple minus the machine): type + name. */
     private static String recipeIdentity(ProposedRecipe proposal) {
-        return proposal.type().name() + " " + proposal.name();
+        return proposal.type().name() + " " + proposal.name();
     }
 
     /**
