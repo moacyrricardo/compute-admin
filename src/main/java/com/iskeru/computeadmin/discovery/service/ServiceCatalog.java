@@ -1,5 +1,7 @@
 package com.iskeru.computeadmin.discovery.service;
 
+import com.iskeru.computeadmin.recipe.model.RecipeType;
+
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -65,6 +67,36 @@ final class ServiceCatalog {
             }
         }
         return null;
+    }
+
+    /**
+     * The typed family {@link RecipeType} a fingerprinted well-known service folds under
+     * (spec-075 B2): nginx → {@link RecipeType#NGINX}, every database engine → {@link
+     * RecipeType#DATABASE}. {@code null} for an app name that is not a catalogued service. The name
+     * is matched both as the <em>canonical</em> catalog row name (the A1 port path stamps the record
+     * {@code appName = service.name()}, e.g. {@code mysql}) <strong>and</strong> via {@link
+     * #fingerprintByProcess} so the attributed listening path's daemon spellings ({@code postmaster}/
+     * {@code mysqld}/{@code mariadbd}) fold too — either way a well-known service is represented once
+     * under its own family recipe.
+     */
+    static RecipeType foldFamilyFor(String appName) {
+        if (appName == null) {
+            return null;
+        }
+        Service match = null;
+        for (Service service : ROWS) {
+            if (service.name().equals(appName)) {
+                match = service;
+                break;
+            }
+        }
+        if (match == null) {
+            match = fingerprintByProcess(appName, null);
+        }
+        if (match == null) {
+            return null;
+        }
+        return "nginx".equals(match.name()) ? RecipeType.NGINX : RecipeType.DATABASE;
     }
 
     private static boolean matches(String haystack, String name) {

@@ -13,6 +13,7 @@ import com.iskeru.computeadmin.machine.model.Machine;
 import com.iskeru.computeadmin.machine.service.MachineService;
 import com.iskeru.computeadmin.recipe.model.Action;
 import com.iskeru.computeadmin.recipe.model.Recipe;
+import com.iskeru.computeadmin.recipe.model.RecipeType;
 import com.iskeru.computeadmin.recipe.service.ActionService;
 import com.iskeru.computeadmin.recipe.service.ActionService.AddActionInput;
 import com.iskeru.computeadmin.recipe.service.ActionService.EditActionInput;
@@ -30,6 +31,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -234,7 +238,13 @@ public class DiscoveryService {
         return new DiscoveryOutcome(persisted, partial, connectionLost, List.copyOf(failed));
     }
 
-    private List<DiscoveredRecipe> persist(String machineId, List<ProposedRecipe> proposals) {
+    private List<DiscoveredRecipe> persist(String machineId, List<ProposedRecipe> rawProposals) {
+        // spec-075 B2: before persisting, fold a fingerprinted well-known service's ports onto its
+        // typed family recipe (NGINX/DATABASE) when one is present in the same pass, so a service is
+        // represented once instead of twice (its family recipe + the generic app monitor).
+        CrossFamilyReconciled reconciled = reconcileCrossFamily(rawProposals);
+        List<ProposedRecipe> proposals = reconciled.proposals();
+        Set<String> forceRefreshEmpty = reconciled.forceRefreshEmpty();
         List<DiscoveredRecipe> discovered = new ArrayList<>();
         for (ProposedRecipe proposal : proposals) {
             // Reconcile by identity triple (machine, type, name): reuse the recipe this
@@ -256,13 +266,105 @@ public class DiscoveryService {
                 recipe = recipeService.refreshDiscoveredAppPortList(
                         recipe.getId(),
                         toDockerJson(proposal.dockerConsumers(), proposal.appPortList()));
-            } else if (!proposal.appPortList().isEmpty()) {
+            } else if (!proposal.appPortList().isEmpty()
+                    || forceRefreshEmpty.contains(recipeIdentity(proposal))) {
+                // A generic app-monitor whose only apps were relocated by B2 refreshes to an empty
+                // list, so the moved-away entries actually disappear on re-discovery (spec-021).
                 recipe = recipeService.refreshDiscoveredAppPortList(
                         recipe.getId(), toJson(proposal.appPortList()));
             }
             discovered.add(new DiscoveredRecipe(recipe, actions));
         }
         return discovered;
+    }
+
+    /** A proposal's within-machine identity (its reconcile triple minus the machine): type + name. */
+    private static String recipeIdentity(ProposedRecipe proposal) {
+        return proposal.type().name() + " " + proposal.name();
+    }
+
+    /**
+     * The output of {@link #reconcileCrossFamily}: the (possibly rewritten) proposal list, plus the
+     * {@link #recipeIdentity(ProposedRecipe)} keys of any generic app-monitor recipe whose app-port
+     * list must be refreshed <em>even when it is now empty</em> — because B2 relocated every one of
+     * its items away, so the persisted list has to be cleared rather than left stale.
+     */
+    record CrossFamilyReconciled(List<ProposedRecipe> proposals, Set<String> forceRefreshEmpty) {
+    }
+
+    /**
+     * Post-pass cross-family reconciliation (spec-075 B2). When a typed family recipe (NGINX or
+     * DATABASE) is proposed in the same pass, a fingerprinted well-known service's {@code (addr,port)}
+     * items are moved off the generic app-monitor recipe and onto that family recipe's
+     * {@code app_port_list}; a well-known service is then represented <strong>once</strong> — under
+     * its own family recipe, now carrying its listening ports — instead of twice. Operates on the
+     * accumulated proposal set (order-independent), never on discoverer ordering; a pure transform
+     * (no persistence), so it is unit-testable in isolation.
+     *
+     * <p>The relocation target is chosen by {@link ServiceCatalog#foldFamilyFor(String)}: nginx items
+     * fold under NGINX, database-engine items under DATABASE. Items go to the first typed recipe of
+     * that family in the pass. When no typed family recipe is present, nothing moves — the fingerprinted
+     * items stay on the generic monitor (still grouped by their shared contextKey, spec-066).
+     */
+    static CrossFamilyReconciled reconcileCrossFamily(List<ProposedRecipe> proposals) {
+        Set<RecipeType> presentTyped = EnumSet.noneOf(RecipeType.class);
+        for (ProposedRecipe p : proposals) {
+            if (p.type() == RecipeType.NGINX || p.type() == RecipeType.DATABASE) {
+                presentTyped.add(p.type());
+            }
+        }
+        if (presentTyped.isEmpty()) {
+            return new CrossFamilyReconciled(proposals, Set.of());
+        }
+
+        Map<RecipeType, List<AppPortItem>> relocated = new EnumMap<>(RecipeType.class);
+        Set<String> forceRefreshEmpty = new HashSet<>();
+        List<ProposedRecipe> stage = new ArrayList<>();
+        for (ProposedRecipe p : proposals) {
+            // Only a native generic app-monitor is a relocation source: MONITOR type, carrying a
+            // bare app-port list (never a docker combined object, whose ports are DNAT truth).
+            if (p.type() != RecipeType.MONITOR || p.appPortList().isEmpty()
+                    || !p.dockerConsumers().isEmpty()) {
+                stage.add(p);
+                continue;
+            }
+            List<AppPortItem> keep = new ArrayList<>();
+            for (AppPortItem item : p.appPortList()) {
+                RecipeType family = ServiceCatalog.foldFamilyFor(item.appName());
+                if (family != null && presentTyped.contains(family)) {
+                    relocated.computeIfAbsent(family, k -> new ArrayList<>()).add(item);
+                } else {
+                    keep.add(item);
+                }
+            }
+            if (keep.size() == p.appPortList().size()) {
+                stage.add(p);
+            } else {
+                if (keep.isEmpty()) {
+                    forceRefreshEmpty.add(recipeIdentity(p));
+                }
+                stage.add(new ProposedRecipe(p.type(), p.name(), p.description(),
+                        p.actions(), keep, p.dockerConsumers()));
+            }
+        }
+        if (relocated.isEmpty()) {
+            return new CrossFamilyReconciled(proposals, Set.of());
+        }
+
+        List<ProposedRecipe> out = new ArrayList<>();
+        for (ProposedRecipe p : stage) {
+            List<AppPortItem> add = (p.type() == RecipeType.NGINX || p.type() == RecipeType.DATABASE)
+                    ? relocated.remove(p.type()) : null;
+            if (add == null) {
+                out.add(p);
+                continue;
+            }
+            List<AppPortItem> merged = new ArrayList<>(p.appPortList());
+            merged.addAll(add);
+            out.add(new ProposedRecipe(p.type(), p.name(), p.description(),
+                    p.actions(), merged, p.dockerConsumers()));
+        }
+        return new CrossFamilyReconciled(out, forceRefreshEmpty);
     }
 
     /**
