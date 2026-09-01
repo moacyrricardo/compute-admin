@@ -1,3 +1,7 @@
+Status: doing
+Branch: moacyrricardo/bol-905-cpt-cross-family-service-port-identity-dedup-spec-075
+Issue:  BOL-905
+
 # 075 — Cross-family service-port identity & dedup
 
 **Graduated from concern [074](074-concern-discovery-signal-to-noise.md) (issues A + B).** Decides
