@@ -162,6 +162,31 @@ assert(consumer.disk == null, "an all-native context with no member du leaves th
 const legend = ca.consumerLegend([consumer], function () {});
 assert(txt(legend).indexOf("/opt/orders") >= 0, "the legend chip is named by contextDisplay, got " + txt(legend));
 
+// ======================================================================= 6 ==
+// spec-075 A1: nginx :80 and :443, port-fingerprinted at low confidence, share one contextDisplay
+// (/var/www), so the two ports collapse into ONE context card — not two anonymous app-<port> cards.
+function nginxPort(port) {
+  return { appName: "nginx", port: port, runtime: "process", contextDisplay: "/var/www",
+    contextScripts: [],
+    sourceNote: "unattributed listener · discovered via port :" + port + " · fingerprinted nginx by port",
+    confidence: "low", scriptFolder: null, managementPort: null };
+}
+const nginxRecipe = { recipe: { id: "n1", name: "nginx", type: "NGINX",
+  appPortList: [ nginxPort(80), nginxPort(443) ] }, actions: [] };
+const nginxGrouped = ca.groupByContext([nginxRecipe]);
+assert(nginxGrouped.contexts.length === 1,
+  "spec-075: nginx :80 + :443 collapse into ONE context card, got " + nginxGrouped.contexts.length);
+assert(nginxGrouped.contexts[0].display === "/var/www",
+  "spec-075: the nginx context is keyed by its catalog data dir /var/www, got " + nginxGrouped.contexts[0].display);
+assert(nginxGrouped.contexts[0].items.length === 2,
+  "spec-075: both nginx ports are members of the one context, got " + nginxGrouped.contexts[0].items.length);
+assert(nginxGrouped.contexts[0].confidence === "low",
+  "spec-075: a port-fingerprinted context renders low confidence (a port guess), got " + nginxGrouped.contexts[0].confidence);
+const nginxCardText = txt(ca.contextCard(machine, nginxGrouped.contexts[0]));
+assert(nginxCardText.indexOf("/var/www") >= 0, "spec-075: the nginx card shows the /var/www context path");
+assert(nginxCardText.indexOf(":80") >= 0 && nginxCardText.indexOf(":443") >= 0,
+  "spec-075: the single nginx card lists both port lines :80 and :443");
+
 if (failed) { console.error("FAILED: " + failed + " assertion(s)"); process.exit(1); }
 console.log("PASS: spec-066 — discovery re-groups the recipe channel into one context card per "
   + "contextDisplay (multi-recipe collapse, context-less/empty → other/none, declared-only + "

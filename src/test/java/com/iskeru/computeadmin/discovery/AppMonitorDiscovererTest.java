@@ -551,6 +551,27 @@ class AppMonitorDiscovererTest {
     }
 
     @Test
+    void discover_UnattributedWellKnownPorts_FingerprintByPortShareOneContext_InfraSkipped() {
+        // spec-075 A1: nginx :80 and :443 arrive unattributed (owner unreadable, no PID recovered).
+        // The port-based fallback identifies BOTH as nginx and resolves them to the SAME catalog
+        // context (/var/www), so they collapse into one context card — not two anonymous app-<port>
+        // records. Infrastructure ports 22 (ssh) and 53 (dns) are recognised and skipped entirely.
+        FakeSshExecutor ssh = new FakeSshExecutor(unattributedWellKnownPorts());
+
+        ProposedRecipe generic = recipe(discoverer.discover(machine(), ssh.session()), "generic app monitor");
+
+        assertThat(generic.appPortList())
+                .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::confidence,
+                        AppPortItem::contextKey)
+                .containsExactlyInAnyOrder(
+                        tuple("nginx", 80, "low", "/var/www"),
+                        tuple("nginx", 443, "low", "/var/www"));
+        // No anonymous app-<port> degrade for a fingerprinted port; no ssh/dns record at all.
+        assertThat(generic.appPortList()).noneMatch(i -> i.appName().startsWith("app-"));
+        assertThat(generic.appPortList()).noneMatch(i -> i.port() == 22 || i.port() == 53);
+    }
+
+    @Test
     void discover_ForeignFallbackSocket_SurvivesAsNullPidPort() {
         // spec-062 Decision 1/2: a fallback L-row whose inode never joins a PID (a foreign socket
         // whose /proc/<pid>/fd is unreadable) still surfaces the PORT — a null-PID low-confidence
@@ -561,7 +582,7 @@ class AppMonitorDiscovererTest {
 
         assertThat(generic.appPortList())
                 .extracting(AppPortItem::appName, AppPortItem::port, AppPortItem::confidence)
-                .containsExactly(tuple("app-5432", 5432, "low"));
+                .containsExactly(tuple("app-6000", 6000, "low"));
     }
 
     @Test
@@ -1039,14 +1060,38 @@ class AppMonitorDiscovererTest {
         };
     }
 
+    // ss lists four LISTEN ports with a BLANK process column (foreign-owned, unreadable); the
+    // /proc/net fallback recovers no PID, so every port stays unattributed. :80/:443 fingerprint by
+    // port as nginx; :22/:53 are the infra skip-set. readlink -f /var/www is left unanswered, so the
+    // nginx context key defaults to the logical /var/www (spec-075 A1).
+    private Function<List<String>, ExecResult> unattributedWellKnownPorts() {
+        String ss = String.join("\n",
+                "State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process",
+                "LISTEN 0      128          0.0.0.0:80         0.0.0.0:*",
+                "LISTEN 0      128          0.0.0.0:443        0.0.0.0:*",
+                "LISTEN 0      128          0.0.0.0:22         0.0.0.0:*",
+                "LISTEN 0      128          0.0.0.0:53         0.0.0.0:*");
+        return argv -> {
+            if (isCronProbe(argv) || isPortFallback(argv)) {
+                return notFound();
+            }
+            return switch (String.join(" ", argv)) {
+                case "ss -ltnp" -> ok(ss);
+                default -> notFound();
+            };
+        };
+    }
+
     // No ss/netstat; the fallback reports a LISTEN L-row whose inode never joins a PID (foreign fd).
+    // Port 6000 is deliberately NOT a catalog service port, so it degrades to an anonymous
+    // app-<port> (a catalog port like 5432 would now fingerprint by port — spec-075 A1).
     private Function<List<String>, ExecResult> foreignFallbackSocket() {
         return argv -> {
             if (isCronProbe(argv)) {
                 return notFound();
             }
             if (isPortFallback(argv)) {
-                return ok("L 00000000:1538 88801"); // 0.0.0.0:5432, no F row
+                return ok("L 00000000:1770 88801"); // 0.0.0.0:6000, no F row
             }
             return notFound();
         };

@@ -1,5 +1,6 @@
 package com.iskeru.computeadmin.discovery.service;
 
+import com.iskeru.computeadmin.recipe.model.RecipeType;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,5 +72,50 @@ class ServiceCatalogTest {
         assertThat(ServiceCatalog.fingerprintByImage("redis:7-alpine")).isNull();
         assertThat(ServiceCatalog.fingerprintByImage(null)).isNull();
         assertThat(ServiceCatalog.fingerprintByImage("")).isNull();
+    }
+
+    // --- spec-075 A1: the port-based fingerprint fallback ------------------------------------
+
+    @Test
+    void fingerprintByPort_WellKnownPorts_MatchTheirService() {
+        // The A1 table: 80 and 443 both fold to nginx (nginx additionally owns 443); 3306 is mysql
+        // (the mysql row wins over the mariadb 3306 alias, like fingerprintByProcess); 5432 postgres.
+        assertThat(ServiceCatalog.fingerprintByPort(80).name()).isEqualTo("nginx");
+        assertThat(ServiceCatalog.fingerprintByPort(443).name()).isEqualTo("nginx");
+        assertThat(ServiceCatalog.fingerprintByPort(3306).name()).isEqualTo("mysql");
+        assertThat(ServiceCatalog.fingerprintByPort(5432).name()).isEqualTo("postgres");
+    }
+
+    @Test
+    void fingerprintByPort_UncataloguedOrInfrastructurePort_ReturnsNull() {
+        assertThat(ServiceCatalog.fingerprintByPort(8090)).isNull();
+        // The 22/53 skip-set is a discoverer concern; the catalog simply doesn't claim them.
+        assertThat(ServiceCatalog.fingerprintByPort(22)).isNull();
+        assertThat(ServiceCatalog.fingerprintByPort(53)).isNull();
+    }
+
+    // --- spec-075 B2: the fingerprinted-service → typed-family map ---------------------------
+
+    @Test
+    void foldFamilyFor_CanonicalServiceNames_MapToTheirTypedFamily() {
+        assertThat(ServiceCatalog.foldFamilyFor("nginx")).isEqualTo(RecipeType.NGINX);
+        assertThat(ServiceCatalog.foldFamilyFor("postgres")).isEqualTo(RecipeType.DATABASE);
+        assertThat(ServiceCatalog.foldFamilyFor("mysql")).isEqualTo(RecipeType.DATABASE);
+        assertThat(ServiceCatalog.foldFamilyFor("mariadb")).isEqualTo(RecipeType.DATABASE);
+    }
+
+    @Test
+    void foldFamilyFor_DaemonSpellingsFromTheAttributedPath_AlsoFold() {
+        // The attributed listening path stamps the daemon's own name; those still fold to DATABASE.
+        assertThat(ServiceCatalog.foldFamilyFor("postmaster")).isEqualTo(RecipeType.DATABASE);
+        assertThat(ServiceCatalog.foldFamilyFor("mysqld")).isEqualTo(RecipeType.DATABASE);
+        assertThat(ServiceCatalog.foldFamilyFor("mariadbd")).isEqualTo(RecipeType.DATABASE);
+    }
+
+    @Test
+    void foldFamilyFor_PlainAppOrNull_FoldsNowhere() {
+        assertThat(ServiceCatalog.foldFamilyFor("orders")).isNull();
+        assertThat(ServiceCatalog.foldFamilyFor("app-8080")).isNull();
+        assertThat(ServiceCatalog.foldFamilyFor(null)).isNull();
     }
 }
